@@ -1,5 +1,116 @@
-.venv/
-.idea/
+# ===========================
+# Python 字节码与缓存
+# ===========================
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+
+# ===========================
+# 构建与分发
+# ===========================
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+*.whl
+*.tar.gz
+*.zip
+
+# ===========================
+# 虚拟环境
+# ===========================
+.venv/
+venv/
+env/
+ENV/
+.env
+.venv/
+virtualenv/
+.virtualenv/
+pythonenv/
+# pipenv
+Pipfile.lock
+.python-version
+
+# ===========================
+# 测试与覆盖率
+# ===========================
+.coverage
+.coverage.*
+htmlcov/
+.coverage_html/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+
+# ===========================
+# Jupyter Notebook
+# ===========================
 .ipynb_checkpoints/
+*.ipynb_checkpoints/
+# 如果你希望忽略所有 notebook，取消下面一行注释
+# *.ipynb
+
+# ===========================
+# 日志、数据库与临时文件
+# ===========================
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.tmp
+*.temp
+*.pid
+*.seed
+*.pid.lock
+
+# ===========================
+# 缓存与系统文件
+# ===========================
+.cache/
+*.cache
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ===========================
+# IDE 与编辑器
+# ===========================
+# VS Code
+.vscode/
+# PyCharm
+.idea/
+# Vim
+*.swp
+*.swo
+*~
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+# Emacs
+*~
+\#*\#
+.#*
+
+# ===========================
+# 其他
+# ===========================
+# pip 日志
+pip-log.txt
+pip-delete-this-directory.txt
+# 环境变量文件（如果包含敏感信息）
+.env.local
+.env.*.local
+# 证书与密钥
+*.pem
+*.key
+*.crt
