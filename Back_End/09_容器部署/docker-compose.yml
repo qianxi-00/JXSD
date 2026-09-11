@@ -1,0 +1,169 @@
+# ============================================================
+# docker-compose.yml —— 一键起停整套服务（应用 + MySQL + Redis）
+# ============================================================
+# 对应课案章节：后端开发基础 → API 开发部署 / 容器部署 → Docker
+#
+# 用法（在 Back_End 目录下执行）：
+#   docker compose -f 09_容器部署/docker-compose.yml up -d          # 后台启动
+#   docker compose -f 09_容器部署/docker-compose.yml ps             # 查看状态
+#   docker compose -f 09_容器部署/docker-compose.yml logs -f api    # 跟踪日志
+#   docker compose -f 09_容器部署/docker-compose.yml down           # 停止并删除
+#   docker compose -f 09_容器部署/docker-compose.yml down -v        # 连数据卷一起删（清库）
+#
+# 说明：本文件是"真实可用"的编排文件，但本机未安装/未启动 Docker，
+#       因此它只经过 YAML 语法校验（见 检查YAML.py），未实际执行过 docker compose up。
+# ============================================================
+
+# 项目名：决定了容器名前缀与网络名（不写则取目录名）
+name: backend-demo
+
+services:
+  # ------------------------------------------------------------
+  # 1. 应用服务（FastAPI）
+  # ------------------------------------------------------------
+  api:
+    # build：用 09_容器部署/Dockerfile 构建镜像
+    # context 设为上级目录，因为 Dockerfile 需要访问 pyproject.toml 与 Back_End/ 源码
+    build:
+      context: ..
+      dockerfile: 09_容器部署/Dockerfile
+    image: backend-demo:v1.0
+    container_name: backend-api
+    restart: unless-stopped        # 异常退出/机器重启后自动拉起（手动 stop 的不拉起）
+    ports:
+      - "8000:8000"                # 宿主机端口:容器端口
+    environment:
+      # 注意：服务之间用【服务名】互相访问，不能用 localhost！
+      # 因为容器里的 localhost 指的是容器自己。
+      BOOK_API_DATABASE_URL: "sqlite:////data/book_api.db"
+      REDIS_URL: "redis://redis:6379/0"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      TZ: "Asia/Shanghai"
+    volumes:
+      # 数据持久化：容器删了数据还在（命名卷由 Docker 管理，比绑定宿主目录更可移植）
+      - app-data:/data
+      # 开发时挂载源码可实现"改代码免重建"（生产环境请注释掉）
+      # - ../Back_End/10_综合实战/book_api:/app/Back_End/10_综合实战/book_api:ro
+    depends_on:
+      # 依赖关系 + 健康检查：等 mysql/redis 健康后再启动 api
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status==200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - backend-net
+
+  # ------------------------------------------------------------
+  # 2. MySQL 数据库
+  # ------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: backend-mysql
+    restart: unless-stopped
+    # 生产环境不要把 3306 暴露到公网！这里只在宿主机内网可访问（127.0.0.1 前缀）
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: "ChangeMe_Root_123"      # 生产环境必须从密钥管理下发
+      MYSQL_DATABASE: "book_api"
+      MYSQL_USER: "bookuser"
+      MYSQL_PASSWORD: "ChangeMe_User_123"
+      TZ: "Asia/Shanghai"
+    command:
+      # 常用调优参数：字符集必须 utf8mb4（支持 emoji），否则中文/表情会报错
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=caching_sha2_password
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # mysqladmin ping 是官方推荐的健康检查方式
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pChangeMe_Root_123"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - backend-net
+
+  # ------------------------------------------------------------
+  # 3. Redis（Celery 的消息队列 + 结果后端 + 缓存）
+  # ------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: backend-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    command:
+      # 开启 AOF 持久化 + 设置密码（生产必须设密码，且不要用默认端口对外）
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - "ChangeMe_Redis_123"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "ChangeMe_Redis_123", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - backend-net
+
+  # ------------------------------------------------------------
+  # 4. Celery Worker（后台任务执行者）
+  # ------------------------------------------------------------
+  worker:
+    # 复用 api 的镜像，只是换一条启动命令 —— 这就是"一份代码多处部署"
+    build:
+      context: ..
+      dockerfile: 09_容器部署/Dockerfile
+    image: backend-demo:v1.0
+    container_name: backend-worker
+    restart: unless-stopped
+    # 覆盖镜像里的默认 CMD：启动 Celery worker
+    # -A 指定"Celery 应用对象所在模块"；--pool=threads 用线程池（I/O 密集任务合适，CPU 密集用 prefork）
+    # --concurrency=4 并发度；-Q default 指定监听的队列
+    #
+    # ⚠️ 注意：`celery -A xxx` 要求模块名是合法的 Python 标识符。
+    #    本课案的示例文件叫 12_Celery后台任务.py（数字开头 + 中文），无法被 -A 引用。
+    #    生产做法是把其中的 Celery 配置抽成独立模块 celery_app.py，
+    #    例如 book_api 项目下新建 celery_app.py：celery_app = Celery(...)，然后：
+    #        celery -A celery_app:celery_app worker --loglevel=info --pool=threads
+    #    这里的命令用于说明 compose 中 worker 服务该怎么配。
+    command: >
+      celery -A celery_app:celery_app worker
+      --loglevel=info --pool=threads --concurrency=4 -Q default
+    working_dir: /app/Back_End/06_FastAPI
+    environment:
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/0"
+      TZ: "Asia/Shanghai"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend-net
+
+# ------------------------------------------------------------
+# 数据卷：由 Docker 管理，位于宿主机的 /var/lib/docker/volumes/ 下
+# ------------------------------------------------------------
+volumes:
+  app-data:
+  mysql-data:
+  redis-data:
+
+# ------------------------------------------------------------
+# 自定义网络：同一网络内的容器可以用【服务名】互相访问
+# ------------------------------------------------------------
+networks:
+  backend-net:
+    driver: bridge

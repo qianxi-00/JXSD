@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：01_最小示例.html
+对应课案章节：HTML → 最小示例；以及「网页是什么」
+本节知识点：
+  1. 网页本质是一份 HTML 文档，浏览器负责把这份文档「渲染」成看得见的页面。
+  2. 一个合法的 HTML 文档由哪些「必需的骨架」组成。
+  3. <!DOCTYPE html> / <html> / <head> / <body> 各自负责什么。
+如何打开查看：直接双击本文件，或用浏览器「打开文件」选择本文件即可看到效果。
+              （不需要任何服务器、不需要联网，本文件完全自包含。）
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <!--
+      meta charset="UTF-8"
+        —— 告诉浏览器用「UTF-8」这套字符编码来解读本文件里的字节。
+        —— 如果不写这一行，中文极有可能显示成「æµ‹è¯•」这样的乱码。
+        —— 这是写中文网页时最容易被忘记、后果又最明显的一行。
+    -->
+    <meta charset="UTF-8">
+
+    <!--
+      <meta name="viewport" ...>
+        —— 移动端适配。让手机浏览器不要把页面当成 980px 宽的「桌面网页」再缩小，
+           而是按设备真实宽度来排版。写网页时建议无脑加上。
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!--
+      <title> 的内容不会显示在页面正文里，而是显示在：
+        1) 浏览器标签页上
+        2) 收藏夹里保存的默认名字
+        3) 搜索引擎结果里的蓝色大标题
+    -->
+    <title>最小 HTML 示例 —— 页面标题</title>
+
+    <!-- 下面这段 <style> 只是为了讲解更清楚，课案里的「最小示例」并没有它。
+         它给页面加一点内边距和字体，让示例看起来舒服。 -->
+    <style>
+        body {
+            font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+            max-width: 820px;      /* 限制正文最大宽度，避免一行太长不好读 */
+            margin: 24px auto;     /* 上下 24px 外边距；左右 auto = 水平居中 */
+            padding: 0 16px;
+            line-height: 1.75;
+            color: #24292f;
+        }
+        .tip {
+            background: #fff8e1;
+            border-left: 4px solid #f0ad4e;
+            padding: 10px 14px;
+            margin: 14px 0;
+            border-radius: 4px;
+        }
+        code {
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: Consolas, Monaco, monospace;
+            color: #c7254e;
+        }
+        pre {
+            background: #1f2430;
+            color: #e6e6e6;
+            padding: 14px 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            line-height: 1.55;
+        }
+        hr { border: none; border-top: 1px solid #e1e4e8; margin: 26px 0; }
+    </style>
+</head>
+<body>
+    <!--
+      ============================ 正文开始 ============================
+      <body> 里写的东西，才是用户在页面上真正「看得见」的内容。
+      <head> 里写的东西（编码、标题、样式、脚本引用）都是给浏览器看的「配置」。
+    -->
+
+    <!-- <h1> 是一级标题，字号最大，代表整页最重要的标题。
+         一个页面通常只写一个 <h1>，方便搜索引擎和屏幕阅读器理解页面主题。 -->
+    <h1>Hello</h1>
+
+    <!-- <p> 是段落（paragraph），浏览器会自动在段落前后各留一点垂直间距。 -->
+    <p>这是一段文字</p>
+
+    <hr>
+
+    <h2>一、网页是什么？</h2>
+    <p>
+        网页本质上是<b>一份 HTML 文档</b>，浏览器负责解析并渲染显示。
+        你右键选择「查看网页源代码」看到的那一堆尖括号，就是浏览器看到的原始输入；
+        你眼前花花绿绿的版面，是浏览器加工之后的结果。
+    </p>
+    <p style="font-size: 17px; background:#eef6ff; padding:12px; border-radius:6px;">
+        用户看到的样子 &nbsp;←→&nbsp; HTML 源代码
+    </p>
+
+    <h2>二、上面那个最小示例的完整代码</h2>
+    <pre>&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;title&gt;页面标题&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;h1&gt;Hello&lt;/h1&gt;
+    &lt;p&gt;这是一段文字&lt;/p&gt;
+&lt;/body&gt;
+&lt;/html&gt;</pre>
+
+    <h2>三、逐行拆解</h2>
+    <table border="1" cellpadding="8" cellspacing="0"
+           style="border-collapse: collapse; width: 100%;">
+        <tr style="background:#f6f8fa;">
+            <th align="left">代码</th>
+            <th align="left">名称</th>
+            <th align="left">作用</th>
+        </tr>
+        <tr>
+            <td><code>&lt;!DOCTYPE html&gt;</code></td>
+            <td>文档类型声明</td>
+            <td>告诉浏览器「请用 HTML5 标准模式渲染我」。必须放在文件第一行。</td>
+        </tr>
+        <tr>
+            <td><code>&lt;html&gt;</code></td>
+            <td>根元素</td>
+            <td>整个文档的「根」，除了 DOCTYPE 之外所有内容都包在它里面。</td>
+        </tr>
+        <tr>
+            <td><code>&lt;head&gt;</code></td>
+            <td>头部</td>
+            <td>放「给浏览器看的配置」：编码、标题、样式、脚本引用。不直接显示。</td>
+        </tr>
+        <tr>
+            <td><code>&lt;meta charset="UTF-8"&gt;</code></td>
+            <td>字符编码声明</td>
+            <td>指定用 UTF-8 解读字节，中文不乱码的关键。</td>
+        </tr>
+        <tr>
+            <td><code>&lt;title&gt;</code></td>
+            <td>页面标题</td>
+            <td>浏览器标签页上的文字，不显示在正文里。</td>
+        </tr>
+        <tr>
+            <td><code>&lt;body&gt;</code></td>
+            <td>主体</td>
+            <td>页面上所有「看得见」的内容都写在它里面。</td>
+        </tr>
+        <tr>
+            <td><code>&lt;h1&gt;</code></td>
+            <td>一级标题</td>
+            <td>最大号标题，h1 到 h6 逐级变小。</td>
+        </tr>
+        <tr>
+            <td><code>&lt;p&gt;</code></td>
+            <td>段落</td>
+            <td>一段文字，前后自动留白。</td>
+        </tr>
+    </table>
+
+    <h2>四、标签的书写规律</h2>
+    <p>HTML 标签几乎都是「成对出现」的，格式是：</p>
+    <pre>&lt;标签名 属性="值"&gt;内容&lt;/标签名&gt;
+   ↑ 开始标签（开标签）        ↑ 结束标签（闭标签，多了一个斜杠 /）</pre>
+
+    <div class="tip">
+        <b>小练习：</b>把本文件里的 <code>&lt;h1&gt;Hello&lt;/h1&gt;</code> 改成
+        <code>&lt;h1&gt;你好，网页！&lt;/h1&gt;</code>，保存后刷新浏览器，
+        看看页面发生了什么变化。这就是「改源代码 → 网页跟着变」的第一次体验。
+    </div>
+
+    <div class="tip">
+        <b>怎么自己看效果？</b><br>
+        方式一：直接双击本文件（操作系统会用默认浏览器打开它）。<br>
+        方式二：打开浏览器，按 <code>Ctrl + O</code>，选择本文件。<br>
+        方式三：在文件管理器里把本文件拖进浏览器窗口。
+    </div>
+</body>
+</html>

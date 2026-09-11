@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+{#
+  FastAPI 模板示例（Jinja2）
+  —— 与 Flask 的模板语法完全一样，因为两边用的都是 Jinja2。
+     区别只在"怎么把模板用起来"：
+        Flask  : render_template("index.html", 变量=值)
+        FastAPI: templates.TemplateResponse(request=request, name="index.html", context={...})
+#}
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ app_title }}</title>
+    <!-- 静态文件由 app.mount("/static", StaticFiles(...)) 提供 -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="site-header">
+        <img src="/static/a.svg" alt="logo" width="36" height="36">
+        <strong>{{ app_title }}</strong>
+        <nav>
+        {% for item in nav %}
+            <a href="{{ item.url }}">{{ item.label }}</a>
+        {% endfor %}
+        </nav>
+    </header>
+
+    <main class="container">
+        <h1>你好，FastAPI 模板！</h1>
+        <p class="hint">如果你看到这个页面，说明模板渲染与静态文件挂载都正常了。</p>
+
+        <h1>Item ID: {{ id }}</h1>
+        <p>下面这张图片来自 <code>/static/a.svg</code>：</p>
+        <p><img src="/static/a.svg" alt="静态图片" width="72" height="72"></p>
+
+        <h2>后端传入的变量</h2>
+        <ul>
+            <li>渲染时间：{{ now.strftime("%Y-%m-%d %H:%M:%S") }}</li>
+            <li>变量类型：{{ now.__class__.__name__ }}（datetime 对象可以直接在模板里调用方法）</li>
+            <li>过滤示例：{{ app_title | upper }}</li>
+            <li>默认值过滤：{{ not_exist | default("（未定义，已兜底）", true) }}</li>
+        </ul>
+
+        {% if products %}
+        <h2>商品数据（{% if products | length == 1 %}单个{% else %}列表{% endif %}）</h2>
+        <table>
+            <thead><tr><th>#</th><th>名称</th><th>价格</th><th>库存</th><th>状态</th></tr></thead>
+            <tbody>
+            {% for p in products %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ p.name }}</td>
+                    <td>{{ "%.2f" | format(p.price) }}</td>
+                    <td>{{ p.stock }}</td>
+                    <td>
+                        {% if p.stock == 0 %}<span class="tag danger">缺货</span>
+                        {% elif p.stock < 10 %}<span class="tag warn">库存紧张</span>
+                        {% else %}<span class="tag ok">充足</span>{% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="hint">本次没有商品数据（context 里的 products 为空列表，走的是 else 分支）。</p>
+        {% endif %}
+
+        <h2>JSON 接口也在同一个应用里</h2>
+        <p>访问 <a href="/api/products">/api/products</a> 会返回 JSON 而不是 HTML。</p>
+    </main>
+
+    <footer class="site-footer">
+        <p>后端开发基础 · FastAPI 模板示例 · 教学用</p>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：04_外部JS/index.html
+对应课案章节：JavaScript → 在HTML中使用JavaScript → 方式2：外部JS文件（推荐）
+本节知识点：
+  1. 用 <script src="..."></script> 引入外部 JS 文件。
+  2. src / defer / async 三个属性的作用与区别。
+  3. 外部 JS 为什么是推荐做法（复用 / 缓存 / 关注点分离 / 可调试）。
+  4. <script> 放在 <head> 里 vs 放在 </body> 前 的区别（以及 defer 如何解决问题）。
+  5. 路径写法与常见 404 排查。
+配套文件：js/app.js（与本文件同目录下的 js 子目录）
+如何打开查看：直接用浏览器打开本文件，点击按钮、填写表单、试试键盘快捷键。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>外部 JS 文件示例</title>
+
+    <!-- 外部样式（顺带演示结构：HTML 引 CSS，CSS 管外观） -->
+    <link rel="stylesheet" href="css/style.css">
+
+    <!--
+      ==================================================================
+      核心的一行：引入外部 JS 文件
+      ==================================================================
+
+        <script src="js/app.js" defer></script>
+
+      - src   —— 脚本文件路径，相对路径（相对于本 HTML 文件所在目录）。
+      - defer —— 关键属性！含义是：
+                  ① 浏览器【异步】下载这个 JS，不阻塞 HTML 解析（首屏更快）；
+                  ② 等 HTML 全部解析完成后再【按顺序】执行。
+                  所以你在 app.js 里可以放心地直接 getElementById，
+                  不用担心"元素还没被解析出来"。
+
+      和 defer 容易混淆的是 async：
+        - <script>                      下载并【立即执行】，会阻塞 HTML 解析
+                                        （写在这里就等于把 JS 内容内联在 head 里）
+        - <script defer>                下载不阻塞，HTML 解析完【按顺序】执行（推荐）
+        - <script async>                下载不阻塞，下载完【立刻】执行（顺序不保证）
+                                        → 适合独立的第三方脚本（统计代码），
+                                          不适合依赖 DOM 或互相依赖的业务脚本
+
+      ⚠️ 注意：<script> 不是空元素，写成 <script src="..."> 是错的，
+              必须写完整的 <script src="..."></script>。
+    -->
+    <script src="js/app.js" defer></script>
+</head>
+<body>
+
+<!-- ==================================================================== -->
+<header class="page-header">
+    <h1>外部 JS 文件示例</h1>
+    <p class="subtitle">
+        本页面的所有交互逻辑都来自 <code>js/app.js</code>——一个独立的外部脚本文件。
+    </p>
+</header>
+
+<main class="container">
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>一、课案原文写法</h2>
+
+        <p><b>HTML 文件：</b></p>
+        <pre>&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;title&gt;外部JS示例&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;h1 id="title"&gt;点击次数：0&lt;/h1&gt;
+&lt;button id="btn"&gt;点我&lt;/button&gt;
+&lt;script src="app.js"&gt;&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;</pre>
+
+        <p><b>app.js 文件：</b></p>
+        <pre>let count = 0;
+let btn = document.getElementById("btn");
+let title = document.getElementById("title");
+
+btn.onclick = function() {
+    count++;
+    title.textContent = "点击次数：" + count;
+};</pre>
+
+        <div class="callout">
+            <b>注意课案把 <code>&lt;script src="app.js"&gt;</code> 放在了
+            <code>&lt;/body&gt;</code> 前面</b>，这不是随便放的：
+            此时上面的 <code>&lt;h1&gt;</code> 和 <code>&lt;button&gt;</code> 已经被解析出来了，
+            <code>getElementById</code> 才能拿到元素。
+            <br>本项目把它改进成放在 <code>&lt;head&gt;</code> 里并加 <code>defer</code>，
+            效果一样但下载不阻塞渲染 —— <b>这是现代项目的推荐写法</b>。
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>二、课案示例的完整复现（点击计数器）</h2>
+
+        <!-- 这两个元素就是 app.js 要操作的目标，id 和课案保持一致 -->
+        <h3 id="title">点击次数：0</h3>
+        <button class="btn" id="btn">点我</button>
+        <button class="btn btn-ghost" id="btn-reset">重置计数</button>
+
+        <p class="hint">
+            更详细的交互演示见下面「三、app.js 还做了什么」。
+        </p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>三、app.js 还做了什么</h2>
+        <p>
+            打开 <code>js/app.js</code> 可以看到完整的、带详细中文注释的代码。
+            除了课案的计数器，它还演示了下面这些<b>真实项目里天天用的模式</b>：
+        </p>
+        <ol>
+            <li><b>在 <code>DOMContentLoaded</code> / <code>defer</code> 之后初始化</b>——
+                保证元素一定存在。</li>
+            <li><b>封装到函数里，避免全局变量污染</b>——
+                所有代码包在一个 <code>init()</code> 里，只暴露一个入口。</li>
+            <li><b>事件委托</b>——把监听器绑在父容器上，动态新增的项也能响应。</li>
+            <li><b>表单校验 + <code>preventDefault</code></b>——不让页面刷新。</li>
+            <li><b>状态与视图同步</b>——数据（数组）变了就重新渲染列表，
+                这是 React/Vue 的核心思想，用原生 JS 也能体会一遍。</li>
+        </ol>
+
+        <h3>演示 1：待办清单（增 / 删 / 完成 / 计数）</h3>
+        <div class="demo-block">
+            <div class="row">
+                <input type="text" id="todo-input" placeholder="输入待办，回车或点添加">
+                <button class="btn" id="todo-add">添加</button>
+                <button class="btn btn-ghost" id="todo-clear-done">清除已完成</button>
+            </div>
+            <ul class="todo-list" id="todo-list"></ul>
+            <p class="hint" id="todo-stats">共 0 条，已完成 0 条</p>
+        </div>
+
+        <h3>演示 2：表单校验（阻止默认提交）</h3>
+        <div class="demo-block">
+            <form id="signup-form" novalidate>
+                <div class="field">
+                    <label for="su-name">用户名 *</label>
+                    <input type="text" id="su-name" placeholder="至少 2 个字符">
+                    <span class="err" id="su-name-err"></span>
+                </div>
+                <div class="field">
+                    <label for="su-email">邮箱 *</label>
+                    <input type="text" id="su-email" placeholder="name@example.com">
+                    <span class="err" id="su-email-err"></span>
+                </div>
+                <div class="field">
+                    <button class="btn" type="submit">提交</button>
+                    <button class="btn btn-ghost" type="button" id="su-reset">重置</button>
+                </div>
+            </form>
+            <div id="form-result"></div>
+        </div>
+
+        <h3>演示 3：键盘快捷键与实时搜索</h3>
+        <div class="demo-block">
+            <div class="row">
+                <input type="text" id="search-input" placeholder="输入关键字实时筛选（试试输入「张」）">
+                <span class="kbd-hint">快捷键：按 <kbd>/</kbd> 聚焦搜索框，按 <kbd>Esc</kbd> 清空</span>
+            </div>
+            <table class="data-table" id="people-table">
+                <thead>
+                    <tr><th>姓名</th><th>城市</th><th>年龄</th></tr>
+                </thead>
+                <tbody><!-- 由 app.js 动态生成 --></tbody>
+            </table>
+            <p class="hint" id="search-hint">共 0 条记录</p>
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>四、外部 JS 为什么是「推荐」做法</h2>
+        <table class="data-table">
+            <thead>
+                <tr><th>对比项</th><th>内联 <code>&lt;script&gt;</code></th><th>外部 <code>.js</code> 文件</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>作用范围</td><td>单个页面</td><td><b>所有引用它的页面</b></td></tr>
+                <tr><td>能否复用</td><td>❌ 要复制粘贴</td><td>✅ 一处修改，处处生效</td></tr>
+                <tr><td>浏览器缓存</td><td>❌ 每次随 HTML 重传</td><td>✅ <b>会被缓存</b></td></tr>
+                <tr><td>可调试性</td><td>⚠️ 在 F12 里显示为 <code>index.html:行号</code></td><td>✅ <b>显示为 <code>app.js:行号</code>，能直接打断点</b></td></tr>
+                <tr><td>HTML 可读性</td><td>❌ 结构里混满逻辑</td><td>✅ 只剩结构</td></tr>
+                <tr><td>适合场景</td><td>极少量的一次性代码</td><td><b>真实项目标准做法</b></td></tr>
+            </tbody>
+        </table>
+
+        <div class="callout">
+            <b>关注点分离原则：</b>
+            <code>index.html</code>（结构）+ <code>css/style.css</code>（样式）+
+            <code>js/app.js</code>（行为）。
+            三个文件各司其职，这也是后面 React/Vue 项目的组织方式原型。
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>五、路径与常见错误排查</h2>
+        <table class="data-table">
+            <thead>
+                <tr><th>现象</th><th>原因</th><th>解决</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>F12 Console 报 <code>Unexpected token '&lt;'</code></td>
+                    <td>路径写错了，服务器返回了 404 的 HTML 页面被当成 JS 解析</td>
+                    <td>检查 <code>src</code> 路径</td>
+                </tr>
+                <tr>
+                    <td>F12 Network 里 <code>app.js</code> 是红色 404</td>
+                    <td>文件不存在或路径大小写不符</td>
+                    <td>确认文件与 <code>src</code> 字面完全一致</td>
+                </tr>
+                <tr>
+                    <td><code>Cannot read properties of null</code></td>
+                    <td><code>&lt;script&gt;</code> 在元素之前执行了</td>
+                    <td>移到 <code>&lt;/body&gt;</code> 前，或加 <code>defer</code></td>
+                </tr>
+                <tr>
+                    <td>改了 JS 刷新没变化</td>
+                    <td>浏览器用了缓存的旧 JS</td>
+                    <td><b>Ctrl + F5</b> 强制刷新，或 F12 → Network 勾选 Disable cache</td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="callout warn">
+            <b>开发时的一个好习惯：</b>F12 → Network 面板勾上 <b>Disable cache</b>，
+            并保持 DevTools 打开状态 —— 这样每次刷新都拿最新的 JS/CSS，不用按 Ctrl+F5。
+        </div>
+    </section>
+
+</main>
+
+<footer class="page-footer">
+    <p>
+        对应课案：前端基础 → JavaScript → 在 HTML 中使用 JavaScript → 方式 2：外部 JS 文件（推荐）<br>
+        配套知识点总结：<code>../JavaScript知识点.md</code>　|　配套脚本文件：<code>js/app.js</code>
+    </p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,133 @@
+{
+  "meta": {
+    "created_at": "2026-09-11",
+    "version": 1,
+    "description": "前端基础课案 —— Streamlit 综合实战：图书管理系统（JSON 文件持久化）"
+  },
+  "books": [
+    {
+      "id": 1,
+      "title": "HTML 与 CSS 设计与构建网站",
+      "author": "Jon Duckett",
+      "isbn": "978-7-115-33345-6",
+      "category": "前端开发",
+      "publisher": "人民邮电出版社",
+      "year": 2013,
+      "total": 5,
+      "available": 5,
+      "place": "佛山图书馆"
+    },
+    {
+      "id": 2,
+      "title": "JavaScript 高级程序设计",
+      "author": "Matt Frisbie",
+      "isbn": "978-7-115-54538-1",
+      "category": "前端开发",
+      "publisher": "人民邮电出版社",
+      "year": 2020,
+      "total": 4,
+      "available": 4,
+      "place": "佛山图书馆"
+    },
+    {
+      "id": 3,
+      "title": "流畅的 Python",
+      "author": "Luciano Ramalho",
+      "isbn": "978-7-115-45445-7",
+      "category": "程序设计",
+      "publisher": "人民邮电出版社",
+      "year": 2017,
+      "total": 3,
+      "available": 3,
+      "place": "佛山图书馆"
+    },
+    {
+      "id": 4,
+      "title": "深入理解计算机系统",
+      "author": "Randal E. Bryant",
+      "isbn": "978-7-111-54493-7",
+      "category": "计算机基础",
+      "publisher": "机械工业出版社",
+      "year": 2016,
+      "total": 2,
+      "available": 2,
+      "place": "佛山图书馆"
+    },
+    {
+      "id": 5,
+      "title": "数据可视化实战",
+      "author": "张三",
+      "isbn": "978-7-000-00000-1",
+      "category": "数据分析",
+      "publisher": "示例出版社",
+      "year": 2024,
+      "total": 6,
+      "available": 6,
+      "place": "佛山图书馆"
+    },
+    {
+      "id": 6,
+      "title": "Python 数据分析",
+      "author": "Wes McKinney",
+      "isbn": "978-7-111-60786-7",
+      "category": "数据分析",
+      "publisher": "机械工业出版社",
+      "year": 2018,
+      "total": 4,
+      "available": 4,
+      "place": "佛山图书馆"
+    },
+    {
+      "id": 7,
+      "title": "设计模式：可复用面向对象软件的基础",
+      "author": "Erich Gamma",
+      "isbn": "978-7-111-07575-2",
+      "category": "程序设计",
+      "publisher": "机械工业出版社",
+      "year": 2000,
+      "total": 2,
+      "available": 2,
+      "place": "佛山图书馆"
+    },
+    {
+      "id": 8,
+      "title": "图解 HTTP",
+      "author": "上野宣",
+      "isbn": "978-7-115-35153-5",
+      "category": "计算机网络",
+      "publisher": "人民邮电出版社",
+      "year": 2014,
+      "total": 3,
+      "available": 3,
+      "place": "佛山图书馆"
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "password_hash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+      "name": "系统管理员",
+      "role": "admin",
+      "created_at": "2026-09-11",
+      "borrowed": []
+    },
+    {
+      "username": "user",
+      "password_hash": "e606e38b0d8c19b24cf0ee3808183162ea7cd63ff7912dbb22b5e803286b4446",
+      "name": "普通读者",
+      "role": "user",
+      "created_at": "2026-09-11",
+      "borrowed": []
+    },
+    {
+      "username": "zhangsan",
+      "password_hash": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+      "name": "张三",
+      "role": "user",
+      "created_at": "2026-09-11",
+      "borrowed": []
+    }
+  ],
+  "records": [],
+  "next_book_id": 9
+}

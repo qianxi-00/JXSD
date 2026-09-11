@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：01_基础语法.html
+对应课案章节：JavaScript → JavaScript基础语法
+本节知识点（课案全部覆盖）：
+  1. 变量：let / const（以及老式的 var）
+  2. 数据类型：字符串、数字、布尔、数组、对象、null、undefined
+  3. 运算符：算术 / 比较（== 与 === 的区别）/ 逻辑
+  4. 条件判断：if / else if / else、三元运算符、switch
+  5. 循环：for、for...of、for...in、while、数组常用方法 forEach/map/filter
+  6. 函数：声明式、表达式、箭头函数、参数默认值、返回值
+  7. 在 HTML 中使用 JS 的两种方式（本文件用方式 1：内联 <script>；
+     方式 2：外部 .js 文件见 04_外部JS/）
+关于 alert() 的说明：
+  课案里的示例统一用 alert("...") 弹窗输出。本文件为了不打断浏览体验，
+  改成把结果打印到页面上的「输出面板」里，并在注释中同时给出 alert 的原始写法。
+  两种写法在语法上完全等价，只是"输出到哪里"不同。
+如何打开查看：直接用浏览器打开本文件；按 F12 打开 Console 可以看到更多输出。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JavaScript 基础语法</title>
+    <style>
+        body {
+            font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+            max-width: 980px; margin: 24px auto; padding: 0 16px;
+            line-height: 1.75; color: #24292f;
+        }
+        code {
+            background: #f3f4f6; padding: 2px 6px; border-radius: 3px;
+            font-family: Consolas, Monaco, monospace; color: #c7254e;
+        }
+        pre {
+            background: #1f2430; color: #e6e6e6; padding: 12px 14px;
+            border-radius: 6px; overflow-x: auto; line-height: 1.55;
+            font-family: Consolas, Monaco, monospace; font-size: 13px;
+        }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #b9c0c8; padding: 6px 12px; text-align: left; }
+        th { background: #f0f4f8; }
+        .tip { background:#fff8e1; border-left:4px solid #f0ad4e; padding:10px 14px; margin:14px 0; border-radius:4px; }
+        .warn { background:#fdecea; border-left:4px solid #e74c3c; padding:10px 14px; margin:14px 0; border-radius:4px; }
+        .sec {
+            border: 1px solid #e1e4e8; border-left: 5px solid #f39c12;
+            border-radius: 6px; padding: 12px 20px; margin: 20px 0; background: #fffdf7;
+        }
+        .sec > h2 { margin-top: 6px; color: #b9770e; }
+
+        /* 「输出面板」—— 本文件用来代替 alert() 的显示区域 */
+        .console-panel {
+            background: #0d1117;
+            color: #7ee787;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 13px;
+            line-height: 1.65;
+            padding: 12px 14px;
+            border-radius: 6px;
+            white-space: pre-wrap;      /* 保留换行，同时允许长行自动折行 */
+            word-break: break-all;
+            margin: 10px 0;
+            min-height: 34px;
+            border: 1px solid #30363d;
+        }
+        .console-panel .key   { color: #79c0ff; }
+        .console-panel .str   { color: #a5d6ff; }
+        .console-panel .num   { color: #ffa657; }
+        .console-panel .bool  { color: #d2a8ff; }
+        .console-panel .weak  { color: #8b949e; }
+        .btn {
+            font-family: Consolas, Monaco, monospace; font-size: 13px;
+            padding: 5px 12px; margin: 3px 6px 3px 0;
+            border: 1px solid #b9c0c8; background: #fff;
+            border-radius: 4px; cursor: pointer;
+        }
+        .btn:hover { background: #fff7e6; border-color: #f39c12; }
+        .panel-title {
+            font-size: 12px; color: #8b949e; font-family: Consolas, Monaco, monospace;
+            margin: 14px 0 -4px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>JavaScript 基础语法</h1>
+
+<p>
+    <b>JavaScript（JS）是网页的编程语言，用于实现网页的交互功能。</b>
+    前面的 HTML 是"静态的描述"，只能写死内容；JS 让网页可以<b>响应用户操作、动态改变自己</b>。
+</p>
+
+<table>
+    <tr><th>技术</th><th>负责</th><th>典型动作</th></tr>
+    <tr><td>HTML</td><td>网页结构</td><td>这里有个按钮</td></tr>
+    <tr><td>CSS</td><td>网页样式</td><td>按钮是蓝色的圆角</td></tr>
+    <tr><td><b>JavaScript</b></td><td><b>网页行为</b></td><td><b>点一下按钮，数字加一</b></td></tr>
+</table>
+
+<div class="tip">
+    <b>本文件的输出方式：</b>课案里所有示例都用 <code>alert("...")</code> 弹窗输出。
+    弹窗会打断浏览（而且弹太多次很烦），所以本文件改成把结果输出到页面上的
+    <b>绿色「输出面板」</b>。注释里会同时给出 <code>alert</code> 的原始写法。
+    你自己练习时两种都可以用，<b>调试时更推荐 <code>console.log()</code> +
+    F12 的 Console 面板</b>。
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>一、变量</h2>
+    <p>
+        变量就是「给一个值起个名字」，方便后面反复使用。
+        现代 JS 用 <code>let</code>（可重新赋值）和 <code>const</code>（不可重新赋值）。
+    </p>
+
+    <pre>let name = "张三";        // 字符串
+let age = 25;             // 数字
+let isStudent = true;     // 布尔值
+
+// 课案原文（alert 版）：
+// alert("姓名: " + name);
+// alert("年龄: " + age);
+// alert("是学生吗: " + isStudent);
+
+console.log(name, age, isStudent);   // 更推荐：打到控制台，不打断浏览</pre>
+
+    <button class="btn" id="btn-var">运行「变量」示例</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-var"></div>
+
+    <table>
+        <tr><th>关键字</th><th>能否重新赋值</th><th>作用域</th><th>建议</th></tr>
+        <tr><td><code>const</code></td><td>❌ 不能</td><td>块级 <code>{}</code></td><td><b>默认用它</b>，能不变就不变</td></tr>
+        <tr><td><code>let</code></td><td>✅ 能</td><td>块级 <code>{}</code></td><td>需要改值时用它</td></tr>
+        <tr><td><code>var</code></td><td>✅ 能</td><td>函数级（会"变量提升"）</td><td><b>不要用</b>，是历史遗留写法</td></tr>
+    </table>
+
+    <pre>const PI = 3.14159;
+// PI = 3;              // ❌ 报错：Assignment to constant variable.
+
+let count = 0;
+count = count + 1;      // ✅ 可以
+
+// 关于 const 的一个坑：const 锁的是"变量指向"，不是"内容"
+const arr = [1, 2, 3];
+arr.push(4);            // ✅ 可以！数组内容变了，但 arr 还是指向同一个数组
+// arr = [5, 6];        // ❌ 报错：不能让它指向别的数组</pre>
+
+    <div class="warn">
+        <b>未声明的变量会给全局对象加属性</b>，是 bug 的温床。<b>永远写 let / const。</b>
+        （本文件用 <code>"use strict"</code> 之外的普通模式演示，你不小心写漏关键字时浏览器不报错，
+        但用 <code>"use strict";</code> 开头就会立即报错——这是推荐做法。）
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>二、数据类型</h2>
+    <p>JS 是<b>弱类型 / 动态类型</b>语言：变量的类型由它当前装的值决定，不需要提前声明类型。</p>
+
+    <pre>let str   = "Hello";                 // 1. 字符串 string（单引号/双引号/反引号都行）
+let num   = 25;                      // 2. 数字 number（整数和小数都是 number）
+let bool  = true;                    // 3. 布尔 boolean（只有 true / false）
+let arr   = [1, 2, 3];               // 4. 数组 array
+let obj   = { name: "张三" };         // 5. 对象 object（键值对）
+let nothing = null;                  // 6. null：空值（"我故意让它为空"）
+let notDefined;                      // 7. undefined：未定义（声明了但没赋值）
+
+// 课案原文（alert 版）：
+// alert("字符串: " + str);
+// alert("数字: " + num);
+// alert("布尔值: " + bool);
+// alert("数组: " + arr);
+// alert("对象: " + obj.name);   // 注意：obj.name 取的是对象里的 name 属性</pre>
+
+    <button class="btn" id="btn-type">运行「数据类型」示例</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-type"></div>
+
+    <h3>怎么查看一个值是什么类型？用 typeof</h3>
+    <button class="btn" id="btn-typeof">运行 typeof 演示</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-typeof"></div>
+    <div class="warn">
+        <b>typeof 的两个著名怪癖：</b>
+        <code>typeof null === "object"</code>（历史 bug，被永久保留了），
+        <code>typeof [] === "object"</code>（数组也是对象）。
+        要判断数组请用 <code>Array.isArray(x)</code>。
+    </div>
+
+    <h3>字符串模板（反引号）—— 最实用的语法糖</h3>
+    <pre>const name = "张三", age = 25;
+// 老办法：用 + 拼字符串，容易漏空格、引号难嵌套
+console.log("姓名: " + name + ", 年龄: " + age);
+// 新办法：反引号 + ${} 插值
+console.log(`姓名: ${name}, 年龄: ${age}`);
+console.log(`明年他 ${age + 1} 岁`);     // ${} 里可以写任意表达式</pre>
+    <button class="btn" id="btn-template">运行模板字符串演示</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-template"></div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>三、运算符</h2>
+
+    <h3>算术运算符</h3>
+    <p>
+        <code>+</code> <code>-</code> <code>*</code> <code>/</code> <code>%</code>（取余）
+        <code>**</code>（幂）；<code>++</code> / <code>--</code> 自增自减。
+    </p>
+    <pre>console.log(7 + 3);      // 10
+console.log(7 - 3);      // 4
+console.log(7 * 3);      // 21
+console.log(7 / 3);      // 2.3333333333333335（JS 的除法永远是小数，不会整除）
+console.log(7 % 3);      // 1  （取余数，判断奇偶常用）
+console.log(2 ** 10);    // 1024
+console.log("5" + 3);    // "53"  ⚠️ + 遇到字符串会变成"拼接"
+console.log("5" - 3);    // 2     ⚠️ - 会把字符串强转成数字</pre>
+
+    <h3>比较运算符（<b>重点：== 与 ===</b>）</h3>
+    <pre>console.log(5 ==  "5");   // true   ← 只比"值"，会自动做类型转换（不推荐）
+console.log(5 === "5");   // false  ← 比"值和类型"，都相同才 true（推荐）
+console.log(1 ==  true);  // true   ← 因为 true 被转成了 1
+console.log(0 ==  false); // true
+console.log(null == undefined);   // true
+console.log(NaN == NaN);          // false  ← NaN 不等于自己！
+console.log(Object.is(NaN, NaN)); // true</pre>
+    <div class="warn">
+        <b>规矩：一律用 <code>===</code> 和 <code>!==</code>，永远不要用 <code>==</code> 和 <code>!=</code>。</b>
+        <code>==</code> 的类型转换规则极其反直觉（比如 <code>[] == false</code> 是 <code>true</code>），
+        是 JS 最经典的 bug 来源之一。
+    </div>
+
+    <h3>逻辑运算符</h3>
+    <pre>console.log(true && false);   // false  —— 与：两个都真才真
+console.log(true || false);   // true   —— 或：有一个真就真
+console.log(!true);           // false  —— 非：取反
+
+// 短路求值（很常用）：
+const user = null;
+const nickname = user && user.name;        // user 是 null，直接得到 null，不会报错
+const display  = nickname || "匿名用户";    // nickname 为假，取默认值
+
+// ?? 空值合并：只在 null / undefined 时取默认值（比 || 更精确）
+const n = 0;
+console.log(n || 100);    // 100  ⚠️ 0 被视为假，不符合预期
+console.log(n ?? 100);    // 0    ✅ 只有 null/undefined 才替换
+// ?. 可选链：如果左边是 null/undefined，直接返回 undefined，不报错
+console.log(user?.name);  // undefined（不会抛异常）</pre>
+
+    <button class="btn" id="btn-op">运行「运算符」示例</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-op"></div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>四、条件判断</h2>
+
+    <pre>let age = 20;
+if (age &gt;= 18) {
+    alert("成年人");
+} else {
+    alert("未成年");
+}</pre>
+
+    <p>课案原文（alert 版）。下面用输入框模拟 <code>age</code>，改一改数字看结果：</p>
+    <label>age = <input type="number" id="inp-age" value="20" style="width:90px;padding:4px;"></label>
+    <button class="btn" id="btn-if">运行 if / else</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-if"></div>
+
+    <h3>if / else if / else</h3>
+    <pre>const score = 85;
+
+if (score &gt;= 90) {
+    console.log("优秀");
+} else if (score &gt;= 80) {      // 上一个条件不成立时才检查这个
+    console.log("良好");
+} else if (score &gt;= 60) {
+    console.log("及格");
+} else {
+    console.log("不及格");       // 以上都不满足才走这里
+}</pre>
+
+    <h3>三元运算符（简写的 if-else）</h3>
+    <pre>const age = 20;
+const label = age &gt;= 18 ? "成年人" : "未成年";
+//            └── 条件 ──┘   └真┘     └假┘</pre>
+
+    <h3>switch（适合"一个变量对多个确定值"）</h3>
+    <pre>const day = 3;
+switch (day) {
+    case 1:
+        console.log("周一");
+        break;                  // ⚠️ 忘了 break 会"贯穿"到下一个 case
+    case 3:
+        console.log("周三");
+        break;
+    default:
+        console.log("其他");
+}</pre>
+
+    <button class="btn" id="btn-condition">运行 分数分级 / 三元 / switch 演示</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-condition"></div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>五、循环</h2>
+
+    <pre>// 课案原文：经典 for 循环
+for (let i = 0; i &lt; 5; i++) {
+    alert("i = " + i);
+}
+//          └①初始值 └②条件（真才继续） └③每轮结束后执行
+
+// 课案原文：遍历数组
+let arr = ["苹果", "香蕉", "橙子"];
+for (let item of arr) {
+    alert(item);            // for...of 直接拿到"值"
+}</pre>
+
+    <p>课案里 <code>alert</code> 会弹 5 次 + 3 次，很烦。这里统一输出到面板：</p>
+    <button class="btn" id="btn-loop">运行「循环」示例</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-loop"></div>
+
+    <h3>四种循环对比</h3>
+    <table>
+        <tr><th>写法</th><th>拿到什么</th><th>适合</th></tr>
+        <tr><td><code>for (let i=0; i&lt;n; i++)</code></td><td>下标 i</td><td>需要知道序号、需要中断</td></tr>
+        <tr><td><code>for (const item of arr)</code></td><td><b>值</b></td><td><b>遍历数组的首选</b></td></tr>
+        <tr><td><code>for (const key in obj)</code></td><td><b>键名</b>（字符串）</td><td>遍历对象的属性</td></tr>
+        <tr><td><code>while (条件) {}</code></td><td>—</td><td>循环次数不确定</td></tr>
+        <tr><td><code>do { } while (条件)</code></td><td>—</td><td>至少执行一次</td></tr>
+    </table>
+
+    <pre>// 数组的高阶方法（比 for 循环更"声明式"，实际开发中用得更多）
+const nums = [1, 2, 3, 4, 5];
+
+// forEach：逐个处理，没有返回值
+nums.forEach(function (n) { console.log(n); });
+
+// map：把每个元素"映射"成新值，返回新数组（长度不变）
+const doubled = nums.map(n =&gt; n * 2);           // [2, 4, 6, 8, 10]
+
+// filter：筛选，返回长度可能变小的新数组
+const evens = nums.filter(n =&gt; n % 2 === 0);    // [2, 4]
+
+// reduce：把数组"归约"成一个值（求和、求最大值等）
+const sum = nums.reduce((acc, n) =&gt; acc + n, 0);  // 15
+
+// find：找第一个满足条件的元素，找不到返回 undefined
+const found = nums.find(n =&gt; n &gt; 3);            // 4
+
+// some / every：是否存在 / 是否全部满足
+console.log(nums.some(n =&gt; n &gt; 4));    // true
+console.log(nums.every(n =&gt; n &gt; 0));   // true
+
+// 注意：map/filter/reduce 都返回【新数组】，不会修改原数组（不改变原数据 = 更安全）</pre>
+
+    <button class="btn" id="btn-array">运行「数组方法」示例</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-array"></div>
+
+    <pre>// while 循环：数到 5
+let i = 0;
+while (i &lt; 5) {
+    console.log(i);
+    i++;            // ⚠️ 忘了这行就是"死循环"，浏览器会卡死
+}
+
+// break / continue
+for (let j = 0; j &lt; 10; j++) {
+    if (j === 3) continue;   // 跳过本轮剩下的代码，直接进入下一轮
+    if (j === 6) break;      // 直接跳出整个循环
+    console.log(j);          // 输出 0 1 2 4 5
+}</pre>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>六、函数</h2>
+
+    <pre>// 课案原文：函数声明式
+function greet(name) {
+    return "Hello, " + name;
+}
+let result = greet("张三");
+alert(result);</pre>
+
+    <p>函数 = 「把一段可复用的代码打包，起个名字，需要时调用」。</p>
+
+    <button class="btn" id="btn-func">运行「函数」示例</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-func"></div>
+
+    <h3>四种定义函数的方式</h3>
+    <pre>// ① 函数声明（会"提升"，可以先调用后定义）
+function add(a, b) { return a + b; }
+
+// ② 函数表达式（不会提升，必须先定义后调用）
+const add2 = function (a, b) { return a + b; };
+
+// ③ 箭头函数（ES6 新增，最简洁，没有自己的 this）
+const add3 = (a, b) =&gt; a + b;                 // 只有一行 return 时可以省略 {} 和 return
+const add4 = (a, b) =&gt; { return a + b; };     // 写了 {} 就必须显式 return
+const square = x =&gt; x * x;                    // 只有一个参数可省略括号
+const sayHi = () =&gt; console.log("Hi");        // 没有参数必须写 ()
+
+// ④ 立即执行函数（旧写法，现代基本不用）
+(function () { console.log("马上执行"); })();</pre>
+
+    <h3>参数与返回值</h3>
+    <pre>// 默认参数
+function greet(name = "陌生人", greeting = "你好") {
+    return `${greeting}，${name}！`;
+}
+greet();                    // "你好，陌生人！"
+greet("张三");               // "你好，张三！"
+greet("张三", "早上好");      // "早上好，张三！"
+
+// 剩余参数（把多余的实参收进一个真数组）
+function sum(...nums) {
+    return nums.reduce((a, b) =&gt; a + b, 0);
+}
+sum(1, 2, 3, 4);            // 10
+
+// 没有 return 的函数，返回值是 undefined
+function noReturn() { const x = 1; }
+console.log(noReturn());    // undefined</pre>
+
+    <h3>作用域与闭包（进阶，知道概念即可）</h3>
+    <pre>let globalVar = "我是全局的";       // 函数外定义 → 到处都能访问
+
+function outer() {
+    let outerVar = "我是 outer 的局部变量";
+
+    function inner() {
+        // 内层函数可以访问外层的变量，这叫「作用域链」
+        console.log(outerVar);
+        console.log(globalVar);
+    }
+    return inner;
+}
+const fn = outer();     // outer 已经执行完了
+fn();                   // 但依然能打印 outerVar —— 这就是「闭包」</pre>
+    <div class="tip">
+        <b>闭包的实际用途：</b>「记住」状态。例如做一个计数器，
+        每次调用都加一，而不需要全局变量 —— 见本页最后一个演示。
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>七、在 HTML 中使用 JavaScript 的两种方式（课案）</h2>
+
+    <h3>方式 1：内联 <code>&lt;script&gt;</code> 标签（本文件用的就是这种方式）</h3>
+    <pre>&lt;h1 id="title"&gt;点击次数：0&lt;/h1&gt;
+&lt;button id="btn"&gt;点我&lt;/button&gt;
+&lt;script&gt;
+    let count = 0;
+    let btn = document.getElementById("btn");
+    let title = document.getElementById("title");
+
+    btn.onclick = function() {
+        count++;
+        title.textContent = "点击次数：" + count;
+    };
+&lt;/script&gt;</pre>
+
+    <p><b>课案原文示例的完整复现：</b></p>
+    <h3 id="counter-title" style="color:#b9770e;">点击次数：0</h3>
+    <button class="btn" id="counter-btn">点我</button>
+
+    <h3>方式 2：外部 <code>.js</code> 文件（推荐）</h3>
+    <pre>&lt;script src="js/app.js"&gt;&lt;/script&gt;</pre>
+    <p>
+        完整可运行示例见 <code>04_外部JS/index.html</code> + <code>04_外部JS/js/app.js</code>。
+        <b>推荐理由和外部 CSS 完全一样：可复用、可缓存、HTML 更干净。</b>
+    </p>
+
+    <h3><code>&lt;script&gt;</code> 放哪里？</h3>
+    <table>
+        <tr><th>位置</th><th>问题 / 好处</th></tr>
+        <tr>
+            <td><code>&lt;head&gt;</code> 里</td>
+            <td>❌ 此时 <code>&lt;body&gt;</code> 还没解析，<code>getElementById</code> 会拿到 <code>null</code> 而报错</td>
+        </tr>
+        <tr>
+            <td><code>&lt;/body&gt;</code> 前（<b>本文件的做法</b>）</td>
+            <td>✅ DOM 已经准备好了，最稳妥的传统做法</td>
+        </tr>
+        <tr>
+            <td><code>&lt;head&gt;</code> + <code>defer</code> 属性</td>
+            <td>✅ 现代推荐：<code>&lt;script src="app.js" defer&gt;&lt;/script&gt;</code>，
+                下载不阻塞渲染，且保证在 DOM 解析完成后按顺序执行</td>
+        </tr>
+    </table>
+    <div class="warn">
+        <b>最常见的 JS 报错：</b><code>Uncaught TypeError: Cannot read properties of null
+        (reading 'onclick')</code> —— 99% 是因为 <code>&lt;script&gt;</code> 写在
+        <code>&lt;head&gt;</code> 里、执行时元素还不存在。
+        <b>解决办法：把 script 移到 <code>&lt;/body&gt;</code> 前，或者加 <code>defer</code>。</b>
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>八、动手练习</h2>
+    <p>把下面这段代码抄进一个新的 <code>.html</code> 文件里跑一跑（或者直接改本文件）：</p>
+    <pre>// 用闭包做一个计数器工厂
+function createCounter() {
+    let count = 0;                  // 这个变量被下面的函数"记住"了
+    return function () {
+        count += 1;
+        return count;
+    };
+}
+
+const c1 = createCounter();
+const c2 = createCounter();         // 每个计数器有自己独立的 count
+console.log(c1());   // 1
+console.log(c1());   // 2
+console.log(c2());   // 1  ← 互不影响</pre>
+
+    <button class="btn" id="btn-closure">运行「闭包计数器」示例</button>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-closure"></div>
+</div>
+
+<hr>
+<p style="color:#57606a;font-size:14px;">
+    下一站：<code>02_DOM操作.html</code>（用 JS 修改网页内容）→
+    <code>03_事件处理.html</code>（让网页响应用户操作）。
+    配套总结见 <code>JavaScript知识点.md</code>。
+</p>
+
+
+<!-- ==================================================================== -->
+<!--                            JavaScript 代码                            -->
+<!-- 位置说明：放在 </body> 之前，保证上面所有元素都已经解析完成。            -->
+<!-- ==================================================================== -->
+<script>
+// ==========================================================================
+// 0. 通用小工具：把文本追加到指定的输出面板里。
+//    这样就避免了满屏的 alert()，也方便你在页面上一次看到全部输出。
+// ==========================================================================
+
+/**
+ * 向输出面板追加一行文本。
+ * @param {string} panelId 输出面板元素的 id
+ * @param {string} text    要显示的内容
+ */
+function print(panelId, text) {
+    const panel = document.getElementById(panelId);
+    panel.textContent += text + "\n";
+    // 同时也打到浏览器控制台，方便按 F12 对照
+    console.log(text);
+}
+
+/** 清空输出面板（每次点按钮重新运行，先清一下，避免无限累加） */
+function clearPanel(panelId) {
+    document.getElementById(panelId).textContent = "";
+}
+
+/**
+ * 显示一个值的"类型 + 内容"，比单纯 console.log 更直观。
+ * JSON.stringify 能把对象/数组转成可读字符串。
+ */
+function describe(value) {
+    const type = Array.isArray(value) ? "array" : typeof value;
+    let text;
+    try {
+        text = JSON.stringify(value);
+    } catch (e) {
+        text = String(value);
+    }
+    return `${text}  (typeof = ${type})`;
+}
+
+
+// ==========================================================================
+// 1. 变量
+// ==========================================================================
+document.getElementById("btn-var").onclick = function () {
+    clearPanel("out-var");
+
+    // --- 课案原文（alert 版，注释保留，方便对照）---
+    // let name = "张三";
+    // let age = 25;
+    // let isStudent = true;
+    // alert("姓名: " + name);
+    // alert("年龄: " + age);
+    // alert("是学生吗: " + isStudent);
+
+    let name = "张三";
+    let age = 25;
+    let isStudent = true;
+
+    print("out-var", `姓名: ${name}`);
+    print("out-var", `年龄: ${age}`);
+    print("out-var", `是学生吗: ${isStudent}`);
+    print("out-var", "");
+
+    // const 与 let 的区别演示
+    const PI = 3.14159;
+    print("out-var", `const PI = ${PI}（不能重新赋值）`);
+
+    let count = 0;
+    count = count + 1;
+    print("out-var", `let count 修改后 = ${count}（可以重新赋值）`);
+
+    const arr = [1, 2, 3];
+    arr.push(4);
+    print("out-var", `const 数组 push(4) 之后 = [${arr}]（内容可以改，指向不能改）`);
+
+    // 用 try/catch 把"给 const 赋值"的报错抓下来展示（否则脚本会中断）
+    try {
+        eval("PI = 3;");    // 故意犯错：给 const 赋值
+    } catch (err) {
+        print("out-var", `给 const 赋值的结果 → ${err.constructor.name}: ${err.message}`);
+    }
+};
+
+
+// ==========================================================================
+// 2. 数据类型
+// ==========================================================================
+document.getElementById("btn-type").onclick = function () {
+    clearPanel("out-type");
+
+    let str  = "Hello";
+    let num  = 25;
+    let bool = true;
+    let arr  = [1, 2, 3];
+    let obj  = { name: "张三" };
+
+    // --- 课案原文（alert 版）---
+    // alert("字符串: " + str);
+    // alert("数字: " + num);
+    // alert("布尔值: " + bool);
+    // alert("数组: " + arr);
+    // alert("对象: " + obj.name);
+
+    print("out-type", `字符串: ${str}`);
+    print("out-type", `数字: ${num}`);
+    print("out-type", `布尔值: ${bool}`);
+    print("out-type", `数组: ${arr}`);
+    print("out-type", `对象: ${obj.name}`);
+    print("out-type", "");
+    print("out-type", `typeof 检测：str=${typeof str}, num=${typeof num}, bool=${typeof bool}`);
+    print("out-type", `arr 是数组吗？Array.isArray(arr) = ${Array.isArray(arr)}`);
+    print("out-type", `多行字符串（反引号）：`);
+    print("out-type", `  第一行
+  第二行
+  第三行`);
+};
+
+document.getElementById("btn-typeof").onclick = function () {
+    clearPanel("out-typeof");
+
+    const samples = [
+        ["字符串", "abc"],
+        ["数字", 42],
+        ["布尔", true],
+        ["数组", [1, 2]],
+        ["对象", { a: 1 }],
+        ["null", null],
+        ["undefined", undefined],
+        ["函数", function () {}],
+        ["NaN", NaN]
+    ];
+
+    // for...of 遍历数组，这里数组的每一项又是一个小数组，所以用解构 [label, value]
+    for (const [label, value] of samples) {
+        print("out-typeof", `${label.padEnd(10)} → typeof = ${typeof value}`);
+    }
+    print("out-typeof", "");
+    print("out-typeof", "⚠️ typeof null === \"object\" 是 JS 保留至今的历史 bug");
+    print("out-typeof", "⚠️ typeof [] === \"object\"，判断数组要用 Array.isArray()");
+    print("out-typeof", `验证 Array.isArray([]) = ${Array.isArray([])}`);
+};
+
+document.getElementById("btn-template").onclick = function () {
+    clearPanel("out-template");
+
+    const tname = "张三";
+    const tage = 25;
+
+    print("out-template", "老办法（+ 拼接）：");
+    print("out-template", "  " + "姓名: " + tname + ", 年龄: " + tage);
+    print("out-template", "");
+    print("out-template", "新办法（反引号 + ${}）：");
+    print("out-template", `  姓名: ${tname}, 年龄: ${tage}`);
+    // 注意：在模板字符串里想"原样显示 ${}"，需要写成 \${} 转义
+    print("out-template", `  \${} 里可以写任意表达式 → 明年他 ${tage + 1} 岁`);
+    print("out-template", `  还能直接调用函数 → ${"hello".toUpperCase()}`);
+};
+
+
+// ==========================================================================
+// 3. 运算符
+// ==========================================================================
+document.getElementById("btn-op").onclick = function () {
+    clearPanel("out-op");
+
+    print("out-op", "— 算术 —");
+    print("out-op", `7 + 3 = ${7 + 3}`);
+    print("out-op", `7 - 3 = ${7 - 3}`);
+    print("out-op", `7 * 3 = ${7 * 3}`);
+    print("out-op", `7 / 3 = ${7 / 3}   ← JS 除法永远返回小数`);
+    print("out-op", `7 % 3 = ${7 % 3}   ← 取余数`);
+    print("out-op", `2 ** 10 = ${2 ** 10}  ← 幂运算`);
+    print("out-op", `"5" + 3 = ${"5" + 3}   ← ⚠️ + 遇到字符串变成拼接`);
+    print("out-op", `"5" - 3 = ${"5" - 3}   ← ⚠️ - 会把字符串转成数字`);
+    print("out-op", `"abc" - 1 = ${"abc" - 1}  ← 转不成数字就得到 NaN`);
+    print("out-op", "");
+
+    print("out-op", "— 比较：== 与 === 的区别（重点）—");
+    print("out-op", `5 ==  "5"  → ${5 == "5"}    （只比值，自动类型转换，不推荐）`);
+    print("out-op", `5 === "5"  → ${5 === "5"}   （比值和类型，推荐）`);
+    print("out-op", `1 ==  true → ${1 == true}    （true 被转成 1）`);
+    print("out-op", `0 ==  false→ ${0 == false}    （false 被转成 0）`);
+    print("out-op", `null == undefined → ${null == undefined}`);
+    print("out-op", `NaN == NaN → ${NaN == NaN}   ← NaN 不等于自己！`);
+    print("out-op", `Object.is(NaN, NaN) → ${Object.is(NaN, NaN)}`);
+    print("out-op", `[] == false → ${[] == false}   ← 极其反直觉，这就是要禁用 == 的原因`);
+    print("out-op", `Number.isNaN("abc" - 1) → ${Number.isNaN("abc" - 1)}  ← 正确的 NaN 判断`);
+    print("out-op", "");
+
+    print("out-op", "— 逻辑与短路 —");
+    print("out-op", `true && false = ${true && false}`);
+    print("out-op", `true || false = ${true || false}`);
+    print("out-op", `!true = ${!true}`);
+    const user = null;
+    print("out-op", `user && user.name → ${user && user.name}    （短路，不会报错）`);
+    print("out-op", `(null || "匿名") → ${null || "匿名"}`);
+    print("out-op", `0 || 100 → ${0 || 100}     ← ⚠️ 0 被当成假值，可能不符合预期`);
+    print("out-op", `0 ?? 100 → ${0 ?? 100}     ← ✅ ?? 只在 null/undefined 时替换`);
+    print("out-op", `user?.name → ${user?.name}     ← 可选链 ?. 不报错`);
+};
+
+
+// ==========================================================================
+// 4. 条件判断
+// ==========================================================================
+document.getElementById("btn-if").onclick = function () {
+    clearPanel("out-if");
+
+    // Number() 把输入框的字符串转成数字（输入框的值永远是字符串！）
+    const age = Number(document.getElementById("inp-age").value);
+    print("out-if", `输入的 age = ${age}（类型：${typeof age}）`);
+    print("out-if", "");
+
+    // --- 课案原文（alert 版）---
+    // if (age >= 18) { alert("成年人"); } else { alert("未成年"); }
+
+    if (age >= 18) {
+        print("out-if", "结果：成年人");
+    } else {
+        print("out-if", "结果：未成年");
+    }
+
+    // 多分支
+    print("out-if", "");
+    const score = 85;
+    print("out-if", `假设 score = ${score}`);
+    if (score >= 90) {
+        print("out-if", "  → 优秀");
+    } else if (score >= 80) {
+        print("out-if", "  → 良好");
+    } else if (score >= 60) {
+        print("out-if", "  → 及格");
+    } else {
+        print("out-if", "  → 不及格");
+    }
+
+    // 三元运算符
+    print("out-if", "");
+    print("out-if", `三元运算符 → ${age >= 18 ? "成年人" : "未成年"}`);
+};
+
+document.getElementById("btn-condition").onclick = function () {
+    clearPanel("out-condition");
+
+    print("out-condition", "— 分数分级 —");
+    const scores = [95, 85, 72, 45];
+    // 用 for...of + if/else if 逐个判断
+    for (const s of scores) {
+        let level;
+        if (s >= 90)       level = "优秀";
+        else if (s >= 80)  level = "良好";
+        else if (s >= 60)  level = "及格";
+        else               level = "不及格";
+        print("out-condition", `  ${String(s).padStart(3)} 分 → ${level}`);
+    }
+    print("out-condition", "");
+
+    print("out-condition", "— switch —");
+    const day = 3;
+    print("out-condition", `day = ${day}`);
+    switch (day) {
+        case 1:
+            print("out-condition", "  → 周一");
+            break;                  // ⚠️ 忘了 break 会"贯穿"
+        case 2:
+            print("out-condition", "  → 周二");
+            break;
+        case 3:
+            print("out-condition", "  → 周三");
+            break;
+        case 6:
+        case 7:                     // 多个 case 共用一段代码：故意不写 break
+            print("out-condition", "  → 周末");
+            break;
+        default:
+            print("out-condition", "  → 其他");
+    }
+    print("out-condition", "");
+    print("out-condition", "— 常见陷阱：忘了 break 的贯穿效果 —");
+    let fallthrough = "";
+    switch (2) {
+        case 1: fallthrough += "case1 ";
+        case 2: fallthrough += "case2 ";   // 没有 break
+        case 3: fallthrough += "case3 ";   // 会继续执行到这里
+        default: fallthrough += "default";
+    }
+    print("out-condition", `  switch(2) 无 break 的结果 → ${fallthrough}`);
+};
+
+
+// ==========================================================================
+// 5. 循环
+// ==========================================================================
+document.getElementById("btn-loop").onclick = function () {
+    clearPanel("out-loop");
+
+    print("out-loop", "— 经典 for 循环（课案原文的 alert 换成面板输出）—");
+    for (let i = 0; i < 5; i++) {
+        print("out-loop", `  i = ${i}`);
+    }
+    print("out-loop", "");
+
+    print("out-loop", "— for...of 遍历数组 —");
+    let fruits = ["苹果", "香蕉", "橙子"];
+    for (let item of fruits) {
+        print("out-loop", `  ${item}`);
+    }
+    print("out-loop", "");
+
+    print("out-loop", "— 带下标的遍历（用 entries）—");
+    for (const [index, item] of fruits.entries()) {
+        print("out-loop", `  ${index}: ${item}`);
+    }
+    print("out-loop", "");
+
+    print("out-loop", "— for...in 遍历对象（拿到的是键名）—");
+    const person = { 姓名: "张三", 年龄: 25, 城市: "北京" };
+    for (const key in person) {
+        print("out-loop", `  ${key} = ${person[key]}`);
+    }
+    print("out-loop", "");
+
+    print("out-loop", "— while 循环 —");
+    let n = 0;
+    while (n < 5) {
+        print("out-loop", `  n = ${n}`);
+        n++;                       // ⚠️ 忘了这行就是死循环
+    }
+    print("out-loop", "");
+
+    print("out-loop", "— break 与 continue —");
+    for (let j = 0; j < 10; j++) {
+        if (j === 3) continue;     // 跳过本轮
+        if (j === 6) break;        // 跳出整个循环
+        print("out-loop", `  j = ${j}`);
+    }
+    print("out-loop", "  （输出 0 1 2 4 5，因为跳过了 3，到 6 就停了）");
+};
+
+document.getElementById("btn-array").onclick = function () {
+    clearPanel("out-array");
+
+    const nums = [1, 2, 3, 4, 5];
+    print("out-array", `原数组 nums = [${nums}]`);
+    print("out-array", "");
+
+    // forEach：逐个处理，没有返回值（返回 undefined）
+    let lines = [];
+    nums.forEach(function (value, index) {
+        lines.push(`${index}→${value}`);
+    });
+    print("out-array", `forEach 遍历     → ${lines.join("  ")}`);
+
+    // map：一对一映射，长度不变，返回【新数组】
+    print("out-array", `map(n => n*2)    → [${nums.map(n => n * 2)}]`);
+
+    // filter：筛选，长度可能变短，返回【新数组】
+    print("out-array", `filter(偶数)      → [${nums.filter(n => n % 2 === 0)}]`);
+
+    // reduce：归约成一个值
+    print("out-array", `reduce(求和, 初值0) → ${nums.reduce((acc, n) => acc + n, 0)}`);
+    print("out-array", `reduce(求最大值)   → ${nums.reduce((max, n) => (n > max ? n : max))}`);
+
+    // find / some / every
+    print("out-array", `find(n > 3)      → ${nums.find(n => n > 3)}`);
+    print("out-array", `find(n > 99)     → ${nums.find(n => n > 99)}  （找不到返回 undefined）`);
+    print("out-array", `some(n > 4)      → ${nums.some(n => n > 4)}`);
+    print("out-array", `every(n > 0)     → ${nums.every(n => n > 0)}`);
+    print("out-array", "");
+
+    // 关键：这些方法都不修改原数组
+    print("out-array", `调用完各种方法后，原数组依然是 [${nums}] ← 它们都返回新数组，不改原数据`);
+
+    // 而 push / pop / splice 会修改原数组
+    const copy = [...nums];      // 展开运算符 ... 做浅拷贝
+    copy.push(6);
+    print("out-array", `copy.push(6) 后 copy = [${copy}]，而 nums 仍是 [${nums}]`);
+    print("out-array", "");
+
+    // 数组排序要注意：默认按"字符串"排序，数字排序必须传比较函数
+    const nums2 = [10, 9, 100, 2];
+    print("out-array", `[10,9,100,2] 默认 sort()      → [${[...nums2].sort()}]  ← ⚠️ 按字符串排的！`);
+    print("out-array", `[10,9,100,2] sort((a,b)=>a-b) → [${[...nums2].sort((a, b) => a - b)}]  ← ✅ 正确`);
+};
+
+
+// ==========================================================================
+// 6. 函数
+// ==========================================================================
+document.getElementById("btn-func").onclick = function () {
+    clearPanel("out-func");
+
+    // --- 课案原文（alert 版）---
+    // function greet(name) { return "Hello, " + name; }
+    // let result = greet("张三");
+    // alert(result);
+
+    // ① 函数声明
+    function greet(name) {
+        return "Hello, " + name;
+    }
+    const result = greet("张三");
+    print("out-func", `课案原文函数 → ${result}`);
+    print("out-func", "");
+
+    // ② 函数表达式
+    const add2 = function (a, b) { return a + b; };
+    print("out-func", `函数表达式 add2(2, 3) = ${add2(2, 3)}`);
+
+    // ③ 箭头函数：一行可以省略 {} 和 return
+    const add3 = (a, b) => a + b;
+    const square = x => x * x;
+    const sayHi = () => "Hi!";
+    print("out-func", `箭头函数 add3(2, 3) = ${add3(2, 3)}`);
+    print("out-func", `箭头函数 square(5) = ${square(5)}`);
+    print("out-func", `箭头函数 sayHi() = ${sayHi()}`);
+    print("out-func", "");
+
+    // ④ 默认参数
+    function greet2(name = "陌生人", greeting = "你好") {
+        return `${greeting}，${name}！`;
+    }
+    print("out-func", `默认参数 greet2()              → ${greet2()}`);
+    print("out-func", `默认参数 greet2("张三")         → ${greet2("张三")}`);
+    print("out-func", `默认参数 greet2("张三","早上好") → ${greet2("张三", "早上好")}`);
+    print("out-func", "");
+
+    // ⑤ 剩余参数
+    function sumAll(...nums) {
+        return nums.reduce((a, b) => a + b, 0);
+    }
+    print("out-func", `剩余参数 sumAll(1,2,3,4,5) = ${sumAll(1, 2, 3, 4, 5)}`);
+    print("out-func", "");
+
+    // ⑥ 没有 return 的函数返回 undefined
+    function noReturn() { const x = 1; }
+    print("out-func", `没有 return 的函数，返回值 = ${noReturn()}（类型 ${typeof noReturn()}）`);
+    print("out-func", "");
+
+    print("out-func", "— 作用域 —");
+    const globalVar = "我是全局的";
+    function outer() {
+        const outerVar = "我是 outer 的局部变量";
+        function inner() {
+            // 内层可以访问外层的变量 —— 作用域链
+            print("out-func", `  inner 里能读到：${globalVar} / ${outerVar}`);
+        }
+        return inner;
+    }
+    print("out-func", "  在外层读 outerVar 会报 ReferenceError（局部变量外部不可见）");
+    const fn = outer();
+    fn();   // outer 已执行完，inner 仍能访问 outerVar —— 闭包
+};
+
+document.getElementById("btn-closure").onclick = function () {
+    clearPanel("out-closure");
+
+    // 闭包计数器工厂：每次调用 createCounter 都会创建一份独立的 count
+    function createCounter() {
+        let count = 0;                  // 被返回的函数"记住"了
+        return function () {
+            count += 1;                 // 每次调用都改写这个被记住的变量
+            return count;
+        };
+    }
+
+    const c1 = createCounter();
+    const c2 = createCounter();
+
+    print("out-closure", "const c1 = createCounter();  const c2 = createCounter();");
+    print("out-closure", "");
+    print("out-closure", `c1() → ${c1()}`);
+    print("out-closure", `c1() → ${c1()}`);
+    print("out-closure", `c2() → ${c2()}   ← c2 有自己独立的 count，不受 c1 影响`);
+    print("out-closure", `c1() → ${c1()}`);
+    print("out-closure", "");
+    print("out-closure", "外部的代码无法直接读写 count —— 这就是「封装」。");
+};
+
+
+// ==========================================================================
+// 7. 课案原文示例：点击计数器（内联 script 方式）
+// ==========================================================================
+let counterCount = 0;
+const counterBtn = document.getElementById("counter-btn");
+const counterTitle = document.getElementById("counter-title");
+
+counterBtn.onclick = function () {
+    counterCount++;
+    counterTitle.textContent = "点击次数：" + counterCount;
+    console.log("点击次数：", counterCount);
+};
+
+</script>
+
+</body>
+</html>

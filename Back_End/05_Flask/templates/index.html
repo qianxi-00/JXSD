@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{# extends 必须写在第一行：声明本模板继承 base.html #}
+
+{% block title %}首页 · Flask 模板{% endblock %}
+
+{% block content %}
+<h1>你好，Flask 模板！</h1>
+
+<p class="hint">
+    这个页面由 <code>templates/index.html</code> 渲染，
+    样式来自 <code>static/style.css</code>，logo 来自 <code>static/logo.svg</code>。
+</p>
+
+<h2>1. 变量输出（自动转义）</h2>
+<ul>
+    <li>普通变量：{{ title }}</li>
+    <li>数字变量：{{ item_count }}（类型 {{ item_count.__class__.__name__ }}）</li>
+    <li>当前时间（后端传入）：{{ now.strftime("%Y-%m-%d %H:%M:%S") }}</li>
+    <li>
+        未转义的危险内容演示：
+        <code>{{ danger }}</code>
+        —— 模板里看到的是被转义后的实体，浏览器不会执行它（防 XSS）
+    </li>
+</ul>
+
+<h2>2. 过滤器（filter）</h2>
+<ul>
+    {# default 过滤器默认只处理"未定义"的变量；第二个参数 true 表示"假值（None/空串/0）也替换" #}
+    <li>默认值：{{ empty_value | default("（空值，已用默认值兜底）", true) }}</li>
+    <li>大写：{{ "flask" | upper }}</li>
+    <li>长度：{{ items | length }}</li>
+    <li>首字母大写：{{ "hello world" | title }}</li>
+    <li>截断：{{ "这是一段很长的中文文本，用来演示 truncate 过滤器" | truncate(12) }}</li>
+    <li>格式化：{{ 3.14159 | round(2) }}</li>
+    <li>拼接：{{ items | join("、") }}</li>
+</ul>
+
+<h2>3. 循环与判断</h2>
+<table>
+    <thead>
+        <tr><th>#</th><th>商品</th><th>价格</th><th>库存</th><th>状态</th></tr>
+    </thead>
+    <tbody>
+    {% for product in products %}
+        <tr>
+            {# loop.index 从 1 开始，loop.index0 从 0 开始，loop.first/last 判断首尾 #}
+            <td>{{ loop.index }}</td>
+            <td>{{ product.name }}</td>
+            <td>{{ "%.2f" | format(product.price) }}</td>
+            <td>{{ product.stock }}</td>
+            <td>
+                {% if product.stock == 0 %}
+                    <span class="tag danger">缺货</span>
+                {% elif product.stock < 10 %}
+                    <span class="tag warn">库存紧张</span>
+                {% else %}
+                    <span class="tag ok">充足</span>
+                {% endif %}
+            </td>
+        </tr>
+    {% else %}
+        {# for-else：循环体一次都没执行时走这里（列表为空的兜底） #}
+        <tr><td colspan="5">没有商品数据</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<h2>4. 静态文件</h2>
+<p>
+    下面这张图是通过 <code>url_for('static', filename='logo.svg')</code> 引入的：
+</p>
+<p><img src="{{ url_for('static', filename='logo.svg') }}" alt="静态 logo" width="72" height="72"></p>
+<p>
+    直接访问静态资源：<a href="{{ url_for('static', filename='style.css') }}">/static/style.css</a>
+</p>
+{% endblock %}

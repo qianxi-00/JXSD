@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：02_常用属性.html
+对应课案章节：CSS → CSS常用属性（文字样式 / 背景与边框 / 尺寸）
+本节知识点：
+  1. 文字样式：color / font-size / font-family / font-weight / text-align / line-height /
+     text-decoration / letter-spacing / text-shadow
+  2. 背景：background-color / background-image / background-size / background-position /
+     background-repeat / 渐变（linear-gradient）
+  3. 边框：border 简写与四边分别设置 / border-radius 圆角 / box-shadow 阴影
+  4. 尺寸：width / height / max-width / min-height / 百分比与视口单位 vw vh
+  5. 颜色写法：关键字 / #hex / rgb() / rgba() / hsl()
+如何打开查看：直接用浏览器打开本文件。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSS 常用属性演示</title>
+    <style>
+        /* ============ 页面基础排版（非知识点） ============ */
+        body {
+            font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+            max-width: 940px; margin: 24px auto; padding: 0 16px;
+            line-height: 1.75; color: #24292f;
+        }
+        code {
+            background: #f3f4f6; padding: 2px 6px; border-radius: 3px;
+            font-family: Consolas, Monaco, monospace; color: #c7254e;
+        }
+        pre {
+            background: #1f2430; color: #e6e6e6; padding: 12px 14px;
+            border-radius: 6px; overflow-x: auto; line-height: 1.5;
+        }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #b9c0c8; padding: 6px 12px; text-align: left; }
+        th { background: #f0f4f8; }
+        .demo-box {          /* 每个演示区的「舞台」 */
+            background: #f6f8fa;
+            border: 1px dashed #b9c0c8;
+            border-radius: 6px;
+            padding: 16px;
+            margin: 12px 0;
+        }
+        .sec {
+            border: 1px solid #e1e4e8; border-left: 5px solid #e67e22;
+            border-radius: 6px; padding: 12px 20px; margin: 20px 0; background: #fffdfa;
+        }
+        .sec > h2 { margin-top: 6px; color: #ca6f1e; }
+        .tip { background:#fff8e1; border-left:4px solid #f0ad4e; padding:10px 14px; margin:14px 0; border-radius:4px; }
+
+        /* ==================================================================
+           下面开始是「常用属性」的真实演示，每一块都对应课案的一个小节
+           ================================================================== */
+
+        /* ---------- 课案「文字样式」原文示例 ---------- */
+        #text-demo p {
+            color: #333;              /* 颜色：#333 是深灰色，等价于 rgb(51,51,51) */
+            font-size: 16px;          /* 字号 */
+            font-family: Arial;       /* 字体族 */
+            text-align: center;       /* 水平对齐：center 居中 */
+        }
+
+        /* ---------- 其他文字属性 ---------- */
+        #weight-demo .w100 { font-weight: 100; }   /* 数值越小越细 */
+        #weight-demo .w400 { font-weight: 400; }   /* 400 = normal（正常） */
+        #weight-demo .w700 { font-weight: 700; }   /* 700 = bold（加粗） */
+        #weight-demo .w900 { font-weight: 900; }
+
+        #align-demo .left   { text-align: left; }
+        #align-demo .center { text-align: center; }
+        #align-demo .right  { text-align: right; }
+        #align-demo .justify{ text-align: justify; }
+
+        #deco-demo .u  { text-decoration: underline; }        /* 下划线 */
+        #deco-demo .l  { text-decoration: line-through; }     /* 删除线 */
+        #deco-demo .n  { text-decoration: none; }             /* 去掉（常用于 <a>） */
+        #deco-demo .sh { text-shadow: 2px 2px 4px rgba(0,0,0,.4); }  /* 文字阴影：右偏移 下偏移 模糊 颜色 */
+
+        #space-demo .wide  { letter-spacing: 8px; }   /* 字间距 */
+        #space-demo .tall  { line-height: 2.4; }      /* 行高：无单位数字 = 字号的倍数 */
+        #space-demo .upper { text-transform: uppercase; }  /* 全部大写 */
+
+        /* ---------- 尺寸 ---------- */
+        /* 课案「尺寸」原文示例 */
+        .box {
+            width: 200px;
+            height: 100px;
+            background-color: #ddd;
+            border: 1px solid #999;
+        }
+        /* 百分比宽度：占父容器的 60% */
+        .box-percent {
+            width: 60%;
+            height: 60px;
+            background: #aed6f1;
+            border: 1px solid #5dade2;
+        }
+        /* 视口单位：vw = 视口宽度的 1%，vh = 视口高度的 1% */
+        .box-vw {
+            width: 30vw;
+            height: 60px;
+            background: #f9e79f;
+            border: 1px solid #d4ac0d;
+        }
+        /* 最大宽度：宽度会自适应，但绝不超过 max-width */
+        .box-max {
+            max-width: 420px;
+            height: 40px;
+            background: #d5f5e3;
+            border: 1px solid #2ecc71;
+        }
+
+        /* ---------- 背景 ---------- */
+        /* 课案「背景与边框」原文示例 */
+        #bg-border-original div {
+            background-color: #f0f0f0;
+            border: 1px solid black;
+            padding: 10px;
+            margin: 20px;
+        }
+
+        #bg-demo .solid  { background-color: #3498db; color: #fff; }
+        #bg-demo .rgba   { background-color: rgba(231, 76, 60, .45); } /* 第 4 个参数是透明度 0~1 */
+        #bg-demo .grad   { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }
+        #bg-demo .img {
+            /* 用 CSS 渐变模拟「背景图」，这样不需要任何图片文件也能演示
+               background-image / background-size / background-repeat / background-position 的用法。
+               真实写法示例（需要你有图）：
+                   background-image: url("img/bg.jpg");
+                   background-size: cover;      /* 铺满，可能裁掉边缘 */
+                   background-repeat: no-repeat;
+                   background-position: center;
+            */
+            background-image: repeating-linear-gradient(45deg, #f1c40f 0 10px, #f39c12 10px 20px);
+            background-size: auto;
+            background-repeat: repeat;
+            background-position: center;
+        }
+        #bg-demo > div { padding: 10px; margin: 8px 0; border-radius: 4px; }
+
+        /* ---------- 边框 ---------- */
+        #border-demo .simple   { border: 2px solid #e74c3c; padding: 8px; }
+        #border-demo .dashed   { border: 2px dashed #3498db; padding: 8px; }
+        #border-demo .dotted   { border: 3px dotted #27ae60; padding: 8px; }
+        #border-demo .sides    {                  /* 四边分别设置 */
+            border-top: 4px solid #e74c3c;
+            border-right: 4px solid #f1c40f;
+            border-bottom: 4px solid #2ecc71;
+            border-left: 4px solid #3498db;
+            padding: 8px;
+        }
+        #border-demo .rounded  { border: 2px solid #8e44ad; border-radius: 16px; padding: 8px; }
+        #border-demo .circle   {
+            width: 90px; height: 90px; line-height: 86px; text-align: center;
+            background: #8e44ad; color: #fff;
+            border-radius: 50%;         /* 50% = 正圆 */
+        }
+        #border-demo .shadow   {
+            padding: 10px; background: #fff;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, .25);   /* 水平 垂直 模糊 颜色 */
+        }
+        #border-demo > div { margin: 10px 0; }
+
+        /* ---------- 颜色写法 ---------- */
+        .c-keyword { color: red; }
+        .c-hex6    { color: #3498db; }
+        .c-hex3    { color: #f39; }              /* #f39 = #ff3399 的简写 */
+        .c-rgb     { color: rgb(231, 76, 60); }
+        .c-rgba    { color: rgba(231, 76, 60, .35); }
+        .c-hsl     { color: hsl(145, 63%, 42%); }
+        .c-box { display:inline-block; width:52px; height:52px; border-radius:6px; margin-right:8px;
+                 vertical-align:middle; border:1px solid #ccc; }
+        .b-hex     { background: #3498db; }
+        .b-rgba    { background: rgba(52, 152, 219, .3); }
+        .b-gradient{ background: linear-gradient(90deg, #ff9a9e, #fad0c4); }
+    </style>
+</head>
+<body>
+
+<h1>CSS 常用属性演示</h1>
+<p>
+    课案把「常用属性」分成三组：<b>文字样式</b>、<b>背景与边框</b>、<b>尺寸</b>。
+    下面每一组都把课案原文的例子原样跑了一遍，并补充了实际工作中最常用的其他属性。
+    每个属性都写明了「它管什么 / 可以填什么值 / 为什么要这么写」。
+</p>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>一、文字样式</h2>
+
+    <h3>1）课案原文示例</h3>
+    <div class="demo-box" id="text-demo">
+        <p>这是一段居中显示的 16 号灰色 Arial 文字</p>
+    </div>
+<pre>p {
+    color: #333;            /* 文字颜色 */
+    font-size: 16px;        /* 字号 */
+    font-family: Arial;     /* 字体族 */
+    text-align: center;     /* 水平居中 */
+}</pre>
+
+    <h3>2）文字属性速查</h3>
+    <table>
+        <tr><th>属性</th><th>作用</th><th>常用值</th></tr>
+        <tr><td><code>color</code></td><td>文字颜色</td><td>颜色关键字 / #hex / rgb() / rgba()</td></tr>
+        <tr><td><code>font-size</code></td><td>字号</td><td><code>16px</code> / <code>1.2rem</code> / <code>120%</code></td></tr>
+        <tr><td><code>font-family</code></td><td>字体族（可写多个，从左往右找，逗号分隔）</td><td><code>"Microsoft YaHei", Arial, sans-serif</code></td></tr>
+        <tr><td><code>font-weight</code></td><td>字重（粗细）</td><td><code>400</code>=normal、<code>700</code>=bold</td></tr>
+        <tr><td><code>text-align</code></td><td>水平对齐（作用于<b>块级</b>元素内部的行内内容）</td><td><code>left</code> / <code>center</code> / <code>right</code> / <code>justify</code></td></tr>
+        <tr><td><code>line-height</code></td><td>行高（行与行之间的距离）</td><td>无单位数字（字号的倍数，如 <code>1.75</code>）<b>最推荐</b></td></tr>
+        <tr><td><code>text-decoration</code></td><td>装饰线</td><td><code>none</code> / <code>underline</code> / <code>line-through</code></td></tr>
+        <tr><td><code>letter-spacing</code></td><td>字间距</td><td><code>2px</code></td></tr>
+        <tr><td><code>text-shadow</code></td><td>文字阴影</td><td><code>2px 2px 4px rgba(0,0,0,.4)</code></td></tr>
+        <tr><td><code>text-transform</code></td><td>大小写转换</td><td><code>uppercase</code> / <code>lowercase</code> / <code>capitalize</code></td></tr>
+    </table>
+
+    <h3>3）font-weight 字重</h3>
+    <div class="demo-box" id="weight-demo">
+        <p class="w100">font-weight: 100 —— 极细</p>
+        <p class="w400">font-weight: 400 —— 正常（等于 normal）</p>
+        <p class="w700">font-weight: 700 —— 加粗（等于 bold）</p>
+        <p class="w900">font-weight: 900 —— 极粗</p>
+    </div>
+    <p style="font-size:13px;color:#57606a;">
+        注意：具体能显示几种粗细，取决于你的系统里装没装这个字体的对应字重。中文字体通常只有 400 和 700 两档。
+    </p>
+
+    <h3>4）text-align 水平对齐</h3>
+    <div class="demo-box" id="align-demo">
+        <p class="left">text-align: left —— 左对齐（默认）</p>
+        <p class="center">text-align: center —— 居中</p>
+        <p class="right">text-align: right —— 右对齐</p>
+        <p class="justify">
+            text-align: justify —— 两端对齐。文字会被拉伸到左右两边都贴齐，
+            中文长段落用它看起来更整齐，但最后一行通常还是会保持自然宽度。
+        </p>
+    </div>
+    <div class="tip">
+        <b>常见的「居中不生效」问题：</b><code>text-align: center</code> 只能让<b>块级元素内部的行内内容</b>水平居中。
+        想让一个「盒子本身」水平居中，要用 <code>margin: 0 auto;</code>，
+        或者用后面要学的 <code>display:flex; justify-content:center;</code>。
+    </div>
+
+    <h3>5）装饰、阴影、间距</h3>
+    <div class="demo-box" id="deco-demo">
+        <p><span class="u">下划线 underline</span></p>
+        <p><span class="l">删除线 line-through</span></p>
+        <p><a href="#deco-demo" class="n">链接去掉下划线（text-decoration: none，做导航菜单必备）</a></p>
+        <p class="sh" style="font-size:24px;font-weight:bold;">文字阴影 text-shadow</p>
+    </div>
+    <div class="demo-box" id="space-demo">
+        <p class="wide">字间距 letter-spacing: 8px</p>
+        <p class="tall">行高 line-height: 2.4 —— 第一行<br>行高 line-height: 2.4 —— 第二行<br>行高 line-height: 2.4 —— 第三行</p>
+        <p class="upper">text-transform: uppercase makes this lowercase text SHOUT</p>
+    </div>
+<pre>.wide  { letter-spacing: 8px; }
+.tall  { line-height: 2.4; }            /* 无单位 = 字号的倍数，最推荐 */
+.upper { text-transform: uppercase; }</pre>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>二、尺寸</h2>
+
+    <h3>1）课案原文示例</h3>
+    <div class="demo-box">
+        <div class="box">宽 200px × 高 100px</div>
+    </div>
+<pre>.box {
+    width: 200px;
+    height: 100px;
+    background-color: #ddd;
+    border: 1px solid #999;
+}</pre>
+
+    <h3>2）尺寸单位</h3>
+    <table>
+        <tr><th>单位</th><th>含义</th><th>特点</th></tr>
+        <tr><td><code>px</code></td><td>像素</td><td>绝对单位，所见即所得，最常用</td></tr>
+        <tr><td><code>%</code></td><td>百分比</td><td>相对<b>父容器</b>的同名尺寸（宽度相对父宽、高度相对父高）</td></tr>
+        <tr><td><code>vw</code> / <code>vh</code></td><td>视口宽/高的 1%</td><td><code>100vw</code> = 整个窗口宽度；做满屏 banner 常用</td></tr>
+        <tr><td><code>rem</code></td><td>根元素（html）字号的倍数</td><td>改一个根字号就能整站缩放，适合做响应式</td></tr>
+        <tr><td><code>em</code></td><td>当前元素字号的倍数</td><td>会层层相乘，容易算错，新手慎用</td></tr>
+        <tr><td><code>auto</code></td><td>自动</td><td>块级元素宽度默认 auto = 撑满父容器</td></tr>
+    </table>
+
+    <h3>3）几种宽度的实际效果</h3>
+    <div class="demo-box">
+        <p style="margin:0 0 6px;">固定宽度 <code>width: 200px</code>：</p>
+        <div class="box">200px 固定</div>
+
+        <p style="margin:12px 0 6px;">百分比 <code>width: 60%</code>（随父容器变化，把浏览器窗口拉窄看看）：</p>
+        <div class="box-percent">父容器的 60%</div>
+
+        <p style="margin:12px 0 6px;">视口单位 <code>width: 30vw</code>（窗口宽度的 30%）：</p>
+        <div class="box-vw">30vw</div>
+
+        <p style="margin:12px 0 6px;">最大宽度 <code>max-width: 420px</code>（宽度自适应但不超过上限）：</p>
+        <div class="box-max">max-width: 420px</div>
+    </div>
+    <div class="tip">
+        <b>重要提醒：</b>默认情况下 <code>width</code> 指的是<b>内容区</b>的宽度，
+        元素最终占的总宽度 = <code>width + padding + border</code>（padding 和 border 会"往外撑"）。
+        这正是<a href="03_盒子模型.html">盒子模型</a>要讲的内容。想让 width 包含 padding 和 border，
+        就设置 <code>box-sizing: border-box;</code>——这是现代 CSS 的第一条必备规则。
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>三、背景与边框</h2>
+
+    <h3>1）课案原文示例</h3>
+    <div class="demo-box" id="bg-border-original" style="padding:0;">
+        <div>有灰色背景、黑色边框、内边距和外边距的盒子</div>
+    </div>
+<pre>div {
+    background-color: #f0f0f0;
+    border: 1px solid black;
+    padding: 10px;
+    margin: 20px;
+}</pre>
+
+    <h3>2）背景属性</h3>
+    <div class="demo-box" id="bg-demo">
+        <div class="solid">background-color: #3498db（纯色）</div>
+        <div class="rgba">background-color: rgba(231, 76, 60, .45)（半透明，能看到底下的灰）</div>
+        <div class="grad">background: linear-gradient(135deg, #667eea, #764ba2)（渐变，无需图片文件）</div>
+        <div class="img">background-image + size + repeat + position（这里用渐变模拟"背景图"，仅作展示）</div>
+    </div>
+    <table>
+        <tr><th>属性</th><th>作用</th><th>常用值</th></tr>
+        <tr><td><code>background-color</code></td><td>背景色</td><td>任意颜色值 / <code>transparent</code></td></tr>
+        <tr><td><code>background-image</code></td><td>背景图</td><td><code>url("img/bg.png")</code> 或 <code>linear-gradient(...)</code></td></tr>
+        <tr><td><code>background-size</code></td><td>背景图尺寸</td><td><code>cover</code>（铺满并裁切）/ <code>contain</code>（完整显示留白）/ <code>100% 100%</code></td></tr>
+        <tr><td><code>background-repeat</code></td><td>是否平铺</td><td><code>repeat</code> / <code>no-repeat</code></td></tr>
+        <tr><td><code>background-position</code></td><td>背景图位置</td><td><code>center</code> / <code>top left</code> / <code>50% 50%</code></td></tr>
+        <tr><td><code>background</code></td><td>上面全部属性的<b>简写</b></td><td><code>background: #eee url("a.png") no-repeat center / cover;</code></td></tr>
+    </table>
+    <div class="tip">
+        <b>为什么推荐渐变而不是背景图？</b>渐变是浏览器实时算出来的，<b>零请求、零流量、任意分辨率都不糊</b>。
+        做按钮、卡片头图、占位色块时优先考虑渐变。
+    </div>
+
+    <h3>3）边框属性</h3>
+    <div class="demo-box" id="border-demo">
+        <div class="simple">border: 2px solid #e74c3c（实线）</div>
+        <div class="dashed">border: 2px dashed #3498db（虚线）</div>
+        <div class="dotted">border: 3px dotted #27ae60（点线）</div>
+        <div class="sides">四边分别设置 border-top / right / bottom / left（四色边框）</div>
+        <div class="rounded">border-radius: 16px（圆角）</div>
+        <div class="circle">50%</div>
+        <div class="shadow">box-shadow: 0 4px 12px rgba(0,0,0,.25)（盒子阴影，做卡片必备）</div>
+    </div>
+<pre>/* border 简写顺序：宽度 样式 颜色，三者顺序可换但建议固定 */
+border: 1px solid black;
+
+/* 只要下边框（做分割线常用） */
+border-bottom: 1px solid #e1e4e8;
+
+/* 圆角：50% 变正圆 */
+border-radius: 8px;
+
+/* box-shadow: 水平偏移 垂直偏移 模糊半径 颜色 */
+box-shadow: 0 4px 12px rgba(0, 0, 0, .25);
+/* 内阴影加 inset： */
+box-shadow: inset 0 0 8px rgba(0, 0, 0, .2);</pre>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>四、颜色怎么写</h2>
+    <table>
+        <tr><th>写法</th><th>示例</th><th>说明</th></tr>
+        <tr><td>颜色关键字</td><td><span class="c-keyword">color: red</span></td><td>只有 140 多个预设名，够用但不精确</td></tr>
+        <tr><td>6 位十六进制</td><td><span class="c-hex6">color: #3498db</span></td><td>最常用：#RRGGBB，每两位 00~FF</td></tr>
+        <tr><td>3 位十六进制</td><td><span class="c-hex3">color: #f39</span></td><td>每两位相同才能简写，<code>#f39</code> = <code>#ff3399</code></td></tr>
+        <tr><td>rgb()</td><td><span class="c-rgb">color: rgb(231,76,60)</span></td><td>十进制 0~255</td></tr>
+        <tr><td>rgba()</td><td><span class="c-rgba">color: rgba(231,76,60,.35)</span></td><td>第四个参数是透明度 0~1，做半透明必用</td></tr>
+        <tr><td>hsl()</td><td><span class="c-hsl">color: hsl(145,63%,42%)</span></td><td>色相/饱和度/亮度，调同色系深浅最方便</td></tr>
+    </table>
+    <div class="demo-box">
+        <span class="c-box b-hex"></span><code>#3498db</code>&nbsp;&nbsp;
+        <span class="c-box b-rgba"></span><code>rgba(52,152,219,.3)</code>&nbsp;&nbsp;
+        <span class="c-box b-gradient"></span><code>linear-gradient(90deg,#ff9a9e,#fad0c4)</code>
+    </div>
+    <div class="tip">
+        <b>取色技巧：</b>按 F12 → 在 Styles 面板里点任意颜色的小方块，会弹出取色器，
+        可以可视化调整并实时复制出 hex / rgb / hsl 各种写法。不需要装任何工具。
+    </div>
+</div>
+
+<hr>
+<p style="color:#57606a;font-size:14px;">
+    下一站：<code>03_盒子模型.html</code>（padding / border / margin 到底怎么算）。
+    配套总结见 <code>CSS知识点.md</code>。
+</p>
+
+</body>
+</html>

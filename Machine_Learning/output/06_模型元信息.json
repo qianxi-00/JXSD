@@ -1,0 +1,30 @@
+{
+  "feature_names": [
+    "sepal length (cm)",
+    "sepal width (cm)",
+    "petal length (cm)",
+    "petal width (cm)"
+  ],
+  "target_names": [
+    "setosa",
+    "versicolor",
+    "virginica"
+  ],
+  "n_features_in": 4,
+  "classes": [
+    0,
+    1,
+    2
+  ],
+  "trained_at": "2026-09-11 16:44:24",
+  "train_seconds": 0.071876,
+  "test_accuracy": 0.888889,
+  "n_train_samples": 105,
+  "random_state": 42,
+  "library_versions": {
+    "python": "3.12.12",
+    "scikit-learn": "1.9.0",
+    "numpy": "2.5.2",
+    "joblib": "1.6.0"
+  }
+}

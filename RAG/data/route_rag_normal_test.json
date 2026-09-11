@@ -1,0 +1,25 @@
+{
+  "route": "rag",
+  "cache_hit": null,
+  "sources": [
+    {
+      "source_file": "data/invoice/045_INV20250145.png",
+      "ticket_type": "invoice",
+      "ticket_no": "INV20250145",
+      "rerank_score": 0.9991051554679871
+    },
+    {
+      "source_file": "data/invoice/023_INV20250123.png",
+      "ticket_type": "invoice",
+      "ticket_no": "INV20250123",
+      "rerank_score": 0.9973753690719604
+    },
+    {
+      "source_file": "data/invoice/047_INV20250147.png",
+      "ticket_type": "invoice",
+      "ticket_no": "INV20250147",
+      "rerank_score": 0.8577272891998291
+    }
+  ],
+  "answer": "根据票据资料，惠普企业有限公司开给郑州物流有限公司的发票有两张，金额分别为：\n\n- 发票 INV20250145，金额：161,119.15 元 [1]\n- 发票 INV20250123，金额：39,907.16 元 [2]\n\n两张发票合计总金额为 **201,026.31 元**。"
+}

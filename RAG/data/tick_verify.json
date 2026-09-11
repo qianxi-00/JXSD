@@ -1,0 +1,184 @@
+{
+  "schema": [
+    {
+      "field_id": 100,
+      "name": "id",
+      "description": "",
+      "type": 21,
+      "params": {
+        "max_length": 64
+      },
+      "is_primary": true
+    },
+    {
+      "field_id": 101,
+      "name": "ticket_type",
+      "description": "",
+      "type": 21,
+      "params": {
+        "max_length": 16
+      }
+    },
+    {
+      "field_id": 102,
+      "name": "ticket_no",
+      "description": "",
+      "type": 21,
+      "params": {
+        "max_length": 64
+      },
+      "nullable": true
+    },
+    {
+      "field_id": 103,
+      "name": "person",
+      "description": "",
+      "type": 21,
+      "params": {
+        "max_length": 64
+      },
+      "nullable": true
+    },
+    {
+      "field_id": 104,
+      "name": "date_int",
+      "description": "",
+      "type": 5,
+      "params": {},
+      "nullable": true
+    },
+    {
+      "field_id": 105,
+      "name": "amount_fen",
+      "description": "",
+      "type": 5,
+      "params": {},
+      "nullable": true
+    },
+    {
+      "field_id": 106,
+      "name": "route",
+      "description": "",
+      "type": 21,
+      "params": {
+        "max_length": 256
+      },
+      "nullable": true
+    },
+    {
+      "field_id": 107,
+      "name": "counterparty",
+      "description": "",
+      "type": 21,
+      "params": {
+        "max_length": 128
+      },
+      "nullable": true
+    },
+    {
+      "field_id": 108,
+      "name": "semantic_text",
+      "description": "",
+      "type": 21,
+      "params": {
+        "max_length": 8192
+      }
+    },
+    {
+      "field_id": 109,
+      "name": "ocr_text",
+      "description": "",
+      "type": 21,
+      "params": {
+        "max_length": 16384
+      }
+    },
+    {
+      "field_id": 110,
+      "name": "source_file",
+      "description": "",
+      "type": 21,
+      "params": {
+        "max_length": 256
+      }
+    },
+    {
+      "field_id": 111,
+      "name": "vec",
+      "description": "",
+      "type": 101,
+      "params": {
+        "dim": 1024
+      },
+      "nullable": true
+    }
+  ],
+  "samples": {
+    "flight": [
+      {
+        "id": "ticket_00cd29743ac034fe258c3861",
+        "ticket_no": "8762369777769",
+        "person": "董文",
+        "date_int": null,
+        "amount_fen": null,
+        "route": "ERLIBANJICHANG-XINZHENGJICHANG",
+        "counterparty": null,
+        "source_file": "data/flight/ticket-091.png"
+      },
+      {
+        "id": "ticket_02e4ac1f9740e4d90dbb0d0b",
+        "ticket_no": "8762369777769",
+        "person": "王萍",
+        "date_int": null,
+        "amount_fen": null,
+        "route": "ERLIBANJICHANG-BAIYUNJICHANG",
+        "counterparty": null,
+        "source_file": "data/flight/ticket-054.png"
+      }
+    ],
+    "invoice": [
+      {
+        "id": "ticket_0223425794916bb536e0970f",
+        "ticket_no": "INV20250161",
+        "person": "成都软件有限公司",
+        "date_int": 20251014,
+        "amount_fen": 4978941,
+        "route": "",
+        "counterparty": "联想集团有限公司",
+        "source_file": "data/invoice/061_INV20250161.png"
+      },
+      {
+        "id": "ticket_07ea211d507c0105863f562a",
+        "ticket_no": "INV20250176",
+        "person": "武汉通信有限公司",
+        "date_int": 20251010,
+        "amount_fen": 5548062,
+        "route": "",
+        "counterparty": "惠普企业有限公司",
+        "source_file": "data/invoice/076_INV20250176.png"
+      }
+    ],
+    "train": [
+      {
+        "date_int": 20270702,
+        "amount_fen": 30190,
+        "route": "Wulumuqi-Kunming",
+        "counterparty": null,
+        "source_file": "data/train/019_T20230829236880.png",
+        "id": "ticket_0355f2a0e417328c9714883d",
+        "ticket_no": "T20230829236880",
+        "person": "谢梅"
+      },
+      {
+        "date_int": 20251207,
+        "amount_fen": 30630,
+        "route": "Shenzhen-Qingdao",
+        "counterparty": null,
+        "source_file": "data/train/083_T20170812763521.png",
+        "id": "ticket_0771e1a9210d62e2977bc6ab",
+        "ticket_no": "T20170812763521",
+        "person": "刘帅"
+      }
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+[
+  {
+    "case": "1_cache_hit_stream",
+    "stream_chunks": 11,
+    "elapsed_s": 0.71,
+    "text_head": "根据登机牌,赵飞乘坐CA1276航班,从阿克苏机场(AKESUJICHANG)飞往首都机场(SHOUDUJICHANG)"
+  },
+  {
+    "case": "2_route_direct",
+    "route": "direct",
+    "sources": [],
+    "answer": "1+1=2。我是DeepSeek，一个免费、乐于助人的AI助手，随时准备回答你的问题。"
+  },
+  {
+    "case": "3_route_rag_normal",
+    "route": null,
+    "conservative": null,
+    "sources_count": 0,
+    "answer": "王霞的火车票票号T20230526263936,金额147.00元,乘车日期2026年01月03日,从合肥站到乌鲁木齐站,08车08A号。"
+  },
+  {
+    "case": "4_rag_no_evidence_conservative",
+    "route": "rag",
+    "conservative": true,
+    "sources_count": 0,
+    "answer": "抱歉,我在票据知识库中没有检索到与您的问题足够相关的可靠依据,为避免提供不准确的信息,这个问题我暂时无法作答。您可以补充票号、日期、人员或公司名称等更多线索后再次提问,我会尽力为您核实。"
+  }
+]

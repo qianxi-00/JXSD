@@ -1,0 +1,108 @@
+# ============================================================
+# k8s/configmap.yaml —— 非敏感配置（环境变量、配置文件）
+# ============================================================
+# 对应课案章节：后端开发基础 → 容器部署 → K8S（配置与密钥管理）
+#
+# ConfigMap 与 Secret 的区别（面试高频）：
+#   ConfigMap  存【非敏感】配置（数据库地址、日志级别、功能开关），明文存储
+#   Secret     存【敏感】信息（密码、Token、证书），Base64 编码（注意：不是加密！）
+#
+# 重要提醒：Secret 默认只是 Base64 编码，任何有读取权限的人都能解出来。
+#   生产环境必须额外做：
+#     · 开启 etcd 静态加密（EncryptionConfiguration）
+#     · 开启 RBAC，限制谁可以 get secret
+#     · 或使用外部密钥管理（Vault / 云 KMS / SealedSecrets）
+#
+# 用法：
+#   kubectl apply -f 09_容器部署/k8s/configmap.yaml
+#   kubectl get configmap -n demo
+#   kubectl describe configmap book-api-config -n demo
+# ============================================================
+
+# ------------------------------------------------------------
+# 1. ConfigMap：键值对形式（envFrom 注入后会变成环境变量）
+# ------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: book-api-config
+  namespace: demo
+  labels:
+    app: book-api
+data:
+  # 这些键会原样变成容器里的环境变量名
+  APP_ENV: "production"
+  LOG_LEVEL: "INFO"
+  TZ: "Asia/Shanghai"
+  WORKERS: "2"
+  # 注意：这里写 SQLite 只是为了让示例"开箱即用"；
+  #       真实生产应指向 MySQL/PostgreSQL 的 Service 名，例如：
+  #       mysql+pymysql://bookuser:${PASSWORD}@mysql-svc.demo.svc.cluster.local:3306/book_api
+  BOOK_API_DATABASE_URL: "sqlite:////data/book_api.db"
+  CELERY_BROKER_URL: "redis://redis-svc.demo.svc.cluster.local:6379/0"
+
+---
+# ------------------------------------------------------------
+# 2. ConfigMap：整个配置文件形式（volume 挂载后变成一个文件）
+# ------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: book-api-files
+  namespace: demo
+data:
+  # 这里的内容会被挂载成容器内的 /app/config/app.yaml 文件
+  app.yaml: |
+    app:
+      name: 图书管理 API
+      version: "1.0.0"
+    database:
+      pool_size: 5
+      max_overflow: 10
+      pool_recycle: 3600
+    logging:
+      level: INFO
+      rotation: 500 MB
+      retention: 30 days
+    feature_flags:
+      enable_cache: true
+      enable_metrics: false
+    cors:
+      allow_origins:
+        - http://localhost:3000
+        - http://127.0.0.1:3000
+
+---
+# ------------------------------------------------------------
+# 3. Secret：敏感信息（stringData 写明文，K8S 会自动做 Base64）
+# ------------------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: book-api-secret
+  namespace: demo
+type: Opaque                      # Opaque 表示"自定义的普通 Secret"
+stringData:
+  # stringData 允许直接写明文，提交时 K8S 自动转成 data 里的 Base64。
+  # 注意：这些示例密码绝对不能用在真实环境！
+  MYSQL_USER: "bookuser"
+  MYSQL_PASSWORD: "ChangeMe_User_123"
+  JWT_SECRET: "please-generate-a-random-secret-in-production"
+  REDIS_PASSWORD: "ChangeMe_Redis_123"
+  SESSION_SECRET: "please-generate-a-random-session-secret"
+
+# 生产环境生成随机密钥的推荐命令：
+#   python -c "import secrets; print(secrets.token_urlsafe(48))"
+
+---
+# ------------------------------------------------------------
+# 4. （可选）imagePullSecret：拉取私有镜像仓库时的凭证
+#    创建方式（不要写进 YAML 文件，用命令行创建，避免密码落入 Git）：
+#      kubectl create secret docker-registry regcred -n demo \
+#        --docker-server=registry.cn-hangzhou.aliyuncs.com \
+#        --docker-username=你的账号 \
+#        --docker-password=你的密码
+#    然后在 Deployment 的 spec.template.spec 里加：
+#      imagePullSecrets:
+#        - name: regcred
+# ------------------------------------------------------------

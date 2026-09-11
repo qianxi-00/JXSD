@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Flask 示例 logo">
+  <!-- 一个纯手写的 SVG 图标，用来演示"静态文件"：
+       浏览器直接请求该文件，Flask/Werkzeug 从磁盘读取后原样返回，
+       不经过任何 Python 视图函数，所以速度极快且不占应用线程。 -->
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="#3f7fd8"/>
+  <path d="M26 12h12v10l10 22a6 6 0 0 1-5.4 8.8H21.4A6 6 0 0 1 16 44L26 22Z"
+        fill="#ffffff" opacity="0.92"/>
+  <rect x="25" y="10" width="14" height="4" rx="2" fill="#ffffff"/>
+  <circle cx="28" cy="42" r="3" fill="#3f7fd8"/>
+  <circle cx="38" cy="47" r="2" fill="#3f7fd8"/>
+</svg>

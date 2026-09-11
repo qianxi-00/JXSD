@@ -1,0 +1,348 @@
+/* =============================================================================
+ * 文件：css/style.css
+ * 对应课案章节：CSS → 在HTML中使用CSS → 方式2：外部CSS文件（推荐）
+ *
+ * 这个文件被同目录上一层的 index.html 通过下面这行引入：
+ *     <link rel="stylesheet" href="css/style.css">
+ *
+ * 本节知识点：
+ *   1. 外部样式表的内容就是普通的 CSS，只是存放在单独的 .css 文件里。
+ *   2. CSS 推荐的组织顺序：全局重置 → 变量 → 基础排版 → 布局 → 组件 → 响应式。
+ *   3. CSS 变量的定义（--name）与使用（var(--name)）。
+ *   4. 用 @media 媒体查询做响应式适配。
+ *   5. 注释用 /* ... *\/（而不是 HTML 的 <!-- -->）。
+ *
+ * 温馨提示：改一改下面 :root 里的 --primary 颜色，刷新浏览器，
+ *          你会看到整个页面的配色同时变化 —— 这就是变量的价值。
+ * ========================================================================== */
+
+
+/* =============================================================================
+ * 0. 全局重置（Reset）
+ * -----------------------------------------------------------------------------
+ * 浏览器对每个标签都有一套「默认样式」（比如 <h1> 自带很大的上下 margin、
+ * <body> 自带 8px 外边距）。做真实页面时，第一步通常是「把这些默认值抹平」，
+ * 这样不同浏览器的表现才能一致（这叫"跨浏览器一致性"）。
+ * ========================================================================== */
+
+/* *, *::before, *::after 是通配选择器 + 伪元素，
+   一次性命中页面上所有元素（包括 ::before/::after 生成的假元素）。
+   这是现代 CSS 的第一条必备规则：让 width 包含 padding 和 border，
+   算尺寸才符合直觉。详见 03_盒子模型.html */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+/* 把常见元素的默认外边距/内边距清零。
+   注意 <ul> 默认有 padding-left，<h1>~<h6>、<p>、<body> 默认有 margin。 */
+body,
+h1, h2, h3, h4, h5, h6,
+p, ul, ol, li,
+figure, blockquote, dl, dd {
+    margin: 0;
+    padding: 0;
+}
+
+/* 去掉无序/有序列表前面的小圆点和缩进（做导航菜单必备） */
+ul, ol {
+    list-style: none;
+}
+
+/* 图片默认是行内元素，会在底部产生一条几像素的"幽灵空隙"。
+   改成 block 就消除了；max-width: 100% 保证图片不会撑破容器。 */
+img {
+    display: block;
+    max-width: 100%;
+}
+
+
+/* =============================================================================
+ * 1. CSS 变量（自定义属性）
+ * -----------------------------------------------------------------------------
+ * :root 就是 <html> 元素。在它上面定义变量，全页面的元素都能通过 var() 使用。
+ * 好处：改一处，全站生效 —— 这是实现「主题切换」最简洁的方式。
+ * 命名习惯：以 -- 开头，多个单词用中划线连接。
+ * ========================================================================== */
+:root {
+    --primary:       #2563eb;   /* 主色（标题渐变、链接、按钮） */
+    --primary-dark:  #1e40af;   /* 主色加深（悬停状态） */
+    --accent:        #059669;   /* 强调色（成功/次要标记） */
+    --text:          #1f2937;   /* 正文文字色 */
+    --text-muted:    #6b7280;   /* 次要文字色（说明文字、页脚） */
+    --bg:            #f6f8fb;   /* 页面底色 */
+    --surface:       #ffffff;   /* 卡片等"浮起来"的表面色 */
+    --border:        #e2e8f0;   /* 边框色 */
+    --radius:        10px;      /* 统一圆角 */
+    --radius-sm:     6px;       /* 小圆角 */
+    --shadow:        0 1px 3px rgba(15, 23, 42, .08);   /* 卡片投影 */
+    --shadow-lg:     0 8px 24px rgba(15, 23, 42, .10);  /* 悬停时更明显的投影 */
+    --container:     960px;     /* 内容最大宽度 */
+    --space:         18px;      /* 统一间距 */
+    --font:          "Microsoft YaHei", "微软雅黑", -apple-system, "Segoe UI",
+                     Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono:     Consolas, Monaco, "Courier New", monospace;
+}
+
+
+/* =============================================================================
+ * 2. 基础排版（元素级别的默认样式）
+ * ========================================================================== */
+body {
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.75;              /* 无单位 = 字号的倍数，最推荐 */
+    color: var(--text);
+    background: var(--bg);
+    padding-bottom: 40px;           /* 给页脚留点空间 */
+}
+
+/* 标题层级：用字号 + 粗细拉开层次，同时控制上下间距 */
+h1 { font-size: 30px; line-height: 1.3; }
+h2 { font-size: 21px; line-height: 1.35; margin-bottom: 6px; color: var(--primary-dark); }
+h3 { font-size: 17px; margin: 16px 0 6px; }
+
+p { margin: 8px 0; }
+
+/* 链接：默认是蓝色带下划线。真实项目通常去掉下划线，只在悬停时加回来。 */
+a {
+    color: var(--primary);
+    text-decoration: none;          /* 去掉下划线 */
+    border-bottom: 1px solid transparent;   /* 预留一个透明下边框，避免悬停时抖动 */
+    transition: border-color .15s ease;     /* 让变化有过渡动画 */
+}
+a:hover {
+    border-bottom-color: currentColor;      /* 悬停时下边框变成当前文字色 */
+}
+
+/* 行内代码：浅灰底 + 主题色文字，和正文区分开 */
+code {
+    font-family: var(--font-mono);
+    font-size: .9em;
+    background: #eef2f7;
+    color: #b91c1c;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+}
+
+
+/* =============================================================================
+ * 3. 布局：容器与页头页脚
+ * ========================================================================== */
+
+/* .container 是页面的"内容栏"：限制最大宽度 + 水平居中。
+   注意 margin: 0 auto 才是「块级元素水平居中」的标准写法，
+   而不是 text-align: center（那个只对内部行内内容生效）。 */
+.container {
+    max-width: var(--container);
+    margin: 0 auto;             /* 上下 0，左右自动 = 水平居中 */
+    padding: 0 18px;
+}
+
+/* 页头：用线性渐变做背景，不需要任何图片文件 */
+.page-header {
+    background: linear-gradient(135deg, var(--primary) 0%, #7c3aed 100%);
+    color: #fff;
+    padding: 38px 18px 32px;
+    margin-bottom: 24px;
+    text-align: center;
+}
+.page-header h1 {
+    margin-bottom: 8px;
+    letter-spacing: 1px;
+}
+.page-header .subtitle {
+    opacity: .9;
+    font-size: 15px;
+    max-width: 640px;
+    margin: 0 auto;
+}
+/* 页头里的 code 需要单独调色，否则浅灰底在深色背景上很突兀 */
+.page-header code {
+    background: rgba(255, 255, 255, .2);
+    color: #fff;
+}
+
+/* 页脚 */
+.page-footer {
+    max-width: var(--container);
+    margin: 30px auto 0;
+    padding: 18px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+}
+
+
+/* =============================================================================
+ * 4. 组件：卡片
+ * -----------------------------------------------------------------------------
+ * 一个「卡片」的经典配方：
+ *   白底 + 圆角 + 细边框 + 轻投影 + 悬停时加重投影。
+ * ========================================================================== */
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    margin-bottom: var(--space);
+    box-shadow: var(--shadow);
+    transition: box-shadow .2s ease, transform .2s ease;
+}
+.card:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);        /* 向上浮起 2px */
+}
+/* 卡片标题左侧加一条主色竖线，纯装饰，用 border-left 最省事 */
+.card > h2 {
+    border-left: 4px solid var(--primary);
+    padding-left: 10px;
+    margin-bottom: 12px;
+}
+/* .card 里第一个子元素不要有上外边距，否则卡片顶部会多出一块空白 */
+.card > *:first-child { margin-top: 0; }
+/* 最后一个子元素不要有下外边距，同理 */
+.card > *:last-child  { margin-bottom: 0; }
+
+
+/* =============================================================================
+ * 5. 组件：表格
+ * ========================================================================== */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;      /* 合并相邻单元格的边框（否则会有双线） */
+    margin: 14px 0;
+    font-size: 14px;
+}
+.data-table th,
+.data-table td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;            /* 内容顶部对齐，多行单元格更整齐 */
+}
+.data-table thead th {
+    background: #f1f5f9;
+    color: var(--primary-dark);
+    font-weight: 600;
+    white-space: nowrap;            /* 表头不换行 */
+}
+/* 斑马纹：偶数行浅灰底，长表格更易读。
+   :nth-child(even) 选中 tbody 里的偶数行。 */
+.data-table tbody tr:nth-child(even) {
+    background: #fafbfc;
+}
+.data-table tbody tr:hover {
+    background: #eff6ff;            /* 悬停高亮当前行 */
+}
+
+
+/* =============================================================================
+ * 6. 组件：提示框（callout）
+ * ========================================================================== */
+.callout {
+    background: #eff6ff;
+    border-left: 4px solid var(--primary);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    padding: 12px 16px;
+    margin: 14px 0;
+    font-size: 14.5px;
+}
+/* 加一个 .warn 修饰类，就变成黄色警告风格。
+   这是 BEM 命名思想的简化版：.callout 是基础，.callout.warn 是变体。 */
+.callout.warn {
+    background: #fffbeb;
+    border-left-color: #f59e0b;
+}
+/* callout 里的代码块要紧贴，去掉多余外边距 */
+.callout .code-block { margin-top: 10px; }
+
+
+/* =============================================================================
+ * 7. 组件：按钮与标签
+ * ========================================================================== */
+.btn {
+    font-family: inherit;           /* 关键：按钮默认不继承页面字体，必须显式声明 */
+    font-size: 14px;
+    padding: 7px 16px;
+    border: 1px solid var(--primary);
+    border-radius: var(--radius-sm);
+    background: var(--primary);
+    color: #fff;
+    cursor: pointer;                /* 鼠标变成小手，提示"可点击" */
+    transition: background .15s ease, transform .1s ease;
+}
+.btn:hover  { background: var(--primary-dark); border-color: var(--primary-dark); }
+.btn:active { transform: translateY(1px); }     /* 按下时下沉 1px，模拟物理反馈 */
+
+/* 次要按钮：白底 + 主色边框 + 主色文字 */
+.btn-ghost {
+    background: transparent;
+    color: var(--primary);
+}
+.btn-ghost:hover {
+    background: #eff6ff;
+    color: var(--primary-dark);
+}
+
+/* 小标签 */
+.tag {
+    display: inline-block;
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: 999px;           /* 用一个很大的值 = 完全圆角（胶囊形） */
+    background: #d1fae5;
+    color: var(--accent);
+    margin-left: 6px;
+}
+
+
+/* =============================================================================
+ * 8. 代码展示块
+ * ========================================================================== */
+.code-block {
+    background: #1f2430;
+    color: #e6e6e6;
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    overflow-x: auto;               /* 代码太宽时出现横向滚动条，而不是撑破卡片 */
+    line-height: 1.5;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    white-space: pre;               /* 保留原始空格和换行 */
+    margin: 10px 0;
+}
+
+
+/* =============================================================================
+ * 9. 响应式：@media 媒体查询
+ * -----------------------------------------------------------------------------
+ * 语法：@media (条件) { 满足条件时才生效的 CSS }
+ * 上面写的是"桌面样式"，这里写的规则会「覆盖」上面的同名规则
+ * （因为写在后面，权重相同时后者胜 —— 这正是"层叠"的用法）。
+ * ========================================================================== */
+
+/* 屏幕宽度 ≤ 700px 时（手机 / 窄窗口） */
+@media (max-width: 700px) {
+    body { font-size: 15px; }
+
+    .page-header { padding: 26px 14px 22px; }
+    .page-header h1 { font-size: 22px; }
+
+    .card { padding: 16px 14px; }
+    .card > h2 { font-size: 18px; }
+
+    /* 表格在窄屏上允许横向滚动，避免内容被压扁 */
+    .data-table { display: block; overflow-x: auto; white-space: nowrap; }
+
+    .container { padding: 0 12px; }
+}
+
+/* 打印时隐藏页头页脚，只打印正文（真实项目常见需求） */
+@media print {
+    .page-header { background: none; color: #000; }
+    .page-footer { display: none; }
+    .card { box-shadow: none; border: 1px solid #ccc; }
+}

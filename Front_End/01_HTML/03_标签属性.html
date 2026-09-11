@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：03_标签属性.html
+对应课案章节：HTML → 标签属性
+本节知识点：
+  1. 属性写在哪里：写在「开始标签」里，格式是 属性名="值"。
+  2. 课案里的三个核心属性：href（链接地址）、class（类名）、id（唯一标识）。
+  3. 全局属性 vs 专用属性；class 与 id 的区别与使用场景。
+  4. 常见属性速查（src / alt / title / style / target / disabled / placeholder / type ...）。
+  5. data-* 自定义属性（为 JavaScript 留数据）。
+如何打开查看：直接用浏览器打开本文件；打开控制台（F12）可以看到 data-* 属性的读取演示。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML 标签属性演示</title>
+    <style>
+        body {
+            font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+            max-width: 900px; margin: 24px auto; padding: 0 16px;
+            line-height: 1.75; color: #24292f;
+        }
+        code {
+            background: #f3f4f6; padding: 2px 6px; border-radius: 3px;
+            font-family: Consolas, Monaco, monospace; color: #c7254e;
+        }
+        pre {
+            background: #1f2430; color: #e6e6e6; padding: 12px 14px;
+            border-radius: 6px; overflow-x: auto; line-height: 1.5;
+        }
+        section {
+            border: 1px solid #e1e4e8; border-left: 5px solid #2ecc71;
+            border-radius: 6px; padding: 12px 18px; margin: 18px 0; background: #fafffc;
+        }
+        section > h2 { margin-top: 6px; color: #1a7f37; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #b9c0c8; padding: 6px 12px; text-align: left; }
+        th { background: #f0f4f8; }
+        .demo-area {
+            background: #f6f8fa; border: 1px dashed #b9c0c8;
+            padding: 12px; border-radius: 6px; margin: 10px 0;
+        }
+        /* ============ 下面是给 class 演示用的样式 ============ */
+        /* .link 是「类选择器」：只要是 class="link" 的元素，都套用这些规则。
+           一个 class 可以被很多个元素同时使用 —— 这就是它和 id 最大的区别。 */
+        .link {
+            color: #0969da;
+            text-decoration: none;   /* 去掉下划线 */
+            font-weight: bold;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+        .link:hover {              /* :hover 伪类 —— 鼠标悬停时的样子 */
+            background: #ddf4ff;
+            text-decoration: underline;
+        }
+        /* ============ 下面是给 id 演示用的样式 ============ */
+        /* #main 是「id 选择器」：# 号开头。id 在一个页面里必须唯一。 */
+        #main {
+            background: #fff3cd;
+            border: 2px solid #f0ad4e;
+            padding: 8px 12px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        #main-highlight {
+            background: yellow;
+            padding: 1px 4px;
+        }
+        .tip {
+            background: #fff8e1; border-left: 4px solid #f0ad4e;
+            padding: 10px 14px; margin: 14px 0; border-radius: 4px;
+        }
+        .badge {
+            display: inline-block; font-size: 12px; padding: 2px 8px;
+            border-radius: 10px; background: #2ecc71; color: #fff;
+            font-family: Consolas, Monaco, monospace; margin-right: 6px;
+        }
+        /* 下面这个按钮用来演示 disabled 属性 */
+        button { padding: 6px 14px; border-radius: 4px; border: 1px solid #b9c0c8;
+                 background: #fff; cursor: pointer; }
+        button:disabled { opacity: .5; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<h1>HTML 标签属性演示</h1>
+
+<p>
+    标签负责「这是什么」，<b>属性</b>负责「它是什么样的、它指向哪里」。
+    属性的书写格式固定为：<code>属性名="值"</code>，写在<b>开始标签</b>内部，多个属性之间用空格隔开。
+</p>
+
+<pre>&lt;a href="https://example.com" class="link" id="main"&gt;点击这里&lt;/a&gt;
+   └── 开始标签名
+        └────────────── 三个属性，空格分隔 ──────────────┘  └─ 内容 ─┘ └ 结束标签 ┘</pre>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>一、课案三大核心属性：href / class / id</h2>
+
+    <h3>1）<span class="badge">href</span> 链接地址（专用属性）</h3>
+    <p>
+        <b>href</b> 是 <code>&lt;a&gt;</code> 标签的<b>专用属性</b>——只有 &lt;a&gt; 这类标签才认它。
+        值可以是绝对 URL、相对路径、页面内锚点（<code>#开头</code>）或 <code>mailto:</code>。
+    </p>
+    <div class="demo-area">
+        <!-- 课案原文的那一行，放在真实页面里跑一遍 -->
+        <a href="https://example.com" class="link" id="main">点击这里</a>
+        <p style="font-size:13px;color:#57606a;margin-bottom:0;">
+            上面的链接同时用了 <code>href</code> + <code>class</code> + <code>id</code> 三个属性，
+            和课案原文完全一致。它同时被 <code>.link</code> 和 <code>#main</code> 两套样式命中。
+        </p>
+    </div>
+
+    <h3>2）<span class="badge">class</span> 类名（全局属性，可重复）</h3>
+    <p>
+        <b>class</b> 是「分类标签」。它的核心特征是 <b>可以被重复使用</b>：
+        页面上可以有 100 个元素都写 <code>class="link"</code>，它们会共享同一套样式。
+        一个元素也可以同时拥有多个 class，用<b>空格</b>分隔，例如
+        <code>class="link big red"</code>。
+    </p>
+    <div class="demo-area">
+        <a href="#top" class="link">第一个带 class="link" 的链接</a><br>
+        <a href="#top" class="link">第二个带 class="link" 的链接（同一个 class，同样式）</a><br>
+        <a href="#top" class="link">第三个带 class="link" 的链接</a>
+        <p style="font-size:13px;color:#57606a;margin-bottom:0;">
+            鼠标悬停上去，三个链接都会变成浅蓝底 + 下划线——因为它们共用同一个 <code>.link</code> 样式。
+            <b>这正是 class 的价值：写一次样式，多处复用。</b>
+        </p>
+    </div>
+
+    <h3>3）<span class="badge">id</span> 唯一标识（全局属性，必须唯一）</h3>
+    <p>
+        <b>id</b> 是元素的「身份证号」，在<b>同一个页面里必须唯一</b>。
+        它的主要用途有两个：① 用 <code>#id</code> 精确地给某一个元素上样式；
+        ② 让 JavaScript 用 <code>document.getElementById("id")</code> 快速找到它
+        （这是下一章 DOM 操作的基础）；③ 页面内锚点跳转 <code>href="#id"</code>。
+    </p>
+    <div class="demo-area">
+        <!-- 注意：这个 span 故意用 id 而不是 class，因为页面上只会有一个「高亮关键词」 -->
+        <p>下面这句话里的 <span id="main-highlight">高亮关键词</span> 就是通过
+            <code>id="main-highlight"</code> 精确定位的。</p>
+    </div>
+    <div class="tip">
+        <b>class 还是 id？一句话判断：</b>「这个东西可能不止一个」→ 用 class；
+        「这个东西全页只有一个，而且 JS 要单独操作它」→ 用 id。
+        <b>实践中 90% 的情况都用 class</b>，id 主要留给 JavaScript 和锚点跳转。
+    </div>
+</section>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>二、全局属性 vs 专用属性</h2>
+    <table>
+        <tr>
+            <th>类别</th>
+            <th>含义</th>
+            <th>例子</th>
+        </tr>
+        <tr>
+            <td><b>全局属性</b></td>
+            <td>几乎所有标签都能用</td>
+            <td><code>class</code>、<code>id</code>、<code>style</code>、<code>title</code>、<code>hidden</code>、<code>data-*</code></td>
+        </tr>
+        <tr>
+            <td><b>专用属性</b></td>
+            <td>只有特定标签才有意义</td>
+            <td><code>&lt;a href&gt;</code>、<code>&lt;img src / alt&gt;</code>、<code>&lt;input type / placeholder&gt;</code>、<code>&lt;button disabled&gt;</code></td>
+        </tr>
+    </table>
+    <p>
+        <b>为什么要有这个区分：</b>因为写属性时写错名字，浏览器<b>不会报错</b>，只会默默忽略它。
+        知道「这个属性是不是这个标签的」，能帮你快速排查「为什么我的样式/功能没生效」。
+    </p>
+</section>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>三、常用属性速查 + 现场演示</h2>
+    <table>
+        <tr><th>属性</th><th>常用标签</th><th>作用</th></tr>
+        <tr><td><code>href</code></td><td>&lt;a&gt;</td><td>链接地址</td></tr>
+        <tr><td><code>src</code></td><td>&lt;img&gt; &lt;script&gt; &lt;audio&gt; &lt;video&gt;</td><td>资源地址</td></tr>
+        <tr><td><code>alt</code></td><td>&lt;img&gt;</td><td>图片加载失败时的替代文字（也是无障碍文本）</td></tr>
+        <tr><td><code>width</code> / <code>height</code></td><td>&lt;img&gt; &lt;canvas&gt; &lt;video&gt;</td><td>尺寸</td></tr>
+        <tr><td><code>class</code> / <code>id</code></td><td>几乎所有</td><td>类名 / 唯一标识</td></tr>
+        <tr><td><code>style</code></td><td>几乎所有</td><td>行内样式（优先级最高，但不好维护）</td></tr>
+        <tr><td><code>title</code></td><td>几乎所有</td><td>鼠标悬停时的小气泡提示（全局属性）</td></tr>
+        <tr><td><code>target</code></td><td>&lt;a&gt; &lt;form&gt;</td><td>在哪里打开链接，<code>_blank</code> = 新标签页</td></tr>
+        <tr><td><code>type</code></td><td>&lt;input&gt; &lt;button&gt; &lt;script&gt;</td><td>输入框类型 / 按钮类型 / 脚本类型</td></tr>
+        <tr><td><code>placeholder</code></td><td>&lt;input&gt; &lt;textarea&gt;</td><td>输入框里的灰色提示文字</td></tr>
+        <tr><td><code>disabled</code></td><td>&lt;button&gt; &lt;input&gt;</td><td>禁用该控件（布尔属性）</td></tr>
+        <tr><td><code>lang</code></td><td>&lt;html&gt;</td><td>文档语言，影响读屏发音和翻译提示</td></tr>
+    </table>
+
+    <h3>现场演示</h3>
+    <div class="demo-area">
+        <p>
+            <!-- title 属性：鼠标悬停在这一行文字上，等 1 秒会弹出小气泡 -->
+            <span title="看到我了吗？这就是 title 属性的效果">把鼠标悬停在这行字上试试（title 属性）</span>
+        </p>
+        <p>
+            <input type="text" placeholder="这里就是 placeholder 的文字" style="padding:6px;width:260px;">
+        </p>
+        <p>
+            <button>我能点</button>
+            <button disabled title="disabled 属性让按钮不可点击">我被 disabled 禁用了</button>
+        </p>
+    </div>
+
+    <h3>布尔属性：只要写了就算「真」</h3>
+    <p>
+        像 <code>disabled</code>、<code>checked</code>、<code>hidden</code>、<code>required</code>
+        这类属性，<b>写不写值都行</b>：<code>&lt;button disabled&gt;</code> 和
+        <code>&lt;button disabled="disabled"&gt;</code> 效果一样。
+        <b>关键点：</b>只要这个属性名出现了，就是「开启」；要「关闭」必须把整个属性删掉——
+        写成 <code>disabled="false"</code> 依然是<b>禁用</b>（因为字符串 "false" 是真值），这是个经典坑。
+    </p>
+</section>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>四、data-* 自定义属性：给 JavaScript 留数据</h2>
+    <p>
+        有时候我们想在自己的标签上挂一点「业务数据」（比如商品 id、用户 id），
+        但不想乱造属性名。HTML5 提供了 <code>data-*</code> 规范写法：
+        属性名必须 <code>data-</code> 开头，后面随便起。
+    </p>
+    <div class="demo-area">
+        <ul id="product-list">
+            <!-- data-id / data-price 就是自定义属性，浏览器不会显示它们 -->
+            <li class="product" data-id="1001" data-price="3999" data-name="轻薄本">轻薄本 — ¥3999</li>
+            <li class="product" data-id="1002" data-price="1299" data-name="机械键盘">机械键盘 — ¥1299</li>
+            <li class="product" data-id="1003" data-price="899" data-name="显示器">显示器 — ¥899</li>
+        </ul>
+        <button id="read-data-btn">读取上面商品的 data-* 属性（打开 F12 控制台看结果）</button>
+        <p id="data-result" style="color:#1a7f37;font-weight:bold;"></p>
+    </div>
+    <pre>// JavaScript 读取 data-* 属性：用 dataset，把 data-xxx 写成 dataset.xxx（中划线转小驼峰）
+const li = document.querySelector(".product");
+console.log(li.dataset.id);      // "1001"
+console.log(li.dataset.price);   // "3999"
+console.log(li.dataset.name);    // "轻薄本"</pre>
+
+    <script>
+        // 这段 JS 只服务于本节的 data-* 演示，属于「属性」知识点之外的补充。
+        // 关于 JavaScript 的完整语法，请看 03_JavaScript 目录。
+        document.getElementById("read-data-btn").onclick = function () {
+            // querySelectorAll 返回所有 class="product" 的元素
+            const items = document.querySelectorAll(".product");
+            const lines = [];
+            items.forEach(function (li, index) {
+                // 注意：HTML 属性值永远是字符串，要参与数学计算必须显式转换
+                lines.push(`${index + 1}. id=${li.dataset.id} 名称=${li.dataset.name} 价格=${li.dataset.price}（字符串）`);
+                console.log("data-* 读取结果：", li.dataset);
+            });
+            document.getElementById("data-result").innerHTML = lines.join("<br>");
+        };
+    </script>
+</section>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>五、易错点小结</h2>
+    <ul>
+        <li><b>属性必须写在开始标签里</b>，写在结束标签里无效。</li>
+        <li><b>值建议始终加引号</b>。不加引号在值里含空格时会被截断，例如
+            <code>class=a b</code> 实际只认了 <code>a</code>。</li>
+        <li><b>属性名不区分大小写</b>（<code>HREF</code> 和 <code>href</code> 一样），
+            但习惯上全部小写；而属性<b>值</b>里 class/id 名是<b>区分大小写</b>的，别弄混。</li>
+        <li><b>同一个标签里不能有两个同名属性</b>，写了两个浏览器只认第一个。</li>
+        <li><b>行内 style 优先级最高</b>，会盖掉 &lt;style&gt; 和外部 CSS 里的同名规则——
+            调试样式不生效时，先检查这里。</li>
+    </ul>
+</section>
+
+<hr>
+<p style="color:#57606a;font-size:14px;">
+    配套阅读：<code>HTML知识点.md</code> 的属性速查表、<code>02_常用标签.html</code> 的标签演示。
+</p>
+
+</body>
+</html>

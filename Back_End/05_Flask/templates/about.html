@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}关于 · Flask 模板{% endblock %}
+
+{% block content %}
+<h1>关于本示例</h1>
+
+<p>
+    本页面演示了 Jinja2 的另一个常见用法：
+    <strong>把公共部分（页头、导航、页脚）放在 base.html</strong>，
+    子模板只写 <code>{% raw %}{% block content %}{% endraw %}</code> 里的内容。
+</p>
+
+<h2>为什么要模板继承？</h2>
+<ol>
+    <li>改一次导航栏，全站生效 —— 不用逐个文件改；</li>
+    <li>新人一眼看懂页面结构：只有 content 块是需要关心的；</li>
+    <li>避免复制粘贴导致的不一致（比如某个页面忘了加 viewport）。</li>
+</ol>
+
+<h2>模板 vs JSON 接口：什么时候用哪个？</h2>
+<table>
+    <thead><tr><th>场景</th><th>返回什么</th><th>原因</th></tr></thead>
+    <tbody>
+        <tr><td>服务端渲染的传统网站、后台页面</td><td>HTML 模板</td><td>浏览器直接展示，SEO 友好</td></tr>
+        <tr><td>前后端分离的 SPA / 移动端</td><td>JSON</td><td>前端框架自己渲染，接口可复用</td></tr>
+        <tr><td>本课案的 FastAPI 示例</td><td>JSON 为主</td><td>现代后端常态：只做数据接口</td></tr>
+    </tbody>
+</table>
+
+<p><a href="{{ url_for('index') }}">← 返回首页</a></p>
+{% endblock %}

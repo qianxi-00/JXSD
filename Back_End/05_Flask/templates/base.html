@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+{#
+  base.html —— 模板“母版”
+  作用：把每个页面都一样的部分（head、导航、页脚）写一次，
+        子模板只写自己独有的内容，这叫【模板继承】。
+  jinja2 语法速记（这段说明必须写在 Jinja 注释里；
+  写在 HTML 注释里会被 Jinja 当成真标签解析，直接报语法错误）：
+    双大括号         输出变量（自动 HTML 转义，防 XSS）
+    百分号大括号     控制语句（if / for / block / extends）
+    井号大括号       模板注释，不会输出到页面
+#}
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Flask 模板示例{% endblock %}</title>
+    <!--
+      url_for('static', filename='style.css') 会生成 /static/style.css
+      用 url_for 而不是写死路径，是为了支持应用挂载在子路径下的部署方式。
+    -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header class="site-header">
+        <img src="{{ url_for('static', filename='logo.svg') }}" alt="logo" width="36" height="36">
+        <strong>Flask 模板与静态文件示例</strong>
+        <nav>
+            <a href="{{ url_for('index') }}">首页</a>
+            <a href="{{ url_for('about') }}">关于</a>
+            <a href="{{ url_for('item_page', item_id=1) }}">商品 1</a>
+            <a href="{{ url_for('item_page', item_id=99) }}">不存在的商品</a>
+        </nav>
+    </header>
+
+    <main class="container">
+        {% block content %}
+        <p>这里是母版的默认内容，子模板会覆盖它。</p>
+        {% endblock %}
+    </main>
+
+    <footer class="site-footer">
+        <p>后端开发基础 · Web框架章节 · Flask 示例 &copy; 教学用</p>
+    </footer>
+</body>
+</html>

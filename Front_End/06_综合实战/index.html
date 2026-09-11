@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：06_综合实战/index.html
+对应课案章节：重点回顾 —— HTML（结构）+ CSS（样式）+ JavaScript（交互） 三者结合
+             （课案「综合示例：三者结合」的完整实战版）
+
+本文件是一个「个人主页小站」，把整个课案的知识点串起来用了一遍：
+
+  【HTML 部分】
+    · 语义化标签：header / nav / main / section / article / footer
+    · 常用标签：h1~h4 / p / a / img / ul / li / form / input / button / textarea
+    · 标签属性：id / class / href / src / alt / placeholder / required / data-*
+    · 嵌套关系：容器里套卡片、卡片里套标题和正文
+
+  【CSS 部分】（全部在 css/style.css 里）
+    · CSS 变量：一处改色，全站换肤（含暗色主题）
+    · 盒子模型：box-sizing: border-box、padding / margin / border
+    · Flexbox：导航栏、卡片行、表单、页脚布局全是 flex
+    · 选择器：标签 / 类 / id / 后代 / 子代 / 属性 / 伪类(:hover, :focus, :nth-child)
+    · 响应式：@media 媒体查询 + 移动端汉堡菜单
+
+  【JavaScript 部分】（全部在 js/app.js 里）
+    · DOM 操作：querySelector / createElement / appendChild / textContent / classList
+    · 事件处理：click / input / submit / keydown / scroll / DOMContentLoaded
+    · 事件委托：项目卡片列表用一个监听器管理
+    · 表单校验：正则 + 实时反馈 + preventDefault
+    · 数据驱动视图：数据数组变了 → 重新渲染列表
+    · 主题切换：改 data-theme 属性 + localStorage 持久化
+
+如何打开查看：
+    直接用浏览器打开本文件（双击 / 拖进浏览器 / Ctrl+O）。
+    ⚠️ 请保持 index.html、css/、js/ 三者的相对位置不变，否则样式和脚本会加载失败。
+
+对应课案的知识点索引：见 ../README.md 的「知识点索引」一节。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="前端基础课案综合实战：个人主页小站（HTML + CSS + JavaScript 三者结合）">
+
+    <title>张三的个人主页 · 前端基础综合实战</title>
+
+    <!-- ============ CSS：全部样式都在这个外部文件里 ============ -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ==================================================================== -->
+<!-- 页头与导航                                                            -->
+<!-- ==================================================================== -->
+<!--
+  <header class="site-header"> 固定在页面顶部（CSS 里用 position: sticky 实现）。
+  这是「语义化标签」的用法：header 表示"页头区域"，nav 表示"导航区域"。
+-->
+<header class="site-header" id="site-header">
+    <div class="container header-inner">
+
+        <!-- 品牌区：点回页面顶部 -->
+        <a href="#top" class="brand">
+            <span class="brand-mark">张</span>
+            <span class="brand-text">张三的个人主页</span>
+        </a>
+
+        <!--
+          导航：每个链接都是「页面内锚点」（href="#id"），
+          CSS 里给 html 加了 scroll-behavior: smooth，所以点击是平滑滚动。
+          JS 会根据滚动位置给当前区块对应的链接加 .active 类（高亮）。
+        -->
+        <nav class="nav" id="main-nav" aria-label="主导航">
+            <a href="#about"   class="nav-link" data-nav="about">关于我</a>
+            <a href="#skills"  class="nav-link" data-nav="skills">技能</a>
+            <a href="#works"   class="nav-link" data-nav="works">作品</a>
+            <a href="#contact" class="nav-link" data-nav="contact">联系我</a>
+        </nav>
+
+        <div class="header-actions">
+            <!-- 主题切换按钮：功能完全由 JS 实现 -->
+            <button class="icon-button" id="theme-toggle" type="button" title="切换亮色 / 暗色主题">
+                <span id="theme-icon">🌙</span>
+            </button>
+
+            <!-- 移动端汉堡菜单按钮：窄屏时才显示（CSS 控制） -->
+            <button class="icon-button menu-toggle" id="menu-toggle" type="button"
+                    aria-label="展开导航菜单" aria-expanded="false">
+                <span class="menu-bar"></span>
+                <span class="menu-bar"></span>
+                <span class="menu-bar"></span>
+            </button>
+        </div>
+    </div>
+</header>
+
+<!-- 锚点定位用的占位（点品牌区回到这里） -->
+<div id="top"></div>
+
+<main>
+
+    <!-- ================================================================ -->
+    <!-- 首屏 Hero                                                        -->
+    <!-- ================================================================ -->
+    <section class="hero">
+        <div class="container hero-inner">
+            <div class="hero-text">
+                <p class="hero-eyebrow">前端基础 · 综合实战</p>
+                <h1 class="hero-title">
+                    你好，我是 <span class="accent">张三</span>
+                </h1>
+                <p class="hero-desc">
+                    这是一个用 <strong>HTML + CSS + JavaScript</strong> 三者结合做出来的个人主页小站。
+                    没有用任何框架、没有任何外部依赖 —— 所有代码都在本目录里，可以直接打开查看。
+                </p>
+
+                <div class="hero-actions">
+                    <a href="#works" class="btn btn-primary">看看我的作品</a>
+                    <a href="#contact" class="btn btn-ghost">联系我</a>
+                </div>
+
+                <!-- 用 data-* 自定义属性挂在按钮上，JS 读取它来生成信息 -->
+                <p class="hero-meta">
+                    <span class="dot"></span>
+                    本页共演示了 <span id="feature-count">0</span> 个前端知识点
+                </p>
+            </div>
+
+            <div class="hero-card">
+                <!-- 用纯 CSS 渐变画"头像"，不依赖任何图片文件 -->
+                <div class="avatar" aria-hidden="true">张</div>
+                <h2 class="hero-card-name">张三</h2>
+                <p class="hero-card-role">Python 后端 / 数据应用开发</p>
+                <ul class="hero-card-list">
+                    <li>📍 广东 · 佛山</li>
+                    <li>💼 3 年工作经验</li>
+                    <li>📧 zhangsan@example.com</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================================================================ -->
+    <!-- 关于我                                                           -->
+    <!-- ================================================================ -->
+    <section class="section" id="about">
+        <div class="container">
+            <header class="section-head">
+                <p class="section-eyebrow">About</p>
+                <h2 class="section-title">关于我</h2>
+                <p class="section-desc">
+                    三张卡片，用同一个 <code>.card</code> 类复用样式 —— 这就是 CSS 类的价值。
+                </p>
+            </header>
+
+            <!-- 卡片行：CSS 用 Flexbox 实现，窄屏自动换行 -->
+            <div class="card-row">
+                <article class="card">
+                    <div class="card-icon">🎯</div>
+                    <h3 class="card-title">我在做什么</h3>
+                    <p>
+                        用 Python 做数据应用和后端服务，前端方面负责把数据"讲清楚"——
+                        看板、报表、内部工具。
+                    </p>
+                </article>
+
+                <article class="card">
+                    <div class="card-icon">📚</div>
+                    <h3 class="card-title">我学过什么</h3>
+                    <p>
+                        HTML / CSS / JavaScript 三件套，加上 Streamlit 快速搭建数据应用，
+                        以及 Python 数据分析全流程。
+                    </p>
+                </article>
+
+                <article class="card">
+                    <div class="card-icon">🌱</div>
+                    <h3 class="card-title">我还在学什么</h3>
+                    <p>
+                        正在补现代前端工程化：Vite、TypeScript，以及 Vue 3 的组件化写法。
+                    </p>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================================================================ -->
+    <!-- 技能                                                             -->
+    <!-- ================================================================ -->
+    <section class="section section-alt" id="skills">
+        <div class="container">
+            <header class="section-head">
+                <p class="section-eyebrow">Skills</p>
+                <h2 class="section-title">技能</h2>
+                <p class="section-desc">
+                    下面这些进度条是**纯 CSS** 画的（<code>width: 百分比</code> + <code>transition</code>），
+                    没有任何图表库。
+                </p>
+            </header>
+
+            <div class="skills-grid">
+                <!--
+                  每一项技能的结构：
+                    .skill              外层
+                      .skill-head       一行：名字 + 百分比
+                      .skill-bar        灰色底槽
+                        .skill-fill     彩色填充条（width 由内联样式给出）
+                  用 data-level 把数值也挂在节点上，JS 可以用来做别的处理。
+                -->
+                <div class="skill" data-level="90">
+                    <div class="skill-head">
+                        <span class="skill-name">HTML</span>
+                        <span class="skill-percent">90%</span>
+                    </div>
+                    <div class="skill-bar"><div class="skill-fill" style="--level: 90%"></div></div>
+                </div>
+
+                <div class="skill" data-level="85">
+                    <div class="skill-head">
+                        <span class="skill-name">CSS</span>
+                        <span class="skill-percent">85%</span>
+                    </div>
+                    <div class="skill-bar"><div class="skill-fill" style="--level: 85%"></div></div>
+                </div>
+
+                <div class="skill" data-level="75">
+                    <div class="skill-head">
+                        <span class="skill-name">JavaScript</span>
+                        <span class="skill-percent">75%</span>
+                    </div>
+                    <div class="skill-bar"><div class="skill-fill" style="--level: 75%"></div></div>
+                </div>
+
+                <div class="skill" data-level="95">
+                    <div class="skill-head">
+                        <span class="skill-name">Python</span>
+                        <span class="skill-percent">95%</span>
+                    </div>
+                    <div class="skill-bar"><div class="skill-fill" style="--level: 95%"></div></div>
+                </div>
+
+                <div class="skill" data-level="80">
+                    <div class="skill-head">
+                        <span class="skill-name">Streamlit</span>
+                        <span class="skill-percent">80%</span>
+                    </div>
+                    <div class="skill-bar"><div class="skill-fill" style="--level: 80%"></div></div>
+                </div>
+
+                <div class="skill" data-level="70">
+                    <div class="skill-head">
+                        <span class="skill-name">Vue 3</span>
+                        <span class="skill-percent">70%</span>
+                    </div>
+                    <div class="skill-bar"><div class="skill-fill" style="--level: 70%"></div></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================================================================ -->
+    <!-- 作品（动态列表：数据在 JS 里，页面由 JS 渲染）                     -->
+    <!-- ================================================================ -->
+    <section class="section" id="works">
+        <div class="container">
+            <header class="section-head">
+                <p class="section-eyebrow">Works</p>
+                <h2 class="section-title">作品</h2>
+                <p class="section-desc">
+                    ★ 这一块的卡片**不在 HTML 里**，而是 JS 从数据数组动态生成的。
+                    点下面的分类按钮筛选，也是"改数据 → 重新渲染"。
+                </p>
+            </header>
+
+            <!-- 分类筛选按钮：JS 用事件委托处理点击 -->
+            <div class="filter-bar" id="work-filters">
+                <button class="filter-btn is-active" type="button" data-filter="all">全部</button>
+                <button class="filter-btn" type="button" data-filter="web">网页</button>
+                <button class="filter-btn" type="button" data-filter="data">数据应用</button>
+                <button class="filter-btn" type="button" data-filter="tool">小工具</button>
+            </div>
+
+            <!--
+              这个容器是空的！里面的卡片全部由 js/app.js 的 renderWorks() 生成。
+              这就是「数据驱动视图」：HTML 只提供"放东西的地方"。
+            -->
+            <div class="work-grid" id="work-grid"></div>
+
+            <!-- 没有结果时的提示（默认隐藏，JS 控制显示） -->
+            <p class="empty-tip" id="work-empty" hidden>没有符合该分类的作品。</p>
+        </div>
+    </section>
+
+    <!-- ================================================================ -->
+    <!-- 联系表单（含前端校验）                                            -->
+    <!-- ================================================================ -->
+    <section class="section section-alt" id="contact">
+        <div class="container">
+            <header class="section-head">
+                <p class="section-eyebrow">Contact</p>
+                <h2 class="section-title">联系我</h2>
+                <p class="section-desc">
+                    这个表单演示了完整的**前端校验**：实时校验 + 提交前总校验 +
+                    <code>event.preventDefault()</code> 阻止页面刷新 +
+                    校验通过后把数据渲染到页面上。
+                </p>
+            </header>
+
+            <div class="contact-wrap">
+                <!--
+                  novalidate：关掉浏览器自带的校验气泡，
+                  这样我们才能展示自己写的校验提示。
+                -->
+                <form class="contact-form" id="contact-form" novalidate>
+                    <div class="field">
+                        <label for="cf-name">姓名 <span class="required">*</span></label>
+                        <input type="text" id="cf-name" name="name"
+                               placeholder="至少 2 个字符" autocomplete="off">
+                        <span class="field-error" id="cf-name-error"></span>
+                    </div>
+
+                    <div class="field">
+                        <label for="cf-email">邮箱 <span class="required">*</span></label>
+                        <input type="text" id="cf-email" name="email"
+                               placeholder="name@example.com" autocomplete="off">
+                        <span class="field-error" id="cf-email-error"></span>
+                    </div>
+
+                    <div class="field">
+                        <label for="cf-topic">主题</label>
+                        <select id="cf-topic" name="topic">
+                            <option value="合作">合作洽谈</option>
+                            <option value="技术交流">技术交流</option>
+                            <option value="工作机会">工作机会</option>
+                            <option value="其他">其他</option>
+                        </select>
+                    </div>
+
+                    <div class="field">
+                        <label for="cf-message">留言 <span class="required">*</span></label>
+                        <textarea id="cf-message" name="message" rows="4" maxlength="200"
+                                  placeholder="至少 10 个字。最多 200 字。"></textarea>
+                        <div class="field-foot">
+                            <span class="field-error" id="cf-message-error"></span>
+                            <span class="char-count" id="cf-message-count">0 / 200</span>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">发送</button>
+                        <button type="reset" class="btn btn-ghost" id="cf-reset">重置</button>
+                        <span class="form-hint">提示：在留言框里按 <kbd>Ctrl</kbd> + <kbd>Enter</kbd> 也能提交</span>
+                    </div>
+                </form>
+
+                <!-- 提交结果会渲染到这里 -->
+                <aside class="contact-aside">
+                    <h3 class="aside-title">提交结果</h3>
+                    <div id="form-result" class="form-result">
+                        <p class="muted">还没有提交任何内容。</p>
+                    </div>
+
+                    <h3 class="aside-title">其它联系方式</h3>
+                    <ul class="contact-list">
+                        <li>📧 <a href="mailto:zhangsan@example.com">zhangsan@example.com</a></li>
+                        <li>🐙 <a href="https://github.com" target="_blank" rel="noopener noreferrer">github.com/zhangsan</a></li>
+                        <li>📍 广东 · 佛山</li>
+                    </ul>
+                </aside>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<!-- ==================================================================== -->
+<!-- 页脚                                                                 -->
+<!-- ==================================================================== -->
+<footer class="site-footer">
+    <div class="container footer-inner">
+        <p class="footer-text">
+            前端基础课案 · 综合实战 —— HTML 搭骨架 → CSS 化妆 → JS 加交互
+        </p>
+        <p class="footer-links">
+            <a href="#about">关于我</a>
+            <span class="sep">·</span>
+            <a href="#skills">技能</a>
+            <span class="sep">·</span>
+            <a href="#works">作品</a>
+            <span class="sep">·</span>
+            <a href="#contact">联系我</a>
+        </p>
+        <p class="footer-copy">
+            本页面完全离线可用：无 CDN、无外部字体、无外部图片。所有图形均由 CSS 绘制。
+        </p>
+    </div>
+</footer>
+
+<!-- 回到顶部按钮：滚动一定距离后才出现（JS 控制 .is-visible 类） -->
+<button class="back-to-top" id="back-to-top" type="button" title="回到顶部" aria-label="回到顶部">↑</button>
+
+<!-- ============ JavaScript：全部逻辑都在这个外部文件里 ============ -->
+<script src="js/app.js" defer></script>
+
+</body>
+</html>

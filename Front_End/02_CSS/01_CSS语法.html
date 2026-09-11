@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：01_CSS语法.html
+对应课案章节：CSS → CSS语法
+本节知识点：
+  1. CSS 是什么、解决什么问题：HTML 管「内容结构」，CSS 管「样式表现」。
+  2. 一条 CSS 规则的解剖：选择器 { 属性: 值; 属性: 值; }
+  3. 三种把 CSS 用到 HTML 上的方式：行内 style / <style> 标签 / 外部 .css 文件。
+  4. 常用选择器：标签、类(.x)、id(#x)、后代、并集、伪类。
+  5. 优先级（谁说了算）与「层叠」到底是什么意思。
+如何打开查看：直接用浏览器打开本文件；按 F12 → Elements → Styles 可以看到每条规则来自哪里。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSS 语法入门</title>
+
+    <!--
+      ============================ 方式 2：<style> 标签 ============================
+      写在 <head> 里，作用于「本页面」。
+      这是学习和写单文件 Demo 时最常用的方式。
+      注意：<style> 里的内容用的是 CSS 语法，不是 HTML 语法，
+           所以内部写 /* 注释 */ 而不是 <!-- --> 注释。
+    -->
+    <style>
+        /* ------------------------------------------------------------------
+           一条 CSS 规则的标准结构：
+
+               选择器 {
+                   属性名: 属性值;
+                   属性名: 属性值;
+               }
+
+           - 选择器（selector）：我要给「谁」上样式。这里写的是 h1，即所有 <h1>。
+           - 属性（property）：改「什么」。color = 颜色，font-size = 字号。
+           - 值（value）：改成「多少」。red = 红，24px = 24 像素。
+           - 每条声明以分号 ; 结尾（最后一条可省略，但强烈建议写上）。
+           - 整条规则用一对花括号 {} 包起来。
+        ------------------------------------------------------------------ */
+
+        /* ===== 1）标签选择器：直接写标签名，命中页面上所有该标签 ===== */
+        h1 {
+            color: red;          /* 文字颜色：红色 */
+            font-size: 24px;     /* 字号：24 像素 */
+        }
+
+        /* ===== 2）页面基础样式（不是知识点，只是让示例好看） ===== */
+        body {
+            font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+            max-width: 900px;
+            margin: 24px auto;
+            padding: 0 16px;
+            line-height: 1.75;
+            color: #24292f;
+        }
+
+        /* ===== 3）类选择器：以 . 开头，命中所有 class="xxx" 的元素 ===== */
+        /* 类选择器是最常用的选择器，因为它可以复用。 */
+        .card {
+            border: 1px solid #d0d7de;
+            border-radius: 8px;
+            padding: 14px 18px;
+            margin: 14px 0;
+            background: #fbfdff;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, .06);  /* 淡淡的投影 */
+        }
+        .card > h2 {
+            margin-top: 4px;
+            color: #0969da;
+            font-size: 19px;
+        }
+
+        /* ===== 4）id 选择器：以 # 开头，命中 id="xxx" 的那唯一一个元素 ===== */
+        #unique-box {
+            background: #fff3cd;
+            border: 2px solid #f0ad4e;
+            padding: 10px 14px;
+            border-radius: 6px;
+        }
+
+        /* ===== 5）并集选择器：用逗号分隔，多个选择器共用一套规则 ===== */
+        .demo-a, .demo-b {
+            display: inline-block;
+            padding: 6px 12px;
+            margin-right: 8px;
+            border-radius: 4px;
+            background: #eafaf1;
+            border: 1px solid #2ecc71;
+        }
+
+        /* ===== 6）后代选择器：空格分隔 = 「A 里面的所有 B（不管隔多少层）」 ===== */
+        .nest-demo span {
+            color: #c7254e;
+            font-weight: bold;
+        }
+
+        /* ===== 7）子选择器：> 分隔 = 「A 的直接子元素 B（只隔一层）」 ===== */
+        .nest-demo > p {
+            border-left: 3px solid #9b59b6;
+            padding-left: 10px;
+        }
+
+        /* ===== 8）伪类选择器：:hover 鼠标悬停 / :first-child 第一个孩子 ===== */
+        .hover-demo {
+            padding: 8px 14px;
+            background: #eee;
+            border-radius: 4px;
+            display: inline-block;
+            transition: all .2s;   /* 让变化有个 0.2 秒的过渡，看起来更顺滑 */
+            cursor: pointer;
+        }
+        .hover-demo:hover {        /* 鼠标移上去时，覆盖上面的 background */
+            background: #3498db;
+            color: #fff;
+            transform: scale(1.05);   /* 放大 5% */
+        }
+
+        /* ===== 9）行内样式演示用的类（故意留空，让行内样式来生效） ===== */
+        .inline-demo {
+            padding: 8px;
+            border-radius: 4px;
+        }
+
+        /* ===== 10）代码与表格排版 ===== */
+        code {
+            background: #f3f4f6; padding: 2px 6px; border-radius: 3px;
+            font-family: Consolas, Monaco, monospace; color: #c7254e;
+        }
+        pre {
+            background: #1f2430; color: #e6e6e6; padding: 12px 14px;
+            border-radius: 6px; overflow-x: auto; line-height: 1.5;
+        }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #b9c0c8; padding: 6px 12px; text-align: left; }
+        th { background: #f0f4f8; }
+        .tip { background:#fff8e1; border-left:4px solid #f0ad4e; padding:10px 14px; margin:14px 0; border-radius:4px; }
+    </style>
+</head>
+<body>
+
+<h1>红色的 24 像素标题（就是课案的 CSS 语法示例）</h1>
+
+<p>
+    上面这行字之所以是红色、24 像素，完全是因为 <code>&lt;head&gt;</code> 里那段
+    <code>h1 { color: red; font-size: 24px; }</code>。删掉它，标题就会变回默认的黑色大字。
+    这就是 CSS 的全部意义：<b>把「长什么样」从「是什么」里剥离出来。</b>
+</p>
+
+<!-- ==================================================================== -->
+<div class="card">
+    <h2>一、CSS 是什么</h2>
+    <p>
+        <b>CSS</b>（Cascading Style Sheets，层叠样式表）用来控制网页的<b>外观和布局</b>。
+    </p>
+    <table>
+        <tr><th>技术</th><th>负责</th><th>类比</th></tr>
+        <tr><td>HTML</td><td><b>内容结构</b> —— 这里是什么</td><td>房子的砖墙、房间划分</td></tr>
+        <tr><td>CSS</td><td><b>样式表现</b> —— 它长什么样</td><td>刷墙、贴壁纸、摆家具</td></tr>
+        <tr><td>JavaScript</td><td><b>行为交互</b> —— 它能干什么</td><td>水电、开关、电梯</td></tr>
+    </table>
+    <p style="margin-bottom:0;">
+        <b>为什么要分开？</b>因为一个页面可能有 100 个同样的"卡片"，样式只写一次就能全部生效；
+        改主题色也只改一个地方。如果把样式写死在 HTML 里，改一次要改 100 处。
+    </p>
+</div>
+
+<!-- ==================================================================== -->
+<div class="card">
+    <h2>二、一条 CSS 规则的解剖</h2>
+<pre>h1 {
+    color: red;
+    font-size: 24px;
+}
+ ↑        ↑    ↑
+ 选择器    属性  值
+    └──── 声明 ────┘（以分号结尾）
+ └──────── 一条规则 ────────┘（用花括号包起来）</pre>
+    <table>
+        <tr><th>组成部分</th><th>本例</th><th>作用</th></tr>
+        <tr><td><b>选择器</b> selector</td><td><code>h1</code></td><td>给「谁」上样式</td></tr>
+        <tr><td><b>属性</b> property</td><td><code>color</code>、<code>font-size</code></td><td>改「什么」</td></tr>
+        <tr><td><b>值</b> value</td><td><code>red</code>、<code>24px</code></td><td>改成「多少」</td></tr>
+        <tr><td><b>声明</b> declaration</td><td><code>color: red;</code></td><td>「属性: 值;」构成一条声明</td></tr>
+    </table>
+    <div class="tip">
+        <b>三个新手常见语法错误：</b>
+        ① 忘了分号 <code>color: red font-size: 24px;</code>（后面那条会被整条丢弃）；
+        ② 用了等号 <code>color = red;</code>（CSS 用冒号）；
+        ③ 忘了花括号或分号漏在括号外面。
+        CSS 出错时<b>不会报错、不会提示</b>，只是那一条不生效 —— 所以 F12 的 Styles 面板是你唯一的朋友。
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="card">
+    <h2>三、把 CSS 用到 HTML 上的三种方式</h2>
+
+    <h3>方式 1：行内样式（写在标签的 style 属性里）</h3>
+    <p>
+        <span class="inline-demo" style="background:#fdecea;color:#c0392b;">
+            我是行内样式：background 和 color 直接写在标签上
+        </span>
+    </p>
+<pre>&lt;p style="color: red; font-size: 20px;"&gt;文字&lt;/p&gt;</pre>
+    <p>
+        <b>优点：</b>最直接，改哪个元素就写哪个元素，优先级最高。<br>
+        <b>缺点：</b>无法复用、无法统一修改、HTML 和样式混在一起难维护。<br>
+        <b>什么时候用：</b>只调一个元素、临时试验、或者邮件 HTML 这种必须内联的场景。
+    </p>
+
+    <h3>方式 2：<code>&lt;style&gt;</code> 标签（内部样式表）</h3>
+    <p>本页面用的就是这种方式——所有规则都写在 <code>&lt;head&gt;</code> 的 <code>&lt;style&gt;</code> 里。</p>
+<pre>&lt;head&gt;
+    &lt;style&gt;
+        h1 { color: blue; }
+        .highlight { background: yellow; }
+    &lt;/style&gt;
+&lt;/head&gt;</pre>
+    <p>
+        <b>优点：</b>一个页面内可复用，写好选择器就能批量控制。<br>
+        <b>缺点：</b>只能作用于当前这一个 HTML 文件；多个页面要重复粘贴。
+    </p>
+
+    <h3>方式 3：外部样式表（推荐）</h3>
+    <p>
+        把 CSS 单独写成一个 <code>.css</code> 文件，用 <code>&lt;link&gt;</code> 引进来。
+        完整可运行示例见本目录下的
+        <code>05_外部样式/index.html</code> + <code>05_外部样式/css/style.css</code>。
+    </p>
+<pre>&lt;link rel="stylesheet" href="css/style.css"&gt;</pre>
+    <p>
+        <b>优点：</b>一个 CSS 文件可以被成百上千个页面共用；浏览器会缓存它，第二次打开更快；
+        HTML 文件干净，只剩结构。<b>这是真实项目的标准做法。</b>
+    </p>
+    <div class="tip">
+        <b>优先级（谁说了算）：</b>行内样式 &gt; <code>&lt;style&gt;</code> / 外部 CSS。
+        但更准确的规则是「<b>看选择器的权重</b>」：
+        <code>!important</code> &gt; 行内 style &gt; id 选择器(100) &gt; 类/伪类选择器(10) &gt; 标签选择器(1)。
+        权重相同时，<b>后写的覆盖先写的</b>（这就是"层叠"）。
+        <b>结论：不要把行内样式当成"万能覆盖"，它只会让样式越来越乱。</b>
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="card">
+    <h2>四、常用选择器速查（每个都在本页有真实效果）</h2>
+    <table>
+        <tr><th>写法</th><th>名称</th><th>含义</th><th>本页例子</th></tr>
+        <tr><td><code>h1</code></td><td>标签选择器</td><td>命中所有该标签</td><td>顶部红色标题</td></tr>
+        <tr><td><code>.card</code></td><td>类选择器</td><td>命中所有 <code>class="card"</code> 的元素</td><td>你正在看的这些浅蓝色块</td></tr>
+        <tr><td><code>#unique-box</code></td><td>id 选择器</td><td>命中 <code>id="unique-box"</code> 的那一个</td><td>下方黄框</td></tr>
+        <tr><td><code>*</code></td><td>通配选择器</td><td>命中所有元素（较少用，影响性能）</td><td>—</td></tr>
+        <tr><td><code>.demo-a, .demo-b</code></td><td>并集选择器</td><td>多个选择器共用一套规则</td><td>两个绿色小方块</td></tr>
+        <tr><td><code>.nest-demo span</code></td><td>后代选择器</td><td>A 里面<b>所有</b> B（可跨多层）</td><td>下面那段话里的红字</td></tr>
+        <tr><td><code>.nest-demo &gt; p</code></td><td>子选择器</td><td>A 的<b>直接子元素</b> B（只隔一层）</td><td>下面那段话左侧的紫条</td></tr>
+        <tr><td><code>.hover-demo:hover</code></td><td>伪类</td><td>鼠标悬停时的状态</td><td>把鼠标移上去看变蓝</td></tr>
+        <tr><td><code>p:first-child</code></td><td>伪类</td><td>父元素下的第一个孩子</td><td>—</td></tr>
+        <tr><td><code>input[type="text"]</code></td><td>属性选择器</td><td>按属性值筛选</td><td>—</td></tr>
+    </table>
+
+    <p><b>并集选择器演示：</b></p>
+    <span class="demo-a">.demo-a</span>
+    <span class="demo-b">.demo-b</span>
+    <p style="font-size:13px;color:#57606a;">两者都套用了 <code>.demo-a, .demo-b { ... }</code> 这一条规则。</p>
+
+    <p><b>后代选择器 vs 子选择器：</b></p>
+    <div class="nest-demo">
+        <p>我是 <code>.nest-demo</code> 的<b>直接子元素</b>，所以左侧有紫色竖条。</p>
+        <div>
+            <p>我隔了一层 div，<b>不是直接子元素</b>，所以没有紫条。</p>
+            <span>但 `<code>.nest-demo span</code>` 是后代选择器，跨层也命中，所以我是红色的。</span>
+        </div>
+    </div>
+<pre>.nest-demo span { color: #c7254e; font-weight: bold; }  /* 跨层也命中 */
+.nest-demo &gt; p  { border-left: 3px solid #9b59b6; }      /* 只命中直接子元素 */</pre>
+
+    <p><b>伪类演示：</b>把鼠标移到下面这个方块上。</p>
+    <div class="hover-demo">鼠标悬停我 → 变蓝 + 放大</div>
+<pre>.hover-demo { background: #eee; transition: all .2s; }
+.hover-demo:hover { background: #3498db; color: #fff; transform: scale(1.05); }</pre>
+</div>
+
+<!-- ==================================================================== -->
+<div class="card">
+    <h2>五、id 选择器的现场演示</h2>
+    <p id="unique-box">
+        我是 <code>id="unique-box"</code>，被 <code>#unique-box</code> 这条规则命中了。
+        这个 id 在整份文档里只能出现一次 —— 这是 HTML 的硬性规定。
+    </p>
+</div>
+
+<!-- ==================================================================== -->
+<div class="card">
+    <h2>六、关于「层叠」（Cascading）</h2>
+    <p>CSS 名字里的 C 就是 Cascading（层叠）。当多条规则同时命中一个元素时，按这个顺序裁决：</p>
+    <ol>
+        <li><b>来源与重要性</b>：带 <code>!important</code> 的胜出（尽量别用）。</li>
+        <li><b>选择器权重</b>：
+            行内 style(1000) &gt; id(100) &gt; 类/伪类/属性(10) &gt; 标签/伪元素(1) &gt; 通配(0)。
+            多个选择器权重<b>相加</b>，例如 <code>.card h2</code> = 10 + 1 = 11。</li>
+        <li><b>书写顺序</b>：权重相同时，<b>后写的赢</b>。</li>
+    </ol>
+    <p>
+        本页顶部的 <code>h1 { color: red; }</code> 权重只有 1，但因为页面上没有别的规则跟它抢，
+        所以它稳定生效。如果你在它后面再加一条 <code>h1 { color: green; }</code>，标题会变成绿色。
+    </p>
+    <div class="tip">
+        <b>调试口诀：</b>样式不生效 → ① 按 F12 看 Styles 面板里这条规则有没有被划掉；
+        ② 看是不是被行内 style 覆盖了；③ 看选择器是不是写错了（比如把 <code>.card</code> 写成了 <code>card</code>）。
+    </div>
+</div>
+
+<hr>
+<p style="color:#57606a;font-size:14px;">
+    下一站：<code>02_常用属性.html</code>（文字、背景、边框、尺寸）→
+    <code>03_盒子模型.html</code> → <code>04_Flex布局.html</code> → <code>05_外部样式/</code>。
+    配套总结见 <code>CSS知识点.md</code>。
+</p>
+
+</body>
+</html>

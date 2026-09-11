@@ -1,0 +1,91 @@
+# ============================================================
+# k8s/ingress.yaml —— 七层（HTTP）入口：域名路由 + HTTPS 终止
+# ============================================================
+# 对应课案章节：后端开发基础 → 容器部署 → K8S（对外暴露服务）
+#
+# Service 与 Ingress 的分工：
+#     Service（L4）  为集群内的 Pod 提供稳定 IP 与负载均衡，工作在 TCP/UDP 层
+#     Ingress（L7）  工作在 HTTP 层：按域名/路径路由、TLS 终止、限流、重写
+#
+# 一条典型链路：
+#     用户 → DNS → Ingress Controller（如 Nginx Ingress）→ Service → Pod
+#
+# 前置条件（minikube 环境）：
+#     minikube addons enable ingress
+#     然后在 hosts 文件里加：<minikube ip>  book-api.local
+#
+# 用法：
+#   kubectl apply -f 09_容器部署/k8s/ingress.yaml
+#   kubectl get ingress -n demo
+# ============================================================
+apiVersion: networking.k8s.io/v1       # Ingress 的稳定 API 版本（v1beta1 已废弃）
+kind: Ingress
+metadata:
+  name: book-api-ingress
+  namespace: demo
+  labels:
+    app: book-api
+  annotations:
+    # 这些 annotation 由具体的 Ingress Controller 解释（下面是 Nginx Ingress 的常见配置）
+    nginx.ingress.kubernetes.io/rewrite-target: /          # 路径重写规则
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"     # 允许的最大请求体（文件上传需调大）
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    # 限流：每秒允许 100 个请求，突发桶 50（防止接口被刷）
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+    # 强制跳转 HTTPS（证书配好后打开）
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  # ingressClassName：指定由哪个 Ingress Controller 处理（minikube 默认是 nginx）
+  ingressClassName: nginx
+  # ---------- TLS 配置 ----------
+  tls:
+    - hosts:
+        - book-api.local
+      # 证书存放在 Secret 里（类型为 kubernetes.io/tls，包含 tls.crt 与 tls.key）
+      # 生成自签证书测试：
+      #   openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+      #     -keyout tls.key -out tls.crt -subj "/CN=book-api.local"
+      #   kubectl create secret tls book-api-tls -n demo --key tls.key --cert tls.crt
+      secretName: book-api-tls
+  # ---------- 路由规则 ----------
+  rules:
+    - host: book-api.local             # 匹配的域名（不写 host 表示匹配所有域名）
+      http:
+        paths:
+          # 路径 1：业务接口 → 转发到 Service
+          - path: /api
+            pathType: Prefix           # Prefix 前缀匹配；Exact 精确匹配；ImplementationSpecific 由控制器决定
+            backend:
+              service:
+                name: book-api-svc     # 目标 Service 名
+                port:
+                  name: http           # 目标端口（用名字更清晰，也可写数字 8000）
+          # 路径 2：接口文档
+          - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: book-api-svc
+                port:
+                  name: http
+          # 路径 3：健康检查（供外部监控探活）
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: book-api-svc
+                port:
+                  name: http
+          # 路径 4：根路径（用于演示"多服务按路径分流"）
+          #   真实项目里常把前端静态资源交给另一个 Service，实现前后端同域名部署：
+          #     前端 http://book-api.local/        → frontend-svc
+          #     后端 http://book-api.local/api     → book-api-svc
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: book-api-svc
+                port:
+                  name: http

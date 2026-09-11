@@ -1,0 +1,92 @@
+# ============================================================
+# k8s/service.yaml —— 给 Pod 提供稳定的访问入口
+# ============================================================
+# 对应课案章节：后端开发基础 → 容器部署 → K8S（核心概念：Service）
+#
+# 为什么需要 Service？
+#   Pod 的 IP 是"临时"的：Pod 重启/重建/扩缩容后 IP 会变，
+#   而客户端不能每次都去查 IP。Service 提供：
+#     · 固定的集群内域名与虚拟 IP（ClusterIP）
+#     · 自动负载均衡到后端所有匹配的 Pod
+#     · 服务发现（K8S 内置 DNS 会为每个 Service 建一条 A 记录）
+#
+# 用法：
+#   kubectl apply -f 09_容器部署/k8s/service.yaml
+#   kubectl get svc -n demo
+#   minikube service book-api-svc -n demo        # 本地直接把服务暴露到浏览器
+# ============================================================
+
+# ------------------------------------------------------------
+# 1. ClusterIP：只在集群内部可访问（最常用，供其他服务调用）
+#    集群内的访问地址：http://book-api-svc.demo.svc.cluster.local:8000
+#    同命名空间内可以简写成：http://book-api-svc:8000
+# ------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: book-api-svc
+  namespace: demo
+  labels:
+    app: book-api
+spec:
+  type: ClusterIP
+  selector:                 # 关键：选中带有这些标签的 Pod（与 Deployment 的 template.labels 一致）
+    app: book-api
+  ports:
+    - name: http
+      port: 8000            # Service 对外暴露的端口（集群内访问用的端口）
+      targetPort: http      # 转发到容器的哪个端口（可以写数字 8000，也可以写容器端口的名字 http）
+      protocol: TCP
+  sessionAffinity: None     # 会话保持：None 表示轮询分发；ClientIP 表示同一客户端固定到同一 Pod
+
+---
+# ------------------------------------------------------------
+# 2. NodePort：在每个节点上开一个固定端口，集群外可访问（学习/测试常用）
+#    访问方式：http://<任意节点IP>:30080
+#    端口范围默认 30000-32767
+# ------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: book-api-nodeport
+  namespace: demo
+  labels:
+    app: book-api
+    expose: nodeport
+spec:
+  type: NodePort
+  selector:
+    app: book-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 30080       # 不写则随机分配一个 30000-32767 的端口
+      protocol: TCP
+
+---
+# ------------------------------------------------------------
+# 3. LoadBalancer：向云厂商申请一个外部负载均衡器（生产常用）
+#    minikube 环境下需要 `minikube tunnel` 才能拿到外部 IP；
+#    云上（ACK/TKE/EKS）会自动创建 SLB/CLB 并分配公网 IP。
+# ------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: book-api-lb
+  namespace: demo
+  labels:
+    app: book-api
+    expose: loadbalancer
+  annotations:
+    # 云厂商特定参数通过 annotation 传递（不同云厂商 key 不同，这里以阿里云为例）
+    service.beta.kubernetes.io/alibaba-cloud-loadbalancer-address-type: "internet"
+spec:
+  type: LoadBalancer
+  selector:
+    app: book-api
+  ports:
+    - name: http
+      port: 80              # 对外暴露 80
+      targetPort: http      # 转到容器的 http 端口（8000）
+      protocol: TCP

@@ -1,0 +1,131 @@
+# ============================================================
+# k8s/deployment.yaml —— 无状态应用的标准部署单元
+# ============================================================
+# 对应课案章节：后端开发基础 → 容器部署 → K8S（核心概念 / 应用部署）
+#
+# 用法：
+#   kubectl apply -f 09_容器部署/k8s/deployment.yaml
+#   kubectl get deployment,pod -n demo
+#   kubectl rollout status deployment/book-api -n demo
+#   kubectl scale deployment/book-api --replicas=3 -n demo
+#   kubectl delete -f 09_容器部署/k8s/deployment.yaml
+#
+# 说明：本机未安装 minikube/kubectl，本文件只做 YAML 语法与字段语义校验。
+# ============================================================
+apiVersion: apps/v1              # API 组与版本：Deployment 属于 apps/v1
+kind: Deployment                 # 资源类型：Deployment 管理无状态 Pod（滚动更新/回滚/扩缩容）
+metadata:
+  name: book-api                 # Deployment 名称
+  namespace: demo                # 命名空间：用于隔离不同项目/团队的资源
+  labels:
+    app: book-api                # 标签：Service 靠它选中 Pod
+    tier: backend
+  annotations:
+    description: "后端开发基础课案 · 图书管理 API"
+    kubernetes.io/change-cause: "首次部署 v1.0.0"    # 记录变更原因，kubectl rollout history 可见
+spec:
+  replicas: 2                    # 期望副本数：K8S 会一直保证有 2 个健康 Pod 在运行
+  revisionHistoryLimit: 5        # 保留多少个历史版本（用于回滚）
+  progressDeadlineSeconds: 600   # 部署 10 分钟还没成功就标记为失败
+  selector:                      # 选择器：必须匹配 template 里的 labels，否则创建报错
+    matchLabels:
+      app: book-api
+  strategy:
+    type: RollingUpdate          # 滚动更新：逐个替换 Pod，服务不中断
+    rollingUpdate:
+      maxSurge: 1                # 更新时最多多出 1 个 Pod（先起新的再删旧的）
+      maxUnavailable: 0          # 更新时不允许有不可用 Pod（零停机）
+  template:                      # Pod 模板：描述"每个 Pod 长什么样"
+    metadata:
+      labels:
+        app: book-api
+        tier: backend
+    spec:
+      # securityContext 定义 Pod 级安全策略：容器以非 root 运行是最低要求
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      # 优雅关闭：给应用最多 30 秒处理完正在进行的请求
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api              # 容器名
+          image: backend-demo:v1.0
+          # imagePullPolicy：
+          #   IfNotPresent —— 本地有就不拉（minikube load 本地镜像时必须用它）
+          #   Always       —— 每次都拉（配合 :latest 或私有仓库最新 tag）
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          # ---------- 环境变量 ----------
+          envFrom:
+            - configMapRef:
+                name: book-api-config        # 从 ConfigMap 批量注入非敏感配置
+            - secretRef:
+                name: book-api-secret        # 从 Secret 注入密码/密钥
+          env:
+            - name: TZ
+              value: "Asia/Shanghai"
+            - name: POD_NAME             # 把 Pod 名注入环境变量，日志里能区分是哪个副本
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          # ---------- 资源限制（非常重要，不写会导致节点被压垮） ----------
+          resources:
+            requests:                    # 调度依据：K8S 按它决定把 Pod 放到哪个节点
+              cpu: "100m"                # 100m = 0.1 核
+              memory: "128Mi"
+            limits:                      # 上限：超过 CPU 被限流，超过内存被 OOMKilled
+              cpu: "500m"
+              memory: "512Mi"
+          # ---------- 存活探针：失败则重启容器 ----------
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10      # 容器启动后等 10 秒再开始探活
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3          # 连续失败 3 次就重启容器
+          # ---------- 就绪探针：失败则把 Pod 从 Service 后端摘掉（不接收流量） ----------
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # ---------- 启动探针：给慢启动应用足够的初始化时间 ----------
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30         # 30 × 10s = 最多 5 分钟启动时间
+            periodSeconds: 10
+          # ---------- 数据卷挂载 ----------
+          volumeMounts:
+            - name: data
+              mountPath: /data           # 数据库文件写到持久卷，Pod 重建数据不丢
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: book-api-pvc      # 具体的 PVC 定义见本文件末尾的注释说明
+---
+# ============================================================
+# PVC：申请持久化存储（StatefulSet / 需要落盘的应用必配）
+# ============================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: book-api-pvc
+  namespace: demo
+spec:
+  accessModes:
+    - ReadWriteOnce                  # 只能被一个节点以读写方式挂载
+  resources:
+    requests:
+      storage: 1Gi                   # 申请 1GiB 存储
+  # storageClassName: standard       # 不写就用集群默认的 StorageClass（minikube 默认 hostpath）

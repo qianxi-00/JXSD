@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：03_盒子模型.html
+对应课案章节：CSS → 盒子模型
+本节知识点：
+  1. 每个 HTML 元素都可以看成一个「盒子」。
+  2. 盒子的四层结构（由内到外）：content（内容） → padding（内边距） → border（边框） → margin（外边距）。
+  3. 盒子总宽高的计算公式；box-sizing: content-box 与 border-box 的区别。
+  4. margin 的常见陷阱：外边距合并（margin collapse）、塌陷。
+  5. padding vs margin 怎么选。
+本文件的特色：右侧有一个「盒子模型可视化器」，拖动滑块即可实时看到
+  width / padding / border / margin 对盒子尺寸的影响，并实时显示计算出来的总占位尺寸。
+  （这个交互是用 JavaScript 实现的，见文件底部的 <script>；JS 语法本身属于
+    03_JavaScript 章节的内容，这里只是为了让 CSS 的效果看得见。）
+如何打开查看：直接用浏览器打开本文件，然后拖动右边的滑块。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSS 盒子模型（含可视化器）</title>
+    <style>
+        /* ============ 页面基础排版（非知识点） ============ */
+        body {
+            font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+            max-width: 1000px; margin: 24px auto; padding: 0 16px;
+            line-height: 1.75; color: #24292f;
+        }
+        code {
+            background: #f3f4f6; padding: 2px 6px; border-radius: 3px;
+            font-family: Consolas, Monaco, monospace; color: #c7254e;
+        }
+        pre {
+            background: #1f2430; color: #e6e6e6; padding: 12px 14px;
+            border-radius: 6px; overflow-x: auto; line-height: 1.5;
+        }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #b9c0c8; padding: 6px 12px; text-align: left; }
+        th { background: #f0f4f8; }
+        .tip { background:#fff8e1; border-left:4px solid #f0ad4e; padding:10px 14px; margin:14px 0; border-radius:4px; }
+        .warn { background:#fdecea; border-left:4px solid #e74c3c; padding:10px 14px; margin:14px 0; border-radius:4px; }
+        .sec {
+            border: 1px solid #e1e4e8; border-left: 5px solid #16a085;
+            border-radius: 6px; padding: 12px 20px; margin: 20px 0; background: #f9fffd;
+        }
+        .sec > h2 { margin-top: 6px; color: #117864; }
+
+        /* ==================================================================
+           一、纯 CSS 画的「盒子模型示意图」（课案里那张图，这里用代码画出来）
+           ================================================================== */
+        .model-diagram {
+            width: 380px;
+            margin: 16px auto;
+            text-align: center;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 13px;
+        }
+        .layer-margin {                     /* 最外层：margin */
+            background: #f9e79f;            /* 黄色 */
+            padding: 22px;
+            border: 1px dashed #b7950b;
+            position: relative;
+        }
+        .layer-border {                     /* 第二层：border */
+            background: #f5b7b1;            /* 红色 */
+            padding: 22px;
+            position: relative;
+        }
+        .layer-padding {                    /* 第三层：padding */
+            background: #a9dfbf;            /* 绿色 */
+            padding: 22px;
+            position: relative;
+        }
+        .layer-content {                    /* 最内层：content */
+            background: #aed6f1;            /* 蓝色 */
+            padding: 18px 8px;
+        }
+        .layer-label {
+            position: absolute;
+            top: 2px; left: 6px;
+            font-size: 11px;
+            font-weight: bold;
+            color: #5d4037;
+        }
+
+        /* ==================================================================
+           二、四层结构的实际效果演示
+           ================================================================== */
+        /* 这个「舞台」用来展示元素真实占用的空间 */
+        .stage {
+            background: repeating-linear-gradient(
+                45deg, #eef2f7 0 8px, #e2e8f0 8px 16px);   /* 斜纹底，方便看出空白 */
+            padding: 0;
+            border: 1px solid #cbd5e0;
+            display: inline-block;
+        }
+        /* 演示用的那个盒子：四层用不同颜色标注 */
+        .demo-box {
+            width: 160px;                 /* content 内容区宽度 */
+            height: 80px;                 /* content 内容区高度 */
+            padding: 16px;                /* 内边距：四边都是 16px */
+            border: 6px solid #e74c3c;    /* 边框：6px 红色实线 */
+            margin: 24px;                 /* 外边距：四边都是 24px */
+            background: #aed6f1;          /* 内容区背景（padding 也会被背景覆盖） */
+            color: #1b4f72;
+            box-sizing: content-box;      /* 默认值：width/height 只算内容区 */
+        }
+
+        /* 对比：box-sizing: border-box */
+        .demo-box-borderbox {
+            width: 160px;
+            height: 80px;
+            padding: 16px;
+            border: 6px solid #27ae60;
+            margin: 24px;
+            background: #d5f5e3;
+            color: #145a32;
+            box-sizing: border-box;       /* width 包含 padding 和 border */
+        }
+
+        /* margin 合并演示 */
+        .collapse-demo p {
+            background: #aed6f1;
+            margin: 30px 0;               /* 上下外边距都是 30px */
+            padding: 6px 10px;
+        }
+        .collapse-demo {
+            background: repeating-linear-gradient(
+                45deg, #fff 0 10px, #f7fafc 10px 20px);
+            border: 1px solid #cbd5e0;
+            padding: 0 12px;
+        }
+
+        /* ==================================================================
+           三、可视化器
+           ================================================================== */
+        .playground {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;                 /* 窗口窄时自动换行 */
+            align-items: flex-start;
+        }
+        .controls {
+            flex: 0 0 300px;
+        }
+        .controls label {
+            display: block;
+            margin: 12px 0 2px;
+            font-size: 13px;
+            font-weight: bold;
+            color: #117864;
+            font-family: Consolas, Monaco, monospace;
+        }
+        .controls input[type="range"] { width: 100%; }
+        .controls .val {
+            float: right;
+            font-weight: normal;
+            color: #e67e22;
+        }
+        .preview-area {
+            flex: 1 1 380px;
+            background: repeating-linear-gradient(
+                45deg, #eef2f7 0 8px, #e2e8f0 8px 16px);
+            border: 1px solid #cbd5e0;
+            border-radius: 6px;
+            padding: 10px;
+            min-height: 300px;
+            overflow: auto;
+        }
+        /* 被调节的盒子：四种颜色分别对应 margin/padding/border 的可视化 */
+        #pg-margin {
+            background: rgba(241, 196, 15, .55);   /* margin 区域：黄 */
+            display: inline-block;                 /* 让外层紧贴内容，便于观察 */
+        }
+        #pg-border {
+            background: rgba(231, 76, 60, .65);    /* border 区域：红 */
+        }
+        #pg-padding {
+            background: rgba(46, 204, 113, .55);   /* padding 区域：绿 */
+        }
+        #pg-content {
+            background: rgba(52, 152, 219, .75);   /* content 区域：蓝 */
+            color: #fff;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        .readout {
+            margin-top: 14px;
+            background: #1f2430;
+            color: #9cdcfe;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 13px;
+            padding: 12px 14px;
+            border-radius: 6px;
+            white-space: pre;
+            line-height: 1.7;
+        }
+        .readout .k { color: #4ec9b0; }
+        .readout .v { color: #dcdcaa; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<h1>CSS 盒子模型</h1>
+
+<p>
+    <b>盒子模型（Box Model）是 CSS 布局的地基。</b>
+    页面上的每一个元素——无论是一个 <code>&lt;div&gt;</code>、一段 <code>&lt;p&gt;</code>
+    还是一个 <code>&lt;span&gt;</code>——在浏览器眼里都是一个<b>矩形盒子</b>。
+    理解了这个盒子由哪几层拼成，你就能回答下面这些高频问题：
+</p>
+<ul>
+    <li>「我设了 <code>width: 200px</code>，为什么它实际占了 300px？」</li>
+    <li>「为什么两个盒子的间距不是我以为的 60px，而是 30px？」</li>
+    <li>「<code>padding</code> 和 <code>margin</code> 到底该用哪个？」</li>
+</ul>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>一、盒子的四层结构</h2>
+
+    <p>课案用一张图说明了这个结构。下面这张图是<b>用 CSS 现场画出来的</b>（不是图片文件），
+       由内到外一共四层：</p>
+
+    <div class="model-diagram">
+        <div class="layer-margin">
+            <span class="layer-label">margin 外边距</span>
+            <div class="layer-border">
+                <span class="layer-label">border 边框</span>
+                <div class="layer-padding">
+                    <span class="layer-label">padding 内边距</span>
+                    <div class="layer-content"><b>content 内容区</b></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <table>
+        <tr><th>层次</th><th>名称</th><th>作用</th><th>常用写法</th></tr>
+        <tr>
+            <td>1（最内）</td>
+            <td><b>content</b> 内容区</td>
+            <td>真正放文字、图片的地方。它的宽高由 <code>width</code> / <code>height</code> 决定</td>
+            <td><code>width: 200px;</code></td>
+        </tr>
+        <tr>
+            <td>2</td>
+            <td><b>padding</b> 内边距</td>
+            <td>内容与边框之间的<b>空白</b>，在边框<b>里面</b>。背景色会铺到 padding 上</td>
+            <td><code>padding: 10px;</code></td>
+        </tr>
+        <tr>
+            <td>3</td>
+            <td><b>border</b> 边框</td>
+            <td>盒子的边框线，有粗细、样式、颜色</td>
+            <td><code>border: 1px solid #ccc;</code></td>
+        </tr>
+        <tr>
+            <td>4（最外）</td>
+            <td><b>margin</b> 外边距</td>
+            <td>这个盒子与<b>其他盒子</b>之间的距离，在边框<b>外面</b>。背景色不会铺到 margin</td>
+            <td><code>margin: 20px;</code></td>
+        </tr>
+    </table>
+
+    <h3>四边可以分别设置</h3>
+<pre>/* 一个值：四边相同 */
+padding: 10px;
+
+/* 两个值：上下 / 左右 */
+padding: 10px 20px;
+
+/* 三个值：上 / 左右 / 下 */
+padding: 10px 20px 30px;
+
+/* 四个值：上 / 右 / 下 / 左（顺时针，从顶部开始） */
+padding: 10px 20px 30px 40px;
+
+/* 也可以单独指定某一边 */
+padding-top: 10px;
+margin-left: auto;      /* 左外边距自动 —— 右对齐常用技巧 */</pre>
+    <div class="tip">
+        <b>记忆口诀：</b>「上右下左，顺时针」，和钟表方向一致。
+        两个值记成「上下、左右」，和「先竖后横」一致。
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>二、盒子到底占多宽？（最容易踩的坑）</h2>
+
+    <p>课案里的 <code>padding</code>、<code>border</code>、<code>margin</code> 究竟怎么影响尺寸？
+       这是新手第一个大坑，我们用两个真实盒子做对比。</p>
+
+    <h3>默认情况：box-sizing: content-box</h3>
+    <pre>.demo-box {
+    width: 160px;           /* ← 这 160px 只是「内容区」的宽度！ */
+    height: 80px;
+    padding: 16px;          /* 左右各 16px，共 32px */
+    border: 6px solid red;  /* 左右各 6px，共 12px */
+    margin: 24px;           /* 左右各 24px，共 48px */
+    box-sizing: content-box;   /* 默认值 */
+}</pre>
+    <table>
+        <tr><th>层</th><th>左右各</th><th>累计计入宽度的值</th></tr>
+        <tr><td>content</td><td>—</td><td>160 px</td></tr>
+        <tr><td>padding</td><td>16 px</td><td>160 + 32 = 192 px</td></tr>
+        <tr><td>border</td><td>6 px</td><td>192 + 12 = <b>204 px</b> ← 盒子自身宽度</td></tr>
+        <tr><td>margin</td><td>24 px</td><td>204 + 48 = <b>252 px</b> ← 占用的总横向空间</td></tr>
+    </table>
+    <p><b>视觉验证：</b>下面斜纹底格子里那个蓝色盒子，代码里明明写的是 <code>width: 160px</code>，
+       但它看起来明显比 160px 宽——因为浏览器渲染的是 204px。</p>
+    <div class="stage">
+        <div class="demo-box">width:160px<br>content-box</div>
+    </div>
+
+    <div class="warn">
+        <b>这就是「我设了 width 但没用」的真相。</b>
+        解决办法见下一节。
+    </div>
+
+    <h3>推荐做法：box-sizing: border-box</h3>
+    <p>
+        设置 <code>box-sizing: border-box;</code> 后，<code>width</code> 就表示
+        <b>「内容区 + padding + border」的总宽度</b>，算起来符合直觉。
+        同样的 <code>width: 160px; padding: 16px; border: 6px</code>，
+        现在盒子自身就是 160px 宽，浏览器会自动把内容区压成
+        <code>160 - 32 - 12 = 116px</code>。
+    </p>
+    <div class="stage">
+        <div class="demo-box-borderbox">width:160px<br>border-box</div>
+    </div>
+    <p>对比一下两个盒子：现在是<b>一样宽</b>的。</p>
+
+<pre>/* 现代 CSS 的第一条必备规则：让所有元素的宽度算法都变成 border-box */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+/* 这条规则几乎出现在每一个真实项目的第一行。
+   注意：它必须写在最前面，因为后面的元素会继承这个「算法」而不是被覆盖。 */</pre>
+
+    <div class="tip">
+        <b>一句话总结：</b><br>
+        <code>content-box</code>（默认）：<b>width 只管内容</b>，加 padding/border 会越撑越大。<br>
+        <code>border-box</code>（推荐）：<b>width 管到底</b>，加 padding/border 会向内挤压内容，总宽不变。<br>
+        做「两个卡片各占 50% 并排」这类布局时，不用 border-box 几乎必然溢出换行。
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>三、padding 还是 margin？</h2>
+    <table>
+        <tr><th></th><th>padding 内边距</th><th>margin 外边距</th></tr>
+        <tr><td>位置</td><td>边框<b>以内</b></td><td>边框<b>以外</b></td></tr>
+        <tr><td>背景色</td><td><b>会</b>被背景色/背景图覆盖</td><td><b>不会</b>被覆盖（永远是透明的）</td></tr>
+        <tr><td>可否为负</td><td>不可以</td><td><b>可以</b>（常用于微调、负边距重叠）</td></tr>
+        <tr><td>点击区域</td><td>算在元素内，<b>可点击</b></td><td>不算，点不到</td></tr>
+        <tr><td>典型用途</td><td>让「内容」离边框远一点，例如按钮内文字不要贴边</td><td>让「两个元素」离远一点，例如段落之间的间距</td></tr>
+    </table>
+    <p><b>一句话判断：</b>问自己「我要让<b>内容</b>离边框远点」→ padding；
+       「我要让<b>这个盒子</b>离别的盒子远点」→ margin。</p>
+
+    <h3>margin 的两个经典陷阱</h3>
+    <p><b>陷阱 1：外边距合并（margin collapse）</b></p>
+    <div class="collapse-demo">
+        <p>我是第一段，margin: 30px 0</p>
+        <p>我是第二段，margin: 30px 0</p>
+        <p>我是第三段，margin: 30px 0</p>
+    </div>
+    <p>
+        上面三段之间看起来是 <b>30px</b> 而不是 60px！
+        因为<b>相邻的上下外边距会合并，取较大值</b>，而不是相加。这是 CSS 规范里明确规定的行为。
+    </p>
+    <ul>
+        <li>相邻兄弟元素的上下 margin 会合并。</li>
+        <li>父元素与第一个/最后一个子元素的上下 margin 也会合并（导致"父元素高度塌陷"）。</li>
+        <li><b>注意：只有上下会合并，左右不会。</b></li>
+    </ul>
+    <p>
+        <b>怎么破：</b>给父元素加 <code>padding: 1px;</code> 或 <code>overflow: hidden;</code>、
+        或 <code>display: flex;</code>（Flex 容器里的子元素不会发生外边距合并）。
+        实践中，现代布局基本都用 Flexbox，所以这个问题现在很少遇到了。
+    </p>
+
+    <p><b>陷阱 2：行内元素的 margin/padding 表现异常</b></p>
+    <p>
+        <code>&lt;span&gt;</code> 这类行内元素设 <code>margin-top/bottom</code> 是<b>无效</b>的，
+        <code>padding-top/bottom</code> 虽然会画出背景，但<b>不会撑开行高</b>，
+        会盖到上下行上。<b>结论：要给元素设置垂直间距，先确保它是块级元素
+        （<code>display: block</code> 或 <code>inline-block</code>）。</b>
+    </p>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>四、盒子模型可视化器（拖动滑块试试）</h2>
+    <p>
+        下面这个工具把 <code>width</code> / <code>padding</code> / <code>border</code> /
+        <code>margin</code> 做成滑块。拖动它们，观察两个东西：
+        ① 四种颜色区域的大小变化；② 下方黑框里<b>实时计算出来的尺寸</b>。
+    </p>
+
+    <div class="playground">
+        <div class="controls">
+            <label>width（内容区宽度）<span class="val" id="v-width">120</span> px
+                <input type="range" id="s-width" min="40" max="240" value="120" step="4">
+            </label>
+            <label>height（内容区高度）<span class="val" id="v-height">60</span> px
+                <input type="range" id="s-height" min="20" max="160" value="60" step="4">
+            </label>
+            <label>padding（内边距）<span class="val" id="v-padding">10</span> px
+                <input type="range" id="s-padding" min="0" max="40" value="10" step="1">
+            </label>
+            <label>border（边框宽度）<span class="val" id="v-border">4</span> px
+                <input type="range" id="s-border" min="0" max="20" value="4" step="1">
+            </label>
+            <label>margin（外边距）<span class="val" id="v-margin">12</span> px
+                <input type="range" id="s-margin" min="0" max="48" value="12" step="1">
+            </label>
+            <label style="margin-top:16px;">box-sizing
+                <select id="s-boxsizing" style="width:100%;padding:4px;font-family:inherit;">
+                    <option value="content-box">content-box（默认）</option>
+                    <option value="border-box">border-box（推荐）</option>
+                </select>
+            </label>
+        </div>
+
+        <div class="preview-area">
+            <!--
+              注意这个嵌套结构：为了把 margin / border / padding 三种区域用颜色区分开，
+              这里用了三个嵌套 div，每一层只负责一种「间距」。
+              真实开发中不会这样写，这里纯粹是为了肉眼可见。
+            -->
+            <div id="pg-margin">
+                <div id="pg-border">
+                    <div id="pg-padding">
+                        <div id="pg-content">content</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="readout" id="readout"></div>
+
+    <div class="tip">
+        <b>动手实验：</b><br>
+        ① 先把 <code>padding</code> 从 10 拉到 40，看「盒子自身宽度」怎么变。<br>
+        ② 再把 <code>box-sizing</code> 切成 <code>border-box</code>，重复上面的操作，
+           看「盒子自身宽度」是否保持不变（只有 content 被压缩）。<br>
+        ③ 把 <code>border</code> 拉到 0，看红框消失。<br>
+        ④ 把 <code>margin</code> 拉到 48，看黄色区域变宽 —— 但注意它<b>不算</b>在盒子自身宽度里。
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>五、重点回顾</h2>
+    <ul>
+        <li>每个元素都是一个盒子，由内到外：<b>content → padding → border → margin</b>。</li>
+        <li><code>padding</code> 在边框内、会吃到背景色；<code>margin</code> 在边框外、永远透明。</li>
+        <li>默认 <code>box-sizing: content-box</code> 时，
+            <b>盒子自身宽度 = width + padding×2 + border×2</b>；再加 margin 才是占位总宽。</li>
+        <li>用 <code>*, *::before, *::after { box-sizing: border-box; }</code> 让宽度算法符合直觉，
+            <b>这是现代 CSS 的第一条必备规则</b>。</li>
+        <li>相邻上下 <code>margin</code> 会<b>合并取较大值</b>（不是相加），左右不会。</li>
+        <li>行内元素（span/a）设垂直 margin 无效，要设垂直间距先改成块级或 inline-block。</li>
+        <li>调试盒子的最快方法：F12 → 选中元素 → Elements 面板底部会显示彩色的盒模型图，
+            悬停能高亮页面上的对应区域。</li>
+    </ul>
+</div>
+
+<hr>
+<p style="color:#57606a;font-size:14px;">
+    下一站：<code>04_Flex布局.html</code>（如何在盒子外面安排盒子的位置）。配套总结见 <code>CSS知识点.md</code>。
+</p>
+
+<script>
+    // ==========================================================================
+    // 盒子模型可视化器的逻辑。
+    // 说明：这里用到的是 03_JavaScript 章节的 DOM 操作知识，
+    //       现在看不懂没关系，只要知道「它在实时改元素的 style」即可。
+    // ==========================================================================
+
+    // 把要操作的元素一次性查出来，缓存成变量。
+    // 这样做的好处：不用每次拖动都重新查一遍 DOM（querySelector 是有开销的）。
+    const el = {
+        width:    document.getElementById("s-width"),
+        height:   document.getElementById("s-height"),
+        padding:  document.getElementById("s-padding"),
+        border:   document.getElementById("s-border"),
+        margin:   document.getElementById("s-margin"),
+        sizing:   document.getElementById("s-boxsizing"),
+        valW:     document.getElementById("v-width"),
+        valH:     document.getElementById("v-height"),
+        valP:     document.getElementById("v-padding"),
+        valB:     document.getElementById("v-border"),
+        valM:     document.getElementById("v-margin"),
+        marginBox:  document.getElementById("pg-margin"),
+        borderBox:  document.getElementById("pg-border"),
+        paddingBox: document.getElementById("pg-padding"),
+        contentBox: document.getElementById("pg-content"),
+        readout:  document.getElementById("readout")
+    };
+
+    /**
+     * 读取当前所有滑块的值，计算尺寸，并应用到预览区。
+     * 每次任何滑块变化都会调用这个函数。
+     */
+    function update() {
+        // 1) 读取滑块的值。注意 input 的 value 永远是字符串，必须用 Number() 转成数字再算。
+        const w  = Number(el.width.value);
+        const h  = Number(el.height.value);
+        const p  = Number(el.padding.value);
+        const b  = Number(el.border.value);
+        const m  = Number(el.margin.value);
+        const sizing = el.sizing.value;
+
+        // 2) 把数值显示到滑块右边
+        el.valW.textContent = w;
+        el.valH.textContent = h;
+        el.valP.textContent = p;
+        el.valB.textContent = b;
+        el.valM.textContent = m;
+
+        // 3) 核心：计算「内容区」应该被设成多大。
+        //
+        //    content-box（默认）：width 就是内容区宽度，padding/border 往外加。
+        //    border-box（推荐）  ：width 是「内容+padding+border」的总宽，
+        //                          所以内容区 = width - padding*2 - border*2。
+        //
+        //    Math.max(0, ...) 是为了防止算成负数（比如 width=40 但 padding=40）。
+        let contentW, contentH;
+        if (sizing === "border-box") {
+            contentW = Math.max(0, w - p * 2 - b * 2);
+            contentH = Math.max(0, h - p * 2 - b * 2);
+        } else {
+            contentW = w;
+            contentH = h;
+        }
+
+        // 4) 把计算结果应用到四个嵌套 div 上，让颜色区域跟着变
+        el.marginBox.style.padding = m + "px";                              // 黄色 = margin
+        el.borderBox.style.border = b + "px solid rgba(192,57,43,.9)";      // 红色 = border
+        el.paddingBox.style.padding = p + "px";                             // 绿色 = padding
+        el.contentBox.style.width = contentW + "px";                        // 蓝色 = content
+        el.contentBox.style.height = contentH + "px";
+        el.contentBox.textContent = "content\n" + contentW + "×" + contentH;
+
+        // 5) 计算并展示「盒子自身尺寸」和「占位总尺寸」
+        //    盒子自身宽 = content + padding*2 + border*2
+        const boxW = contentW + p * 2 + b * 2;
+        const boxH = contentH + p * 2 + b * 2;
+        //    占位总宽 = 盒子自身 + margin*2
+        const totalW = boxW + m * 2;
+        const totalH = boxH + m * 2;
+
+        // 模板字符串（反引号）可以方便地拼接多行文本
+        el.readout.textContent =
+`box-sizing: ${sizing}
+
+content  内容区      ${contentW} × ${contentH}
+padding  内边距      ${p} px
+border   边框        ${b} px
+margin   外边距      ${m} px
+
+盒子自身尺寸 = content + padding×2 + border×2
+             = ${contentW} + ${p * 2} + ${b * 2}
+             = ${boxW} × ${boxH} px
+
+占位总尺寸   = 盒子自身 + margin×2
+             = ${boxW} + ${m * 2}
+             = ${totalW} × ${totalH} px`;
+    }
+
+    // 6) 给所有控件绑定 input 事件：只要值变了就立刻重算。
+    //    用数组 + forEach 可以避免写 6 遍重复代码。
+    [el.width, el.height, el.padding, el.border, el.margin, el.sizing].forEach(function (ctrl) {
+        ctrl.addEventListener("input", update);   // range 滑块用 input 事件才能实时响应
+        ctrl.addEventListener("change", update);  // select 下拉用 change 事件
+    });
+
+    // 7) 页面一打开先跑一次，把初始值渲染出来
+    update();
+</script>
+
+</body>
+</html>

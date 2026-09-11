@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：04_嵌套关系.html
+对应课案章节：理解网页结构 → 嵌套关系 / 开发者工具使用
+本节知识点：
+  1. 嵌套关系：标签里面套标签，形成一棵「DOM 树」。
+  2. 父子 / 兄弟 / 祖先 / 后代 —— 这些词在 CSS 和 JS 里天天用到。
+  3. 缩进只是给人看的，浏览器不关心；但良好的缩进是专业习惯。
+  4. 块级元素与行内元素的嵌套限制（例如 <p> 里不能放 <div>）。
+  5. 用浏览器开发者工具（F12 / 右键「检查」）观察这棵树。
+本文件在页面右侧实时绘制了本页真实 DOM 树的一部分，方便和课案的树形图对照。
+如何打开查看：直接用浏览器打开本文件；再按 F12 打开开发者工具，切到 Elements 面板对照。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>理解网页结构 —— 嵌套关系与 DOM 树</title>
+    <style>
+        body {
+            font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+            max-width: 1000px; margin: 24px auto; padding: 0 16px;
+            line-height: 1.75; color: #24292f;
+        }
+        code {
+            background: #f3f4f6; padding: 2px 6px; border-radius: 3px;
+            font-family: Consolas, Monaco, monospace; color: #c7254e;
+        }
+        pre {
+            background: #1f2430; color: #e6e6e6; padding: 12px 14px;
+            border-radius: 6px; overflow-x: auto; line-height: 1.5;
+        }
+        section {
+            border: 1px solid #e1e4e8; border-left: 5px solid #9b59b6;
+            border-radius: 6px; padding: 12px 18px; margin: 18px 0; background: #fdfaff;
+        }
+        section > h2 { margin-top: 6px; color: #7d3c98; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #b9c0c8; padding: 6px 12px; text-align: left; }
+        th { background: #f0f4f8; }
+
+        /* ================= 下面这三个类，就是课案里的嵌套关系示例 ================= */
+        /* .article 是最外层容器（父） */
+        .article {
+            border: 2px dashed #9b59b6;
+            padding: 14px;
+            background: #fff;
+        }
+        /* .content 是 .article 的直接子元素，同时又是 <p> 的父元素 */
+        .content {
+            border: 2px dashed #3498db;
+            padding: 12px;
+            margin-top: 10px;
+            background: #f7fbff;
+        }
+        /* .highlight 是嵌套最深的一层（<p> 里的 <span>） */
+        .highlight {
+            background: #fff3a3;
+            border: 1px solid #e0c200;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+
+        /* ================= 右侧 DOM 树可视化 ================= */
+        .tree {
+            font-family: Consolas, Monaco, monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            background: #1f2430;
+            color: #9cdcfe;
+            padding: 12px 14px;
+            border-radius: 6px;
+            white-space: pre;
+            overflow-x: auto;
+        }
+        .tree .tag   { color: #4ec9b0; }   /* 标签名 */
+        .tree .cls   { color: #dcdcaa; }   /* class 名 */
+        .tree .attr  { color: #ce9178; }   /* 属性 */
+        .tree .dim   { color: #6a737d; }   /* 注释 */
+        .tip {
+            background: #fff8e1; border-left: 4px solid #f0ad4e;
+            padding: 10px 14px; margin: 14px 0; border-radius: 4px;
+        }
+        .bad  { background:#fdecea; border-left:4px solid #e74c3c; padding:10px 14px; margin:14px 0; border-radius:4px; }
+        .good { background:#eafaf1; border-left:4px solid #2ecc71; padding:10px 14px; margin:14px 0; border-radius:4px; }
+        .kv { display:inline-block; min-width:88px; font-weight:bold; color:#7d3c98; }
+    </style>
+</head>
+<body>
+
+<h1>理解网页结构：嵌套关系与 DOM 树</h1>
+
+<p>
+    HTML 文档不是「一长串平铺的标签」，而是<b>一棵树</b>。每个标签是一个<b>节点</b>，
+    标签里再放标签就形成了<b>父子关系</b>。浏览器把这份文档读取到内存里，
+    就得到了所谓的 <b>DOM 树</b>（Document Object Model，文档对象模型）。
+    <b>你后面学的 CSS 选择器和 JavaScript 操作元素，全都是在这棵树上做文章。</b>
+</p>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>一、课案的嵌套示例，真实跑一遍</h2>
+
+    <!--
+      下面这段就是课案原文的结构：div.article > (h1 + div.content > p > span.highlight)
+      注意缩进：缩进不会影响渲染结果，它纯粹是为了让人一眼看出「谁在谁里面」。
+    -->
+    <div class="article">
+        <h1>文章标题</h1>
+        <div class="content">
+            <p>第一段<span class="highlight">关键词</span>内容</p>
+        </div>
+    </div>
+
+    <pre>&lt;div class="article"&gt;
+    &lt;h1&gt;文章标题&lt;/h1&gt;
+    &lt;div class="content"&gt;
+        &lt;p&gt;第一段&lt;span class="highlight"&gt;关键词&lt;/span&gt;内容&lt;/p&gt;
+    &lt;/div&gt;
+&lt;/div&gt;</pre>
+
+    <p>
+        页面上那个<b>紫色虚线框</b>就是 <code>div.article</code>，
+        <b>蓝色虚线框</b>是 <code>div.content</code>，
+        <b>黄色小块</b>是 <code>span.highlight</code>。
+        一层套一层的边框，正是嵌套关系最直观的视觉证明。
+    </p>
+</section>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>二、课案的树形图</h2>
+    <p>课案用缩进加 `├──` 的方式画出了这棵树的形状：</p>
+    <pre>div.article
+├── h1
+└── div.content
+    └── p
+        └── span.highlight</pre>
+
+    <p>把它读成一句人话就是：</p>
+    <ul>
+        <li><code>div.article</code> 是<b>根</b>（这一小段结构的根）。</li>
+        <li>它有两个<b>直接子节点</b>：<code>h1</code> 和 <code>div.content</code>。</li>
+        <li><code>h1</code> 和 <code>div.content</code> 互为<b>兄弟节点</b>（同一个父亲）。</li>
+        <li><code>p</code> 是 <code>div.content</code> 的子节点，是 <code>div.article</code> 的<b>孙子（后代）</b>。</li>
+        <li><code>span.highlight</code> 是最深的一层，只有它自己是「叶子节点」。</li>
+    </ul>
+</section>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>三、术语对照表（务必记住，CSS / JS 天天用）</h2>
+    <table>
+        <tr><th>术语</th><th>含义</th><th>在本例中</th></tr>
+        <tr>
+            <td><b>父节点</b> parent</td>
+            <td>直接包住我的那一层</td>
+            <td><code>p</code> 的父节点是 <code>div.content</code></td>
+        </tr>
+        <tr>
+            <td><b>子节点</b> child</td>
+            <td>我直接包住的那些</td>
+            <td><code>div.article</code> 的子节点是 <code>h1</code> 和 <code>div.content</code></td>
+        </tr>
+        <tr>
+            <td><b>兄弟节点</b> sibling</td>
+            <td>和我同一个父亲的其他节点</td>
+            <td><code>h1</code> 和 <code>div.content</code> 是兄弟</td>
+        </tr>
+        <tr>
+            <td><b>祖先</b> ancestor</td>
+            <td>父、祖父、曾祖父……所有上层</td>
+            <td><code>span</code> 的祖先是 <code>p</code>、<code>div.content</code>、<code>div.article</code>、<code>body</code>、<code>html</code></td>
+        </tr>
+        <tr>
+            <td><b>后代</b> descendant</td>
+            <td>子、孙、曾孙……所有下层</td>
+            <td><code>div.article</code> 的后代包含上面所有 4 个标签</td>
+        </tr>
+        <tr>
+            <td><b>根节点</b> root</td>
+            <td>最顶层，也就是 <code>&lt;html&gt;</code></td>
+            <td>整份文档的根永远是 <code>html</code></td>
+        </tr>
+    </table>
+
+    <div class="tip">
+        <b>为什么这些词很重要？</b>
+        CSS 里 <code>.article p</code>（后代选择器）和 <code>.article &gt; p</code>（子选择器）
+        的区别，JS 里 <code>parentNode</code> / <code>children</code> 的用法，
+        全部建立在这套父子关系上。分不清父子，就写不对选择器。
+    </div>
+</section>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>四、缩进：不影响渲染，但影响你的队友</h2>
+    <p>
+        浏览器解析 HTML 时会把标签之间的换行和空格<b>压缩成一个空格</b>，
+        所以下面两段代码渲染效果完全一样：
+    </p>
+    <div class="good">
+        <b>推荐（有缩进，一眼看出层级）</b>
+        <pre style="margin-bottom:0;">&lt;div class="article"&gt;
+    &lt;h1&gt;文章标题&lt;/h1&gt;
+&lt;/div&gt;</pre>
+    </div>
+    <div class="bad">
+        <b>不推荐（虽然浏览器能跑）</b>
+        <pre style="margin-bottom:0;">&lt;div class="article"&gt;&lt;h1&gt;文章标题&lt;/h1&gt;&lt;/div&gt;</pre>
+    </div>
+    <p>
+        结论是：<b>缩进是给人看的，不是给浏览器看的</b>。但嵌套一深，
+        没有缩进的代码几乎无法维护，所以从一开始就养成"每进一层缩进 2 或 4 个空格"的习惯。
+    </p>
+</section>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>五、嵌套的禁忌：不是随便什么都能塞进去</h2>
+    <p>HTML 对「谁能当谁的父节点」有规则，违反规则时浏览器会<b>自动改写你的结构</b>：</p>
+    <div class="bad">
+        <b>❌ 错误写法：</b>把块级元素 <code>&lt;div&gt;</code> 塞进段落 <code>&lt;p&gt;</code> 里
+        <pre style="margin-bottom:0;">&lt;p&gt;一段文字
+    &lt;div&gt;我是块级元素&lt;/div&gt;   &lt;!-- 非法！ --&gt;
+&lt;/p&gt;</pre>
+    </div>
+    <p>
+        浏览器遇到这种情况会「贴心」地帮你把 <code>&lt;p&gt;</code> 提前闭合，
+        变成「p、div、空p」三个兄弟节点 —— 你的层级结构和 CSS 选择器可能因此全部失效，
+        而页面上<b>不会有任何报错提示</b>。这是新手最容易踩的坑之一。
+    </p>
+    <div class="good">
+        <b>✓ 正确写法：</b>要放块级元素，就把外层换成 <code>&lt;div&gt;</code>
+        <pre style="margin-bottom:0;">&lt;div&gt;一段文字
+    &lt;div&gt;我是块级元素&lt;/div&gt;
+&lt;/div&gt;</pre>
+    </div>
+    <p><b>速记规则：</b></p>
+    <ul>
+        <li>块级元素（div / p / h1~h6 / ul / table / section）可以包容行元素，也可以包块级元素（<code>&lt;p&gt;</code> 除外，它只能包行内元素）。</li>
+        <li>行内元素（span / a / b / i）<b>原则上不能包块级元素</b>。</li>
+        <li><code>&lt;ul&gt;/&lt;ol&gt;</code> 的直接子元素只能是 <code>&lt;li&gt;</code>。</li>
+        <li><code>&lt;table&gt;</code> 里要有 <code>&lt;tr&gt;</code>，<code>&lt;tr&gt;</code> 里要有 <code>&lt;td&gt;/&lt;th&gt;</code>。</li>
+    </ul>
+</section>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>六、本页真实 DOM 树（可点击展开完整深度）</h2>
+    <p>
+        下面这个黑色框里的内容，不是手写的，而是页面加载时
+        <b>用 JavaScript 读取本页真实 DOM 结构绘制出来的</b>。
+        它证明了「网页 = 一棵树」这件事是真实存在的、可以被程序遍历的。
+    </p>
+    <div class="tree" id="tree-output">正在读取本页 DOM 结构……</div>
+    <p style="font-size:13px;color:#57606a;">
+        提示：树太深时会截断（最多画 5 层），避免输出过长。
+        想看完整结构，请按 <b>F12</b> 打开开发者工具 → <b>Elements</b> 面板。
+    </p>
+</section>
+
+<!-- ==================================================================== -->
+<section>
+    <h2>七、开发者工具怎么用（课案：右击查看源代码 / 右击检查）</h2>
+    <ol>
+        <li><b>右击 → 查看网页源代码（Ctrl + U）</b><br>
+            看到的是服务器发过来的<b>原始 HTML 文本</b>，也就是你写的那个文件本身。
+            它不会显示 JavaScript 后来动态插入的内容。</li>
+        <li><b>右击 → 检查（Inspect，或直接按 F12）</b><br>
+            打开开发者工具，默认停在 <b>Elements</b> 面板。这里显示的是<b>当前真实的 DOM 树</b>——
+            已经被浏览器纠错过、也已经包含 JS 动态修改过的内容。它和「查看源代码」看到的不一样，
+            这一点极其重要。</li>
+        <li><b>在 Elements 面板里做什么：</b>
+            <ul>
+                <li>把鼠标移到某个标签上 → 页面上对应区域会被高亮，<b>这是找元素最快的办法</b>。</li>
+                <li>点开右侧的 <b>Styles</b> 子面板 → 看到这个元素最终生效的所有 CSS 规则，
+                    被划掉的表示被更高优先级覆盖了（<b>调试样式必看</b>）。</li>
+                <li>双击标签名/属性值可以直接改，页面会立刻变化（刷新后还原，不用担心改坏）。</li>
+                <li>切到 <b>Console</b> 面板可以执行 JS，例如输入
+                    <code>document.querySelectorAll("section").length</code> 回车，
+                    立刻得到本页 section 的数量。</li>
+            </ul>
+        </li>
+    </ol>
+    <div class="tip">
+        <b>动手练习：</b>按 F12 → 在 Console 里依次运行下面三行，观察输出和页面变化：
+        <pre style="margin-bottom:0;">document.querySelector(".highlight").textContent
+document.querySelector(".highlight").style.background = "red"
+document.querySelectorAll("section").length</pre>
+    </div>
+</section>
+
+<hr>
+<p style="color:#57606a;font-size:14px;">
+    配套阅读：<code>HTML知识点.md</code>。下一站：<code>../02_CSS/01_CSS语法.html</code>。
+</p>
+
+<script>
+    // ==========================================================================
+    // 这段 JS 的唯一目的：把本页真实的 DOM 树画到上面那个黑色框里。
+    // 它本身属于「JavaScript / DOM 操作」的知识点（见 03_JavaScript 目录），
+    // 在这里出现是为了让「嵌套关系 = 一棵树」这件事变得可见、可验证。
+    // ==========================================================================
+
+    /**
+     * 递归地把一个 DOM 节点渲染成树形文本。
+     * @param {Node} node   当前节点
+     * @param {string} prefix 这一行前面要画的树枝（用于对齐）
+     * @param {number} depth  当前深度，用于限制最大层数
+     * @returns {string} 多行文本
+     */
+    function renderNode(node, prefix, depth) {
+        // 定义一个局部变量收集输出行
+        let out = "";
+
+        // node.childNodes 包含元素节点、文本节点、注释节点等所有子节点。
+        // 我们只想看「标签」，所以把所有非元素节点（nodeType !== 1）过滤掉。
+        const children = Array.from(node.childNodes).filter(function (n) {
+            return n.nodeType === 1;   // 1 = Element（元素节点）
+        });
+
+        children.forEach(function (child, index) {
+            const isLast = (index === children.length - 1);
+            // ├── 和 └── 是画树用的字符；最后一个子节点用 └──
+            const branch = isLast ? "└── " : "├── ";
+            // 下一层的缩进：如果当前是最后一个，下面就没有竖线了
+            const nextPrefix = prefix + (isLast ? "    " : "│   ");
+
+            // 拼出这一行的描述：标签名 + class
+            let label = child.tagName.toLowerCase();
+            if (child.id) {
+                label += "#" + child.id;
+            }
+            if (child.className && typeof child.className === "string" && child.className.trim() !== "") {
+                label += "." + child.className.trim().split(/\s+/).join(".");
+            }
+
+            out += prefix + branch + label + "\n";
+
+            // 深度保护：本页嵌套很深，超过 5 层就不再往下画，否则输出会非常长
+            if (depth < 5) {
+                out += renderNode(child, nextPrefix, depth + 1);
+            } else if (Array.from(child.childNodes).some(function (n) { return n.nodeType === 1; })) {
+                out += nextPrefix + "└── …（更深层已省略）\n";
+            }
+        });
+
+        return out;
+    }
+
+    // textContent 会把纯文本直接写进元素（不会解析 HTML），用于展示树形字符最合适
+    document.getElementById("tree-output").textContent = renderNode(document.body, "", 1);
+</script>
+
+</body>
+</html>

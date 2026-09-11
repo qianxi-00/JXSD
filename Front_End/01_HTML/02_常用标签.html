@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：02_常用标签.html
+对应课案章节：HTML → 常用标签 → 最小实现示例
+本节知识点（课案表格里的 8 类标签，全部在本文件中实际演示）：
+  <div>   区块 / 结构容器
+  <span>  行内文本 / 包裹小段文字
+  <h1>~<h6> 标题
+  <p>     段落
+  <a href="...">  链接（跳转页面）
+  <img src="..."> 图片（嵌入图片）
+  <ul><li>        无序列表
+  <table>         表格
+另外补充：换行 <br>、有序列表 <ol>、描述列表 <dl>、语义化标签、实体字符转义。
+配套资源：本文件同目录下的 img/demo.png（由 Pillow 现场生成，可离线使用）。
+如何打开查看：直接用浏览器打开本文件即可（保证 img/ 子目录与本文件在一起）。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML 常用标签全演示</title>
+    <style>
+        /* 这一小段样式只为了演示好看，和「常用标签」这个知识点本身无关。 */
+        body {
+            font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+            max-width: 900px;
+            margin: 24px auto;
+            padding: 0 16px;
+            line-height: 1.75;
+            color: #24292f;
+        }
+        /* 每个标签演示块：浅色底 + 左侧色条，方便区分「这一段在演示哪个标签」 */
+        section {
+            border: 1px solid #e1e4e8;
+            border-left: 5px solid #3498db;
+            border-radius: 6px;
+            padding: 12px 18px;
+            margin: 18px 0;
+            background: #fbfdff;
+        }
+        section > h3 {
+            margin-top: 6px;
+            color: #0969da;
+        }
+        .label {
+            display: inline-block;
+            background: #0969da;
+            color: #fff;
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-family: Consolas, Monaco, monospace;
+            margin-right: 6px;
+        }
+        code {
+            background: #f3f4f6; padding: 2px 6px; border-radius: 3px;
+            font-family: Consolas, Monaco, monospace; color: #c7254e;
+        }
+        pre {
+            background: #1f2430; color: #e6e6e6; padding: 12px 14px;
+            border-radius: 6px; overflow-x: auto; line-height: 1.5;
+        }
+        /* 下面这个 .box 系列专门给 <div> 演示用 */
+        .box-parent { background: #ddd; padding: 20px; }
+        .box-child-a { background: #aaa; padding: 10px; margin: 10px 0; }
+        .box-child-b { background: #bbb; padding: 10px; margin: 10px 0; }
+        /* 表格样式 */
+        table { border-collapse: collapse; }
+        th, td { border: 1px solid #b9c0c8; padding: 6px 14px; }
+        th { background: #f0f4f8; }
+        .highlight { background: yellow; }
+        .note {
+            background: #fff8e1; border-left: 4px solid #f0ad4e;
+            padding: 10px 14px; margin: 14px 0; border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>HTML 常用标签全演示</h1>
+<p>
+    本文件把课案「常用标签」一节里出现的 8 类标签全部真实跑了一遍。
+    每块演示都配了「用法 / 为什么这样写」的说明，可以直接右键「查看源代码」对照学习。
+</p>
+
+<!-- ==================================================================== -->
+<!-- 1. 标题：<h1> ~ <h6>                                                  -->
+<!-- ==================================================================== -->
+<section>
+    <h3><span class="label">&lt;h1&gt;~&lt;h6&gt;</span>标题</h3>
+    <p>
+        <b>作用：</b>表示标题，级别从 h1 到 h6 依次变小、重要性依次降低。
+        <b>为什么这样写：</b>标题不只是「把字变大」，它带有<b>语义</b>——搜索引擎和屏幕阅读器
+        靠它理解页面结构。所以不要为了「字大」而用 h1，字号应该交给 CSS 去管。
+    </p>
+
+    <h1>一级标题（最大）</h1>
+    <h2>二级标题</h2>
+    <h3>三级标题</h3>
+    <h4>四级标题</h4>
+    <h5>五级标题</h5>
+    <h6>六级标题（最小）</h6>
+
+    <pre>&lt;h1&gt;一级标题（最大）&lt;/h1&gt;
+&lt;h3&gt;三级标题&lt;/h3&gt;
+&lt;h6&gt;六级标题（最小）&lt;/h6&gt;</pre>
+</section>
+
+<!-- ==================================================================== -->
+<!-- 2. 段落与行内文本：<p> 与 <span>                                       -->
+<!-- ==================================================================== -->
+<section>
+    <h3><span class="label">&lt;p&gt;</span><span class="label">&lt;span&gt;</span>段落与行内文本</h3>
+    <p>
+        <b>&lt;p&gt;</b>：段落，是<b>块级元素</b>——独占一行，前后会自动留白。<br>
+        <b>&lt;span&gt;</b>：行内元素——不换行、不占整行，专门用来「包裹一小段文字」，
+        以便只给这一小段单独上样式。它本身没有任何默认外观，是个纯粹的「钩子」。
+    </p>
+
+    <!-- 这里的 style="..." 叫「行内样式」，是最直接的改样式方式（但不利于复用，后面 CSS 章节会讲更好的写法） -->
+    <p>这是一个段落，用于展示大段文字内容。</p>
+    <span style="color:red;">这是红色行内文本</span>，
+    <span style="font-size:20px;">这是大号行内文本</span>，
+    <span style="color:blue;font-size:24px;">蓝色大号文本</span>。
+
+    <pre>&lt;p&gt;这是一个段落，用于展示大段文字内容。&lt;/p&gt;
+&lt;span style="color:red;"&gt;这是红色行内文本&lt;/span&gt;，
+&lt;span style="font-size:20px;"&gt;这是大号行内文本&lt;/span&gt;，
+&lt;span style="color:blue;font-size:24px;"&gt;蓝色大号文本&lt;/span&gt;。</pre>
+
+    <div class="note">
+        <b>块级 vs 行内，一句话记住：</b>块级元素（div / p / h1 / ul / table）
+        像「一整块砖」，自己占满一行；行内元素（span / a / img / b / i）
+        像「一行字里的一段」，和文字排在同一行。
+    </div>
+</section>
+
+<!-- ==================================================================== -->
+<!-- 3. 换行：<br>                                                         -->
+<!-- ==================================================================== -->
+<section>
+    <h3><span class="label">&lt;br&gt;</span>换行（自闭合标签）</h3>
+    <p>
+        <b>&lt;br&gt;</b> 表示「强制换行」，它没有内容，所以写成单个标签即可（这叫空元素 / 自闭合标签）。
+        <b>注意：</b>不要用连续多个 &lt;br&gt; 来做段间距，那是 CSS 里 margin 的活。
+    </p>
+    <p>
+        第一行内容<br>
+        第二行内容<br>
+        第三行内容
+    </p>
+</section>
+
+<!-- ==================================================================== -->
+<!-- 4. 链接：<a href="...">                                               -->
+<!-- ==================================================================== -->
+<section>
+    <h3><span class="label">&lt;a&gt;</span>链接</h3>
+    <p>
+        <b>作用：</b>点击后跳转。<b>href</b>（hypertext reference）就是「跳到哪里去」。
+    </p>
+    <ul>
+        <li>跳转到外部网站（课案示例）：
+            <a href="https://www.baidu.com">点击跳转到百度</a>
+        </li>
+        <li>跳转到本文件内的某个位置（锚点）：
+            <a href="#top-of-file">回到本文档顶部的「标题」演示</a>
+            <!-- 说明：href 以 # 开头表示「页面内锚点」，浏览器会滚动到 id 等于该值的元素。
+                 这里指向的是下面那个 id="top-of-file" 的占位元素。 -->
+        </li>
+        <li>打开新标签页（推荐给外链）：
+            <a href="https://www.python.org" target="_blank" rel="noopener noreferrer">
+                在新标签页打开 Python 官网
+            </a>
+            <!-- target="_blank" 让链接在新标签打开；
+                 rel="noopener noreferrer" 是安全习惯：防止新页面通过 window.opener 反向操控本页。 -->
+        </li>
+        <li>发送邮件：<a href="mailto:someone@example.com">发邮件给 someone@example.com</a></li>
+    </ul>
+    <pre>&lt;a href="https://www.baidu.com"&gt;点击跳转到百度&lt;/a&gt;
+&lt;a href="https://www.python.org" target="_blank" rel="noopener noreferrer"&gt;新标签打开&lt;/a&gt;
+&lt;a href="mailto:someone@example.com"&gt;发邮件&lt;/a&gt;</pre>
+</section>
+
+<!-- ==================================================================== -->
+<!-- 5. 图片：<img src="..." alt="..." width="...">                        -->
+<!-- ==================================================================== -->
+<section id="top-of-file">
+    <h3><span class="label">&lt;img&gt;</span>图片</h3>
+    <p>
+        <b>作用：</b>嵌入一张图片。它也是「空元素」，没有结束标签。<br>
+        <b>src</b>：图片路径（相对路径 / 绝对路径 / URL 都可以）。
+        <b>alt</b>：图片加载失败时显示的替代文字，同时也是屏幕阅读器念给视障用户听的内容，
+        <b>所以 alt 不能省</b>。
+        <b>width</b>：宽度（只写宽度，高度会自动等比缩放，避免图片被拉变形）。
+    </p>
+
+    <!--
+      这里的 img/demo.png 是本项目用 Pillow 现场生成的真实文件，和本 HTML 放在一起，
+      用「相对路径」引用。相对路径是相对于「本 HTML 文件所在目录」来算的，
+      所以把整个 01_HTML 文件夹拷到任何地方都能正常显示。
+    -->
+    <img src="img/demo.png" alt="占位图片：由 Pillow 生成的示例图" width="200">
+
+    <!-- 下面这张故意写了一个不存在的路径，用来演示 alt 文字的效果（图片显示不出来时会看到 alt 文字）。
+         这是课案里 <img> 教学最直观的一种演示方式，且不会产生任何报错弹窗。 -->
+    <p style="margin-top:16px;">
+        <img src="img/这只图片并不存在.png" alt="图片加载失败时，你看到的就是这段 alt 文字" width="200">
+    </p>
+
+    <pre>&lt;img src="img/demo.png" alt="占位图片" width="200"&gt;
+&lt;br&gt;&lt;br&gt;
+&lt;a href="https://www.baidu.com"&gt;点击跳转到百度&lt;/a&gt;</pre>
+</section>
+
+<!-- ==================================================================== -->
+<!-- 6. 列表：<ul><li> / <ol><li> / <dl>                                   -->
+<!-- ==================================================================== -->
+<section>
+    <h3><span class="label">&lt;ul&gt;&lt;li&gt;</span>列表</h3>
+    <p>
+        <b>&lt;ul&gt;</b> = unordered list（无序列表，前面是小圆点）；
+        <b>&lt;ol&gt;</b> = ordered list（有序列表，前面是 1. 2. 3.）；
+        <b>&lt;li&gt;</b> = list item（列表项）。<b>&lt;li&gt; 必须写在 &lt;ul&gt; 或 &lt;ol&gt; 里面</b>，
+        不能单独出现。
+    </p>
+
+    <b>无序列表（课案示例）：</b>
+    <ul>
+        <li>列表项一</li>
+        <li>列表项二</li>
+        <li>列表项三</li>
+    </ul>
+
+    <b>有序列表：</b>
+    <ol>
+        <li>第一步：写 HTML</li>
+        <li>第二步：写 CSS</li>
+        <li>第三步：写 JavaScript</li>
+    </ol>
+
+    <b>嵌套列表（列表里放列表）：</b>
+    <ul>
+        <li>前端三件套
+            <ul>
+                <li>HTML —— 结构</li>
+                <li>CSS —— 样式</li>
+                <li>JavaScript —— 行为</li>
+            </ul>
+        </li>
+        <li>Python 后端</li>
+    </ul>
+
+    <pre>&lt;ul&gt;
+    &lt;li&gt;列表项一&lt;/li&gt;
+    &lt;li&gt;列表项二&lt;/li&gt;
+    &lt;li&gt;列表项三&lt;/li&gt;
+&lt;/ul&gt;</pre>
+</section>
+
+<!-- ==================================================================== -->
+<!-- 7. 表格：<table><tr><td>                                              -->
+<!-- ==================================================================== -->
+<section>
+    <h3><span class="label">&lt;table&gt;</span>表格</h3>
+    <p>
+        <b>&lt;table&gt;</b> 表格；
+        <b>&lt;tr&gt;</b> = table row，一行；
+        <b>&lt;td&gt;</b> = table data，一个普通单元格；
+        <b>&lt;th&gt;</b> = table header，表头单元格（默认加粗居中）。
+        <b>border="1"</b> 是课案里用来显示边框的写法，现代写法应该交给 CSS（见本文件样式里的 table 规则）。
+    </p>
+
+    <!-- 课案原文写法：table border="1" -->
+    <table border="1">
+        <tr>
+            <td>姓名</td>
+            <td>年龄</td>
+        </tr>
+        <tr>
+            <td>张三</td>
+            <td>20</td>
+        </tr>
+    </table>
+
+    <p style="margin-top:16px;"><b>更规范的写法（带表头 &lt;th&gt;）：</b></p>
+    <table>
+        <tr>
+            <th>姓名</th>
+            <th>年龄</th>
+            <th>城市</th>
+        </tr>
+        <tr>
+            <td>张三</td>
+            <td>25</td>
+            <td>北京</td>
+        </tr>
+        <tr>
+            <td>李四</td>
+            <td>30</td>
+            <td>上海</td>
+        </tr>
+    </table>
+
+    <pre>&lt;table border="1"&gt;
+    &lt;tr&gt;
+        &lt;td&gt;姓名&lt;/td&gt;
+        &lt;td&gt;年龄&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+        &lt;td&gt;张三&lt;/td&gt;
+        &lt;td&gt;20&lt;/td&gt;
+    &lt;/tr&gt;
+&lt;/table&gt;</pre>
+</section>
+
+<!-- ==================================================================== -->
+<!-- 8. 区块容器：<div>                                                    -->
+<!-- ==================================================================== -->
+<section>
+    <h3><span class="label">&lt;div&gt;</span>区块容器</h3>
+    <p>
+        <b>作用：</b>&lt;div&gt; 是 division（区块）的缩写，是<b>块级</b>的「万能盒子」，
+        本身没有任何默认外观，专门用来<b>划分结构、把一组内容打包</b>，
+        方便后面用 CSS 统一排版（比如「这几个东西排成三列」）。
+        <b>为什么这样写：</b>网页布局的本质就是「盒子套盒子」，&lt;div&gt; 就是那个盒子。
+    </p>
+
+    <!-- 这就是课案里的「区块容器」示例：父容器里装两个子容器 -->
+    <!-- 大区块容器 -->
+    <div style="background:#ddd;padding:20px;">
+        <p>我是父容器</p>
+        <!-- 两个子区块 -->
+        <div style="background:#aaa;padding:10px;margin:10px 0;">
+            <p>子容器一</p>
+        </div>
+        <div style="background:#bbb;padding:10px;margin:10px 0;">
+            <p>子容器二</p>
+        </div>
+    </div>
+
+    <p style="margin-top:16px;"><b>换成 class 的写法（推荐，便于复用）：</b></p>
+    <div class="box-parent">
+        <p>父容器</p>
+        <div class="box-child-a"><p>子容器一</p></div>
+        <div class="box-child-b"><p>子容器二</p></div>
+    </div>
+
+    <div class="note">
+        可以看到：两个子容器「上下叠着」排列，因为 &lt;div&gt; 是块级元素，天然一个占一行。
+        想让它们「左右并排」，就要用到后面 CSS 章节的 <b>Flexbox</b>。
+    </div>
+</section>
+
+<!-- ==================================================================== -->
+<!-- 9. 补充：语义化标签                                                   -->
+<!-- ==================================================================== -->
+<section>
+    <h3><span class="label">&lt;header&gt;</span><span class="label">&lt;nav&gt;</span>
+        <span class="label">&lt;main&gt;</span><span class="label">&lt;footer&gt;</span>语义化标签（补充）</h3>
+    <p>
+        这些标签的功能和 &lt;div&gt; 几乎一样（都是块级盒子），但名字自带含义。
+        <b>为什么用它们：</b>做 SEO（搜索引擎优化）和「无障碍访问」（读屏软件）时，
+        浏览器和爬虫能直接读懂「这块是导航」「这块是正文」。
+    </p>
+
+    <header style="background:#e8f4ff;padding:10px;">
+        <b>&lt;header&gt; 页头</b>
+        <nav style="background:#d0e7ff;padding:8px;margin-top:6px;">
+            &lt;nav&gt; 导航区：
+            <a href="#top-of-file">首页</a> |
+            <a href="#top-of-file">关于</a> |
+            <a href="#top-of-file">联系</a>
+        </nav>
+    </header>
+    <main style="background:#f7f7f7;padding:10px;margin-top:8px;">
+        <b>&lt;main&gt; 主体内容</b>
+        <p>页面最重要的正文放在这里，一个页面通常只有一个 &lt;main&gt;。</p>
+    </main>
+    <footer style="background:#eee;padding:10px;margin-top:8px;">
+        <b>&lt;footer&gt; 页脚</b> —— 版权信息、备案号等
+    </footer>
+</section>
+
+<!-- ==================================================================== -->
+<!-- 10. 补充：特殊字符需要转义                                            -->
+<!-- ==================================================================== -->
+<section>
+    <h3>补充：想在页面上显示 &lt; 和 &gt; 怎么办？</h3>
+    <p>
+        尖括号在 HTML 里是「标签的开始/结束」，所以想把它当普通文字显示，必须用
+        <b>实体字符（entity）</b>：<br>
+        <code>&amp;lt;</code> 显示成 &lt; &nbsp;&nbsp;
+        <code>&amp;gt;</code> 显示成 &gt; &nbsp;&nbsp;
+        <code>&amp;amp;</code> 显示成 &amp; &nbsp;&nbsp;
+        <code>&amp;nbsp;</code> 显示成一个不换行的空格 &nbsp;&nbsp;（← 这里就是用 &amp;nbsp; 挤出来的间距）
+    </p>
+    <p>
+        本文件里所有展示「代码原文」的 <code>&lt;pre&gt;</code> 块，内部都做了这种转义处理，
+        所以你才能看到完整的标签写法而不是被浏览器当成标签渲染掉。
+    </p>
+</section>
+
+<hr>
+<p style="color:#57606a;font-size:14px;">
+    以上就是课案「常用标签」一节的完整落地。建议对照 <code>HTML知识点.md</code> 一起看，
+    然后自己动手把某一段的标签改坏（比如故意少写一个 <code>&lt;/div&gt;</code>），
+    刷新浏览器观察「浏览器是怎么自动纠错」的——这是理解 HTML 容错性的最快方式。
+</p>
+
+</body>
+</html>

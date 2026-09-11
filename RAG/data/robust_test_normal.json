@@ -1,0 +1,8 @@
+{
+  "tag": "normal",
+  "question": "帮我查一下郑雪那张登机牌的航班信息?",
+  "route": "rag",
+  "rerank_kept": 3,
+  "answer_head": "根据资料 [1]，郑雪（ZHENGXUE）的登机牌信息如下：\n\n- **航班号**：JD5118\n- **日期**：Jan01\n- **舱位**：G（经济舱）\n",
+  "elapsed_s": 6.09
+}

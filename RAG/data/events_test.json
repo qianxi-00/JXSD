@@ -1,0 +1,431 @@
+[
+  {
+    "type": "start",
+    "question": "惠普企业有限公司开给郑州物流有限公司的发票金额是多少?"
+  },
+  {
+    "type": "route",
+    "route": "rag"
+  },
+  {
+    "type": "retrieve",
+    "vector_hits": [
+      "data/invoice/045_INV20250145.png",
+      "data/invoice/011_INV20250111.png",
+      "data/invoice/026_INV20250126.png",
+      "data/invoice/040_INV20250140.png",
+      "data/invoice/039_INV20250139.png",
+      "data/invoice/027_INV20250127.png",
+      "data/invoice/038_INV20250138.png",
+      "data/invoice/047_INV20250147.png",
+      "data/invoice/023_INV20250123.png",
+      "data/invoice/094_INV20250194.png"
+    ],
+    "keyword_hits": [
+      "data/invoice/045_INV20250145.png",
+      "data/invoice/023_INV20250123.png",
+      "data/invoice/039_INV20250139.png",
+      "data/invoice/021_INV20250121.png",
+      "data/invoice/026_INV20250126.png",
+      "data/invoice/011_INV20250111.png",
+      "data/invoice/040_INV20250140.png",
+      "data/invoice/047_INV20250147.png",
+      "data/invoice/007_INV20250107.png",
+      "data/invoice/094_INV20250194.png"
+    ],
+    "merged_count": 12
+  },
+  {
+    "type": "rerank",
+    "kept": [
+      {
+        "source_file": "data/invoice/045_INV20250145.png",
+        "score": 0.9991047978401184
+      },
+      {
+        "source_file": "data/invoice/023_INV20250123.png",
+        "score": 0.9973467588424683
+      },
+      {
+        "source_file": "data/invoice/047_INV20250147.png",
+        "score": 0.8631041049957275
+      },
+      {
+        "source_file": "data/invoice/040_INV20250140.png",
+        "score": 0.8528627753257751
+      },
+      {
+        "source_file": "data/invoice/026_INV20250126.png",
+        "score": 0.8403322100639343
+      },
+      {
+        "source_file": "data/invoice/011_INV20250111.png",
+        "score": 0.8372811079025269
+      },
+      {
+        "source_file": "data/invoice/021_INV20250121.png",
+        "score": 0.8345475792884827
+      },
+      {
+        "source_file": "data/invoice/094_INV20250194.png",
+        "score": 0.8003060817718506
+      }
+    ],
+    "merged_count": 12,
+    "top_k": 8,
+    "relevance_p": 0.65
+  },
+  {
+    "type": "thinking",
+    "text": "1.  **分析用户的请求**：\n    *   用户询问惠普企业有限公司开给郑州物流有限公司的发票金额。\n\n2.  **分析提供的票据**：\n    *   票据[1]：惠普企业有限公司 -> 郑州物流有限公司，票号INV20250145，金额161,119.15元。\n    *   票据[2]：惠普企业有限公司 -> 郑州物流有限公司，票号INV20250123，金额39,907.16元。\n ...(共926字)"
+  },
+  {
+    "type": "token",
+    "text": "根据"
+  },
+  {
+    "type": "token",
+    "text": "票据"
+  },
+  {
+    "type": "token",
+    "text": "资料"
+  },
+  {
+    "type": "token",
+    "text": "，"
+  },
+  {
+    "type": "token",
+    "text": "惠"
+  },
+  {
+    "type": "token",
+    "text": "普"
+  },
+  {
+    "type": "token",
+    "text": "企业"
+  },
+  {
+    "type": "token",
+    "text": "有限公司"
+  },
+  {
+    "type": "token",
+    "text": "开"
+  },
+  {
+    "type": "token",
+    "text": "给"
+  },
+  {
+    "type": "token",
+    "text": "郑州"
+  },
+  {
+    "type": "token",
+    "text": "物流"
+  },
+  {
+    "type": "token",
+    "text": "有限公司"
+  },
+  {
+    "type": "token",
+    "text": "的"
+  },
+  {
+    "type": "token",
+    "text": "发票"
+  },
+  {
+    "type": "token",
+    "text": "有以下"
+  },
+  {
+    "type": "token",
+    "text": "两张"
+  },
+  {
+    "type": "token",
+    "text": "：\n\n"
+  },
+  {
+    "type": "token",
+    "text": "-"
+  },
+  {
+    "type": "token",
+    "text": " "
+  },
+  {
+    "type": "token",
+    "text": "票"
+  },
+  {
+    "type": "token",
+    "text": "号"
+  },
+  {
+    "type": "token",
+    "text": "IN"
+  },
+  {
+    "type": "token",
+    "text": "V"
+  },
+  {
+    "type": "token",
+    "text": "202"
+  },
+  {
+    "type": "token",
+    "text": "501"
+  },
+  {
+    "type": "token",
+    "text": "45"
+  },
+  {
+    "type": "token",
+    "text": "，"
+  },
+  {
+    "type": "token",
+    "text": "金额"
+  },
+  {
+    "type": "token",
+    "text": "为"
+  },
+  {
+    "type": "token",
+    "text": "161"
+  },
+  {
+    "type": "token",
+    "text": ","
+  },
+  {
+    "type": "token",
+    "text": "119"
+  },
+  {
+    "type": "token",
+    "text": "."
+  },
+  {
+    "type": "token",
+    "text": "15"
+  },
+  {
+    "type": "token",
+    "text": "元"
+  },
+  {
+    "type": "token",
+    "text": " ["
+  },
+  {
+    "type": "token",
+    "text": "1"
+  },
+  {
+    "type": "token",
+    "text": "]"
+  },
+  {
+    "type": "token",
+    "text": "；\n"
+  },
+  {
+    "type": "token",
+    "text": "-"
+  },
+  {
+    "type": "token",
+    "text": " "
+  },
+  {
+    "type": "token",
+    "text": "票"
+  },
+  {
+    "type": "token",
+    "text": "号"
+  },
+  {
+    "type": "token",
+    "text": "IN"
+  },
+  {
+    "type": "token",
+    "text": "V"
+  },
+  {
+    "type": "token",
+    "text": "202"
+  },
+  {
+    "type": "token",
+    "text": "501"
+  },
+  {
+    "type": "token",
+    "text": "23"
+  },
+  {
+    "type": "token",
+    "text": "，"
+  },
+  {
+    "type": "token",
+    "text": "金额"
+  },
+  {
+    "type": "token",
+    "text": "为"
+  },
+  {
+    "type": "token",
+    "text": "39"
+  },
+  {
+    "type": "token",
+    "text": ","
+  },
+  {
+    "type": "token",
+    "text": "907"
+  },
+  {
+    "type": "token",
+    "text": "."
+  },
+  {
+    "type": "token",
+    "text": "16"
+  },
+  {
+    "type": "token",
+    "text": "元"
+  },
+  {
+    "type": "token",
+    "text": " ["
+  },
+  {
+    "type": "token",
+    "text": "2"
+  },
+  {
+    "type": "token",
+    "text": "]。\n\n"
+  },
+  {
+    "type": "token",
+    "text": "两张"
+  },
+  {
+    "type": "token",
+    "text": "发票"
+  },
+  {
+    "type": "token",
+    "text": "合计"
+  },
+  {
+    "type": "token",
+    "text": "金额"
+  },
+  {
+    "type": "token",
+    "text": "为"
+  },
+  {
+    "type": "token",
+    "text": "201"
+  },
+  {
+    "type": "token",
+    "text": ","
+  },
+  {
+    "type": "token",
+    "text": "026"
+  },
+  {
+    "type": "token",
+    "text": "."
+  },
+  {
+    "type": "token",
+    "text": "31"
+  },
+  {
+    "type": "token",
+    "text": "元"
+  },
+  {
+    "type": "token",
+    "text": "。"
+  },
+  {
+    "type": "done",
+    "answer": "根据票据资料，惠普企业有限公司开给郑州物流有限公司的发票有以下两张：\n\n- 票号INV20250145，金额为161,119.15元 [1]；\n- 票号INV20250123，金额为39,907.16元 [2]。\n\n两张发票合计金额为201,026.31元。",
+    "sources": [
+      {
+        "source_file": "data/invoice/045_INV20250145.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250145",
+        "rerank_score": 0.9991047978401184
+      },
+      {
+        "source_file": "data/invoice/023_INV20250123.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250123",
+        "rerank_score": 0.9973467588424683
+      },
+      {
+        "source_file": "data/invoice/047_INV20250147.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250147",
+        "rerank_score": 0.8631041049957275
+      },
+      {
+        "source_file": "data/invoice/040_INV20250140.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250140",
+        "rerank_score": 0.8528627753257751
+      },
+      {
+        "source_file": "data/invoice/026_INV20250126.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250126",
+        "rerank_score": 0.8403322100639343
+      },
+      {
+        "source_file": "data/invoice/011_INV20250111.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250111",
+        "rerank_score": 0.8372811079025269
+      },
+      {
+        "source_file": "data/invoice/021_INV20250121.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250121",
+        "rerank_score": 0.8345475792884827
+      },
+      {
+        "source_file": "data/invoice/094_INV20250194.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250194",
+        "rerank_score": 0.8003060817718506
+      }
+    ],
+    "cache_hit": null,
+    "route": "rag",
+    "conservative": false
+  }
+]

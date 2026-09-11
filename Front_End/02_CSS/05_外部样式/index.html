@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：05_外部样式/index.html
+对应课案章节：CSS → 在HTML中使用CSS → 方式2：外部CSS文件（推荐）
+本节知识点：
+  1. 用 <link rel="stylesheet" href="..."> 引入外部 CSS 文件。
+  2. rel / href / media 三个属性的作用。
+  3. 路径怎么写：相对路径（推荐）与绝对路径的区别。
+  4. 外部样式为什么是真实项目的标准做法（复用 / 缓存 / 关注点分离）。
+  5. <link> 与 @import 的区别（为什么优先用 <link>）。
+配套文件：css/style.css（与本文件同目录下的 css 子目录）
+如何打开查看：直接用浏览器打开本文件。
+             注意：必须保持 index.html 与 css/ 子目录的相对位置不变，否则样式会失效。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>外部 CSS 文件示例</title>
+
+    <!--
+      ==================================================================
+      核心的一行：引入外部 CSS 文件
+      ==================================================================
+
+        <link rel="stylesheet" href="css/style.css">
+
+      - link  —— 「链接外部资源」的标签，放在 <head> 里，是个空元素（没有结束标签）。
+      - rel="stylesheet"
+               —— relation（关系）的缩写，声明「这是一个样式表」。
+                  这一句不能省，否则浏览器不知道要拿它当 CSS 用。
+      - href   —— 要引入的 CSS 文件路径。这里是「相对路径」：
+                  相对于【本 HTML 文件所在的目录】去找 css 子目录下的 style.css。
+                  写成 "css/style.css" 而不是 "F:\...\style.css"，这样整个文件夹
+                  拷到任何电脑、任何盘符都能正常工作。
+
+      可选属性：
+      - media="screen"  只在屏幕上应用
+      - media="print"   只在打印时应用（常见用法：专门写一份打印样式）
+      - media="(max-width: 600px)"  媒体查询，只在窄屏时应用
+    -->
+    <link rel="stylesheet" href="css/style.css">
+
+    <!--
+      ==================================================================
+      对比：<style> 标签（内部样式表）
+      ==================================================================
+      下面这段 <style> 是给本页代码展示块用的排版样式。
+      它只作用于本页；而上面 link 进来的 style.css 可以给无数个页面共用。
+      一个小原则：本页独有的、临时的样式可以写在这里；
+      全站通用的样式（配色、字体、按钮、卡片）应该放进外部 css 文件。
+    -->
+    <style>
+        /* 演示用的代码块样式（本页独有） */
+        .code-block {
+            background: #1f2430;
+            color: #e6e6e6;
+            padding: 12px 14px;
+            border-radius: 6px;
+            overflow-x: auto;
+            line-height: 1.5;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 13px;
+            white-space: pre;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ==================================================================== -->
+<!-- 页面头部：用 style.css 里定义的 .page-header 样式 -->
+<!-- ==================================================================== -->
+<header class="page-header">
+    <h1>外部 CSS 文件示例</h1>
+    <p class="subtitle">
+        本页面的所有样式都来自 <code>css/style.css</code>——一个独立的外部样式表文件。
+    </p>
+</header>
+
+<main class="container">
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>一、课案原文写法</h2>
+        <div class="code-block">&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;title&gt;外部CSS示例&lt;/title&gt;
+    &lt;link rel="stylesheet" href="styles.css"&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;h1&gt;引用外部样式文件&lt;/h1&gt;
+&lt;p&gt;外部CSS文件styles.css中定义了样式&lt;/p&gt;
+&lt;/body&gt;
+&lt;/html&gt;</div>
+
+        <p>配套的 <code>styles.css</code>：</p>
+        <div class="code-block">h1 {
+    color: green;
+}
+p {
+    font-size: 18px;
+}</div>
+
+        <p>
+            本项目把它落成了更接近真实项目的结构：HTML 放根目录，CSS 放进
+            <code>css/</code> 子目录，这样文件一多也不会乱：
+        </p>
+        <div class="code-block">05_外部样式/
+├── index.html          ← HTML 结构
+└── css/
+    └── style.css       ← CSS 样式</div>
+        <p>对应的引入写法就变成了：</p>
+        <div class="code-block">&lt;link rel="stylesheet" href="css/style.css"&gt;</div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>二、为什么外部样式是「推荐」做法</h2>
+        <table class="data-table">
+            <thead>
+                <tr><th>对比项</th><th>行内 style</th><th>&lt;style&gt; 标签</th><th>外部 .css 文件</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>作用范围</td>
+                    <td>单个元素</td>
+                    <td>单个页面</td>
+                    <td><b>所有引用它的页面</b></td>
+                </tr>
+                <tr>
+                    <td>能否复用</td>
+                    <td>❌ 完全不能</td>
+                    <td>⚠️ 只能复制粘贴</td>
+                    <td>✅ 一处修改，处处生效</td>
+                </tr>
+                <tr>
+                    <td>浏览器缓存</td>
+                    <td>❌ 无（每次都随 HTML 传输）</td>
+                    <td>❌ 无</td>
+                    <td>✅ <b>会被缓存</b>，第二次打开不再下载</td>
+                </tr>
+                <tr>
+                    <td>HTML 可读性</td>
+                    <td>❌ 结构里混满样式</td>
+                    <td>⚠️ 页面头部越来越长</td>
+                    <td>✅ HTML 只剩结构，干净</td>
+                </tr>
+                <tr>
+                    <td>适合场景</td>
+                    <td>临时调试 / 邮件 HTML</td>
+                    <td>单文件 Demo / 本页独有样式</td>
+                    <td><b>真实项目标准做法</b></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="callout">
+            <b>「关注点分离」是前端工程化的第一原则：</b>
+            HTML 只管结构、CSS 只管样式、JS 只管行为。
+            三者分开，才能让不同的人同时改不同的文件而不打架，
+            也才能让浏览器把三份文件分别缓存起来，加快加载速度。
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>三、路径怎么写（新手最容易在这里出错）</h2>
+        <table class="data-table">
+            <thead>
+                <tr><th>写法</th><th>名称</th><th>含义</th><th>结果</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>css/style.css</code></td>
+                    <td>相对路径</td>
+                    <td>当前 HTML 文件所在目录下的 css 子目录</td>
+                    <td>✅ <b>推荐</b>，可随意搬迁</td>
+                </tr>
+                <tr>
+                    <td><code>./css/style.css</code></td>
+                    <td>相对路径（显式）</td>
+                    <td><code>./</code> 就是「当前目录」，和上一条等价</td>
+                    <td>✅ 可以，但没必要</td>
+                </tr>
+                <tr>
+                    <td><code>../css/style.css</code></td>
+                    <td>相对路径（上一级）</td>
+                    <td><code>../</code> 是「回到上一级目录」</td>
+                    <td>✅ 子页面引用公共样式时常用</td>
+                </tr>
+                <tr>
+                    <td><code>/css/style.css</code></td>
+                    <td>根路径</td>
+                    <td>网站根目录开始。**用 file:// 直接打开 HTML 时会失效**</td>
+                    <td>⚠️ 只在部署到服务器后有效</td>
+                </tr>
+                <tr>
+                    <td><code>F:\x\style.css</code></td>
+                    <td>绝对路径</td>
+                    <td>本机完整路径</td>
+                    <td>❌ 换台电脑立刻失效</td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="callout warn">
+            <b>样式完全不生效时，按这个顺序排查：</b>
+            ① F12 → Network 面板看 <code>style.css</code> 是不是 404（红色）；
+            ② 看路径有没有写错（大小写敏感！<code>Style.css</code> ≠ <code>style.css</code> 在某些系统上）；
+            ③ 看 <code>rel="stylesheet"</code> 有没有漏；
+            ④ 确认 HTML 和 css 文件夹的相对位置没被改动。
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>四、<code>&lt;link&gt;</code> 还是 <code>@import</code>？</h2>
+        <p>在 CSS 内部也可以用 <code>@import</code> 引入另一个 CSS 文件：</p>
+        <div class="code-block">/* 写在 style.css 的第一行 */
+@import url("reset.css");
+@import url("theme.css");</div>
+        <table class="data-table">
+            <thead>
+                <tr><th></th><th><code>&lt;link&gt;</code></th><th><code>@import</code></th></tr>
+            </thead>
+            <tbody>
+                <tr><td>加载时机</td><td>和 HTML 解析<b>并行</b>下载</td><td>必须等外层 CSS 下载并解析完，才知道要下载它 → <b>串行，更慢</b></td></tr>
+                <tr><td>能否用媒体查询</td><td>✅ <code>media="..."</code></td><td>✅ 也可以，但支持的语法更少</td></tr>
+                <tr><td>兼容性</td><td>所有浏览器</td><td>老 IE 不支持</td></tr>
+                <tr><td>结论</td><td colspan="2"><b>优先用 <code>&lt;link&gt;</code>；<code>@import</code> 只用在少数需要"样式内聚"的场景（如打包工具生成的入口文件）。</b></td></tr>
+            </tbody>
+        </table>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>五、style.css 里到底写了什么</h2>
+        <p>
+            打开同目录下的 <code>css/style.css</code> 可以看到完整的、带详细中文注释的样式代码。
+            它按下面的顺序组织（这也是真实项目推荐的书写顺序）：
+        </p>
+        <ol>
+            <li><b>全局重置</b>（box-sizing / margin / padding 归零）</li>
+            <li><b>CSS 变量</b>（把主色调、圆角、间距集中定义，一处改全局变）</li>
+            <li><b>基础排版</b>（body 字体、行高、链接颜色）</li>
+            <li><b>布局容器</b>（.container / .page-header）</li>
+            <li><b>组件</b>（.card / .data-table / .callout / .btn）</li>
+            <li><b>响应式</b>（@media 媒体查询，窄屏适配）</li>
+        </ol>
+
+        <div class="callout">
+            <b>CSS 变量（自定义属性）小示例：</b>
+            <div class="code-block">:root {
+    --primary: #2563eb;      /* 定义变量 */
+    --radius: 10px;
+}
+.btn {
+    background: var(--primary);   /* 使用变量 */
+    border-radius: var(--radius);
+}</div>
+            改一个 <code>--primary</code>，所有用到它的按钮、链接、边框颜色一起变。
+            <b>这是做「主题色切换」最省事的办法。</b>
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card">
+        <h2>六、动手验证</h2>
+        <ol>
+            <li>打开 <code>css/style.css</code>，把 <code>--primary</code> 的值从 <code>#2563eb</code>
+                改成 <code>#e11d48</code>（红色），保存，回到浏览器<b>刷新</b>（Ctrl+F5 强制刷新）。</li>
+            <li>观察：本页的标题渐变、按钮、卡片左边框、链接颜色是不是<b>同时</b>变了？</li>
+            <li>再新建一个 <code>about.html</code>，只需要写 <code>&lt;link rel="stylesheet" href="css/style.css"&gt;</code>
+                就能立刻拥有同一套外观 —— 这就是外部样式表的威力。</li>
+        </ol>
+        <p>
+            页面上的按钮：
+            <button class="btn" type="button">主要按钮（.btn）</button>
+            <button class="btn btn-ghost" type="button">次要按钮（.btn.btn-ghost）</button>
+            <span class="tag">标签样式 .tag</span>
+        </p>
+    </section>
+
+</main>
+
+<footer class="page-footer">
+    <p>
+        对应课案：前端基础 → CSS → 在 HTML 中使用 CSS → 方式 2：外部 CSS 文件（推荐）<br>
+        配套知识点总结：<code>../CSS知识点.md</code>　|　配套样式文件：<code>css/style.css</code>
+    </p>
+</footer>
+
+</body>
+</html>

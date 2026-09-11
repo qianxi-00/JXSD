@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：02_DOM操作.html
+对应课案章节：JavaScript → DOM操作 / 常用DOM操作
+本节知识点：
+  1. DOM 是什么：浏览器把 HTML 变成内存里的一棵「对象树」，JS 通过 DOM 操作页面。
+  2. 课案原文示例的完整复现：三个按钮分别改标题的「文字 / 颜色 / 大小」。
+  3. DOM 操作的核心口诀：**获取元素 → 修改元素**。
+  4. 获取元素：getElementById / querySelector / querySelectorAll / getElementsByClassName
+  5. 修改内容：textContent（纯文本） vs innerHTML（解析 HTML）
+  6. 修改样式：element.style.xxx（行内样式） vs classList（换 class，推荐）
+  7. 修改属性：getAttribute / setAttribute / removeAttribute / dataset
+  8. 增删元素：createElement / append / prepend / before / after / remove / innerHTML = ""
+  9. 遍历关系：parentElement / children / nextElementSibling / closest
+如何打开查看：直接用浏览器打开本文件，点击各处的按钮观察页面变化。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JavaScript DOM 操作</title>
+    <style>
+        body {
+            font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+            max-width: 980px; margin: 24px auto; padding: 0 16px;
+            line-height: 1.75; color: #24292f;
+        }
+        code {
+            background: #f3f4f6; padding: 2px 6px; border-radius: 3px;
+            font-family: Consolas, Monaco, monospace; color: #c7254e;
+        }
+        pre {
+            background: #1f2430; color: #e6e6e6; padding: 12px 14px;
+            border-radius: 6px; overflow-x: auto; line-height: 1.55;
+            font-family: Consolas, Monaco, monospace; font-size: 13px;
+            white-space: pre-wrap;
+        }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #b9c0c8; padding: 6px 12px; text-align: left; }
+        th { background: #f0f4f8; }
+        .tip { background:#fff8e1; border-left:4px solid #f0ad4e; padding:10px 14px; margin:14px 0; border-radius:4px; }
+        .warn { background:#fdecea; border-left:4px solid #e74c3c; padding:10px 14px; margin:14px 0; border-radius:4px; }
+        .sec {
+            border: 1px solid #e1e4e8; border-left: 5px solid #8e44ad;
+            border-radius: 6px; padding: 12px 20px; margin: 20px 0; background: #fdfaff;
+        }
+        .sec > h2 { margin-top: 6px; color: #6c3483; }
+
+        /* 演示区域 */
+        .stage {
+            background: #f6f8fa;
+            border: 1px dashed #b9c0c8;
+            border-radius: 6px;
+            padding: 14px 16px;
+            margin: 10px 0;
+        }
+        .btn {
+            font-family: Consolas, Monaco, monospace; font-size: 13px;
+            padding: 6px 13px; margin: 3px 6px 3px 0;
+            border: 1px solid #b9c0c8; background: #fff;
+            border-radius: 4px; cursor: pointer;
+        }
+        .btn:hover { background: #f4ecfb; border-color: #8e44ad; }
+        .btn-primary { background: #8e44ad; color: #fff; border-color: #8e44ad; }
+        .btn-primary:hover { background: #6c3483; }
+
+        /* 输出面板 */
+        .console-panel {
+            background: #0d1117; color: #7ee787;
+            font-family: Consolas, Monaco, monospace; font-size: 13px;
+            line-height: 1.65; padding: 12px 14px; border-radius: 6px;
+            white-space: pre-wrap; word-break: break-all;
+            margin: 10px 0; min-height: 34px; border: 1px solid #30363d;
+        }
+        .panel-title {
+            font-size: 12px; color: #8b949e; font-family: Consolas, Monaco, monospace;
+            margin: 14px 0 -4px;
+        }
+
+        /* 给 classList 演示用：这一组 class 由 JS 动态加上/去掉 */
+        .theme-blue   { background: #d6eaf8; border-color: #2980b9; color: #1b4f72; }
+        .theme-green  { background: #d5f5e3; border-color: #27ae60; color: #145a32; }
+        .theme-red    { background: #fadbd8; border-color: #c0392b; color: #78281f; }
+        .big-text     { font-size: 22px; }
+        .bold-text    { font-weight: bold; }
+
+        /* 待办清单 */
+        .todo-list { list-style: none; padding: 0; margin: 10px 0; }
+        .todo-list li {
+            display: flex; align-items: center; justify-content: space-between;
+            background: #fff; border: 1px solid #d0d7de; border-radius: 6px;
+            padding: 8px 12px; margin: 6px 0;
+        }
+        .todo-list li.done .todo-text { text-decoration: line-through; color: #8b949e; }
+        .del-btn {
+            border: none; background: #fdecea; color: #c0392b;
+            border-radius: 4px; padding: 3px 10px; cursor: pointer; font-size: 12px;
+        }
+        .del-btn:hover { background: #f5b7b1; }
+
+        /* 表格 */
+        .data-table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+        .data-table th, .data-table td { border: 1px solid #b9c0c8; padding: 6px 12px; }
+        .data-table th { background: #f0f4f8; }
+
+        /* 高亮元素（用于演示"查找元素"） */
+        .find-target { padding: 6px 10px; margin: 4px 0; background:#eef2f7; border-radius:4px; }
+        .flash { outline: 3px solid #f39c12; outline-offset: 2px; }
+    </style>
+</head>
+<body>
+
+<h1>JavaScript DOM 操作</h1>
+
+<p>
+    JS 之所以能让网页"动起来"，靠的就是 <b>DOM</b>。
+    浏览器把 HTML 文档解析成内存里的一棵<b>对象树</b>，每个标签都是树上的一个对象，
+    每个对象都有属性和方法。JS 拿到这些对象，就能<b>读</b>它们的内容、<b>改</b>它们的样子、
+    <b>加</b>新的节点、<b>删</b>旧的节点。
+</p>
+
+<div class="tip">
+    <b>DOM 操作的核心口诀（课案原文）：获取元素 → 修改元素。</b>
+    不管多复杂的交互，拆开来永远都是这两步。
+    难点从来不是"改"（改就那几个属性和方法），而是"<b>怎么准确地拿到那个元素</b>"。
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>一、课案原文示例（完整复现）</h2>
+
+    <p><b>课案原文的 HTML：</b></p>
+<pre>&lt;h1 id="title"&gt;原始标题&lt;/h1&gt;
+&lt;button id="btn1"&gt;点我修改标题&lt;/button&gt;
+&lt;button id="btn2"&gt;点我变红色&lt;/button&gt;
+&lt;button id="btn3"&gt;点我变大&lt;/button&gt;</pre>
+
+    <p><b>课案原文的 JS：</b></p>
+<pre>let title = document.getElementById("title");
+let btn1 = document.getElementById("btn1");
+let btn2 = document.getElementById("btn2");
+let btn3 = document.getElementById("btn3");
+
+// 点击后修改文字
+btn1.onclick = function() {
+    title.textContent = "标题被修改了！";
+};
+
+// 点击后变红色
+btn2.onclick = function() {
+    title.style.color = "red";
+};
+
+// 点击后字体变大
+btn3.onclick = function() {
+    title.style.fontSize = "40px";
+};</pre>
+
+    <p><b>效果（点下面的按钮试试）：</b></p>
+    <div class="stage">
+        <!-- 为了不和本页的大标题冲突，这里的 id 用了 title-demo 而不是 title -->
+        <h1 id="title-demo" style="margin:8px 0;">原始标题</h1>
+        <button class="btn" id="btn1">点我修改标题</button>
+        <button class="btn" id="btn2">点我变红色</button>
+        <button class="btn" id="btn3">点我变大</button>
+        <button class="btn" id="btn-reset-title">恢复原状</button>
+    </div>
+
+    <p><b>DOM 操作的核心就是：获取元素 → 修改元素。</b></p>
+    <table>
+        <tr><th>步骤</th><th>代码</th><th>说明</th></tr>
+        <tr>
+            <td>① 获取元素</td>
+            <td><code>document.getElementById("title")</code></td>
+            <td>按 id 精确拿到那一个元素对象</td>
+        </tr>
+        <tr>
+            <td>② 修改元素</td>
+            <td><code>title.textContent = "..."</code></td>
+            <td>改文字</td>
+        </tr>
+        <tr>
+            <td>② 修改元素</td>
+            <td><code>title.style.color = "red"</code></td>
+            <td>改行内样式（<b>注意 JS 里是驼峰写法</b>）</td>
+        </tr>
+    </table>
+    <div class="warn">
+        <b>最容易踩的坑：CSS 属性名在 JS 里要改成"小驼峰"。</b><br>
+        CSS 的 <code>font-size</code> → JS 的 <code>style.fontSize</code><br>
+        CSS 的 <code>background-color</code> → JS 的 <code>style.backgroundColor</code><br>
+        写成 <code>style.font-size</code> 会被当成减法运算而报错或静默失效。
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>二、获取元素：常用 DOM 操作方法（课案表格）</h2>
+
+    <table>
+        <tr><th>方法</th><th>说明</th><th>返回</th></tr>
+        <tr><td><code>document.getElementById("id")</code></td><td>通过 id 获取元素</td><td>单个元素 或 <code>null</code></td></tr>
+        <tr><td><code>document.querySelector(".class")</code></td><td>通过 CSS 选择器获取<b>第一个</b>匹配元素</td><td>单个元素 或 <code>null</code></td></tr>
+        <tr><td><code>document.querySelectorAll(".class")</code></td><td>通过选择器获取<b>所有</b>匹配元素</td><td><b>NodeList</b>（类数组，可用 forEach）</td></tr>
+        <tr><td><code>document.getElementsByClassName("c")</code></td><td>按类名获取（老 API）</td><td>HTMLCollection（<b>动态</b>集合，没有 forEach）</td></tr>
+        <tr><td><code>document.getElementsByTagName("p")</code></td><td>按标签名获取（老 API）</td><td>HTMLCollection</td></tr>
+        <tr><td><code>element.closest(".card")</code></td><td>从自己开始向上找最近的祖先</td><td>单个元素 或 <code>null</code></td></tr>
+    </table>
+
+    <div class="tip">
+        <b>推荐用 <code>querySelector</code> / <code>querySelectorAll</code></b>，
+        因为它接受<b>任意合法的 CSS 选择器</b>，比你前面学的 CSS 选择器知识直接复用：
+        <code>"#id"</code>、<code>".class"</code>、<code>"div.card &gt; p"</code>、
+        <code>"input[type=text]"</code>、<code>"li:first-child"</code> 全都能用。
+    </div>
+
+    <p><b>现场演示：</b>下面有 4 个 <code>class="find-target"</code> 的方块，
+       点击按钮，被选中的方块会闪一下黄边，同时输出面板会打印选中结果。</p>
+
+    <div class="stage" id="find-stage">
+        <div class="find-target" data-no="1">目标 1（class="find-target"）</div>
+        <div class="find-target" data-no="2">目标 2（class="find-target"）
+            <div class="find-target" data-no="2-1" style="margin-top:6px;">
+                目标 2 的子元素（也是 find-target，用于演示 closest 向上查找）
+            </div>
+        </div>
+        <div class="find-target" data-no="3">目标 3（class="find-target"）</div>
+        <div class="find-target" data-no="4">目标 4（class="find-target"）</div>
+    </div>
+
+    <button class="btn" id="f-id">getElementById("find-stage")</button>
+    <button class="btn" id="f-qs">querySelector(".find-target")</button>
+    <button class="btn" id="f-qsa">querySelectorAll(".find-target")</button>
+    <button class="btn" id="f-tag">getElementsByTagName("button")</button>
+    <button class="btn" id="f-attr">querySelector('[data-no="3"]')</button>
+    <button class="btn" id="f-closest">子元素.closest(".find-target")</button>
+    <button class="btn" id="f-clear">清除高亮</button>
+
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-find"></div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>三、修改内容：textContent 与 innerHTML</h2>
+
+    <table>
+        <tr><th>属性</th><th>说明</th><th>安全性</th></tr>
+        <tr>
+            <td><code>element.textContent</code></td>
+            <td>获取/设置<b>纯文本</b>内容。HTML 标签会被当成普通文字显示出来</td>
+            <td>✅ 安全</td>
+        </tr>
+        <tr>
+            <td><code>element.innerHTML</code></td>
+            <td>获取/设置 <b>HTML</b> 内容。字符串里的标签会被浏览器解析并渲染</td>
+            <td>⚠️ <b>有 XSS 风险</b></td>
+        </tr>
+        <tr>
+            <td><code>element.innerText</code></td>
+            <td>类似 textContent，但会受 CSS 影响（隐藏元素的文字拿不到）</td>
+            <td>✅</td>
+        </tr>
+        <tr>
+            <td><code>element.value</code></td>
+            <td>表单元素（input / textarea / select）的<b>值</b>，注意不是 textContent</td>
+            <td>✅</td>
+        </tr>
+    </table>
+
+    <div class="stage">
+        <p>当前内容：<span id="content-demo" style="padding:3px 8px;background:#eef2f7;border-radius:4px;">
+            原始内容（<b>这里本来有加粗标签</b>）</span></p>
+        <button class="btn" id="c-text">用 textContent 设置 "&lt;b&gt;加粗&lt;/b&gt;不会生效"</button>
+        <button class="btn" id="c-html">用 innerHTML 设置 "&lt;b&gt;加粗&lt;/b&gt;会生效"</button>
+        <button class="btn" id="c-read">读取两者，看区别</button>
+        <button class="btn" id="c-reset">恢复</button>
+    </div>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-content"></div>
+
+    <div class="warn">
+        <b>XSS（跨站脚本攻击）警告：</b>如果 <code>innerHTML</code> 的内容来自用户输入，
+        攻击者可以注入 <code>&lt;img src=x onerror="偷你的 cookie"&gt;</code> 之类的代码并让它执行。
+        <br><b>规矩：能用 <code>textContent</code> 就用 <code>textContent</code>；
+        确实需要插入 HTML 时，必须对内容做转义或使用可信的模板。</b>
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>四、修改样式：style 与 classList</h2>
+
+    <h3>方式 1：直接改行内样式 <code>element.style.xxx</code></h3>
+    <p>
+        一次只能改一个属性，而且会写在元素的 <code>style</code> 属性上（<b>行内样式优先级最高</b>，
+        会覆盖外部 CSS，很难维护）。
+    </p>
+<pre>// CSS 属性名 → JS 用小驼峰
+box.style.color = "red";
+box.style.fontSize = "40px";           // font-size  → fontSize
+box.style.backgroundColor = "#eee";    // background-color → backgroundColor
+box.style.borderRadius = "8px";
+// 也可以用 cssText 一次性写多条（会覆盖原有的所有行内样式）
+box.style.cssText = "color:red; font-size:40px;";</pre>
+
+    <h3>方式 2：切换 class <code>element.classList</code>（<b>推荐</b>）</h3>
+    <p>
+        把样式的定义留在 CSS 文件里，JS 只负责"换一个类名"。
+        这是<b>推荐做法</b>：样式和逻辑分离，而且一次可以切换一整套样式。
+    </p>
+<pre>box.classList.add("active");        // 加一个类
+box.classList.remove("active");     // 删一个类
+box.classList.toggle("active");     // 有就删、没有就加（做开关最好用）
+box.classList.contains("active");   // 判断有没有 → true / false
+box.classList.replace("old", "new");// 替换</pre>
+
+    <div class="stage">
+        <div id="style-demo" style="padding:14px;border:2px solid #b9c0c8;border-radius:6px;background:#fff;">
+            我是被操作的盒子（初始只有内联的基础样式）
+        </div>
+        <p style="margin:10px 0 4px;"><b>style 方式：</b></p>
+        <button class="btn" id="s-red">style.color = "red"</button>
+        <button class="btn" id="s-big">style.fontSize = "36px"</button>
+        <button class="btn" id="s-bg">style.backgroundColor = "#fff8e1"</button>
+
+        <p style="margin:10px 0 4px;"><b>classList 方式（推荐）：</b></p>
+        <button class="btn btn-primary" id="cl-blue">classList.add("theme-blue")</button>
+        <button class="btn btn-primary" id="cl-green">toggle("theme-green")</button>
+        <button class="btn btn-primary" id="cl-red">add("theme-red")</button>
+        <button class="btn btn-primary" id="cl-big">toggle("big-text")</button>
+        <button class="btn btn-primary" id="cl-bold">toggle("bold-text")</button>
+        <button class="btn" id="cl-clear">清空所有 class</button>
+        <button class="btn" id="cl-show">显示当前 class 列表</button>
+    </div>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-style"></div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>五、修改属性：getAttribute / setAttribute / dataset</h2>
+
+<pre>const link = document.querySelector("a");
+
+// 读写 HTML 属性
+link.getAttribute("href");                       // 读取
+link.setAttribute("href", "https://python.org"); // 设置
+link.setAttribute("target", "_blank");
+link.removeAttribute("target");                  // 删除
+link.hasAttribute("target");                     // 判断存在
+
+// 有一些属性会被"特殊对待"，可以直接点出来：
+link.href = "https://python.org";   // 等价于 setAttribute("href", ...)，但更常用
+input.value = "hello";              // 表单值
+checkbox.checked = true;            // 勾选状态
+img.src = "a.png";
+
+// data-* 自定义属性用 dataset 读写（中划线转小驼峰）
+// HTML: &lt;div data-user-id="1001" data-role="admin"&gt;
+const div = document.querySelector("div");
+div.dataset.userId;                 // "1001"  （data-user-id → userId）
+div.dataset.role;                   // "admin"
+div.dataset.userId = "1002";        // 写回去，页面上会变成 data-user-id="1002"</pre>
+
+    <div class="stage">
+        <p>
+            <a id="attr-link" href="https://example.com" class="find-target">我是一个链接（href="https://example.com"）</a>
+        </p>
+        <button class="btn" id="a-read">读取 href</button>
+        <button class="btn" id="a-write">setAttribute 改成 python.org</button>
+        <button class="btn" id="a-target">加 target="_blank"</button>
+        <button class="btn" id="a-remove">removeAttribute("target")</button>
+        <button class="btn" id="a-data">读写 data-* 属性</button>
+        <button class="btn" id="a-reset">恢复</button>
+    </div>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-attr"></div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>六、增删元素（动态生成内容）</h2>
+
+    <p>这是真实项目里用得最多的一组操作：<b>数据一变，就动态生成/删除 DOM 节点</b>。</p>
+
+<pre>// ① 创建元素
+const li = document.createElement("li");     // 创建标签
+li.textContent = "新的一条";                  // 填内容
+li.className = "todo-item";                  // 加 class
+li.dataset.id = "1001";                      // 加 data-* 属性
+
+// ② 插入到页面上（这一步千万别忘，否则元素只存在于内存里，页面上看不到）
+list.appendChild(li);          // 插到父元素内部的最后面
+list.prepend(li);              // 插到父元素内部的最前面
+list.insertBefore(li, ref);    // 插到 ref 的前面
+ref.before(li);                // 插到 ref 前面（新 API）
+ref.after(li);                 // 插到 ref 后面（新 API）
+
+// ③ 删除
+li.remove();                   // 删自己（推荐）
+list.removeChild(li);          // 让父元素删子元素（老写法）
+
+// ④ 清空一个容器的全部内容
+list.innerHTML = "";           // 常用
+// 或者：list.replaceChildren();  // 新 API，更语义化
+
+// ⑤ 克隆已有节点
+const clone = li.cloneNode(true);   // true = 连子孙一起克隆</pre>
+
+    <div class="warn">
+        <b>性能提示：</b>在循环里反复 <code>appendChild</code> 会触发多次页面重排，很慢。
+        正确做法是先用 <code>document.createDocumentFragment()</code> 或先在内存里拼好
+        <code>innerHTML</code>，最后<b>一次性插入</b>。
+    </div>
+
+    <h3>实战：动态待办清单</h3>
+    <div class="stage">
+        <div style="display:flex;gap:8px;align-items:center;">
+            <input type="text" id="todo-input" placeholder="输入待办事项，回车或点添加"
+                   style="flex:1;padding:7px 10px;border:1px solid #b9c0c8;border-radius:4px;font-family:inherit;">
+            <button class="btn btn-primary" id="todo-add">添加</button>
+            <button class="btn" id="todo-clear">清空全部</button>
+        </div>
+        <ul class="todo-list" id="todo-list"></ul>
+        <p style="margin:6px 0 0;font-size:13px;color:#57606a;" id="todo-count">当前 0 条</p>
+    </div>
+
+    <h3>实战：用数据生成表格</h3>
+    <div class="stage">
+        <button class="btn btn-primary" id="table-build">根据数组生成表格</button>
+        <button class="btn" id="table-append">追加一行</button>
+        <button class="btn" id="table-clear">清空表格</button>
+        <div id="table-wrap"></div>
+    </div>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-dom"></div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>七、在树里走动：父子兄弟关系</h2>
+
+<pre>const el = document.querySelector(".todo-list li");
+
+el.parentElement;              // 父元素
+el.parentElement.parentElement;// 祖父
+el.children;                   // 所有【元素】子节点（HTMLCollection）
+el.childElementCount;          // 子元素个数
+el.firstElementChild;          // 第一个子元素
+el.lastElementChild;           // 最后一个子元素
+el.nextElementSibling;         // 下一个兄弟元素
+el.previousElementSibling;     // 上一个兄弟元素
+el.closest(".todo-list");      // 向上找最近的匹配祖先
+
+// 注意区分：
+//   childNodes       → 包含文本节点、注释节点（会有很多"空白"节点，很烦）
+//   children         → 只有元素节点（更常用）
+//   nextSibling      → 下一个节点（可能是换行产生的文本节点）
+//   nextElementSibling → 下一个【元素】节点（更常用）</pre>
+
+    <div class="stage">
+        <ul id="tree-list">
+            <li>第一项</li>
+            <li id="tree-second">第二项</li>
+            <li>第三项</li>
+        </ul>
+        <button class="btn" id="t-parent">第二项.parentElement</button>
+        <button class="btn" id="t-children">列表.children</button>
+        <button class="btn" id="t-siblings">第二项的兄弟</button>
+        <button class="btn" id="t-closest">第二项.closest("ul")</button>
+        <button class="btn" id="t-childnodes">对比 childNodes 与 children</button>
+    </div>
+    <div class="panel-title">↓ 输出</div>
+    <div class="console-panel" id="out-tree"></div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>八、重点回顾</h2>
+    <ul>
+        <li><b>DOM = 内存里的对象树</b>。JS 不能直接改 HTML 文本，只能改 DOM 对象。</li>
+        <li><b>核心口诀：获取元素 → 修改元素。</b></li>
+        <li><b>获取</b>：优先 <code>querySelector</code> / <code>querySelectorAll</code>（支持任意 CSS 选择器）。</li>
+        <li><b>改内容</b>：<code>textContent</code>（纯文本、安全）vs <code>innerHTML</code>（解析 HTML、<b>有 XSS 风险</b>）。</li>
+        <li><b>改样式</b>：CSS 属性名要转小驼峰（<code>font-size</code> → <code>fontSize</code>）；
+            <b>优先用 <code>classList</code> 换 class，而不是堆 style</b>。</li>
+        <li><b>改属性</b>：<code>getAttribute</code> / <code>setAttribute</code>；
+            <code>data-*</code> 用 <code>dataset</code> 读写，自动做中划线↔小驼峰转换。</li>
+        <li><b>增删</b>：<code>createElement</code> → <code>appendChild</code>/<code>append</code>；
+            <code>element.remove()</code> 删除。</li>
+        <li><b>新创建的节点必须插入到文档里才会显示</b>，只 <code>createElement</code> 是看不到的。</li>
+        <li>拿元素之前先确认它存在，否则会拿到 <code>null</code>，再操作就报
+            <code>Cannot read properties of null</code>。</li>
+    </ul>
+</div>
+
+<hr>
+<p style="color:#57606a;font-size:14px;">
+    下一站：<code>03_事件处理.html</code>（让网页响应用户操作）。配套总结见 <code>JavaScript知识点.md</code>。
+</p>
+
+
+<!-- ==================================================================== -->
+<script>
+// ==========================================================================
+// 通用输出工具
+// ==========================================================================
+function print(panelId, text) {
+    const panel = document.getElementById(panelId);
+    panel.textContent += text + "\n";
+    console.log("[DOM] " + text);
+}
+function clearPanel(panelId) {
+    document.getElementById(panelId).textContent = "";
+}
+/** 让一个元素闪一下黄边，方便肉眼看到"被选中的是谁" */
+function flash(el) {
+    if (!el) return;
+    el.classList.add("flash");
+    setTimeout(function () { el.classList.remove("flash"); }, 800);
+}
+
+
+// ==========================================================================
+// 一、课案原文示例
+// ==========================================================================
+const title = document.getElementById("title-demo");
+const btn1 = document.getElementById("btn1");
+const btn2 = document.getElementById("btn2");
+const btn3 = document.getElementById("btn3");
+
+// 点击后修改文字
+btn1.onclick = function () {
+    title.textContent = "标题被修改了！";
+};
+
+// 点击后变红色
+btn2.onclick = function () {
+    title.style.color = "red";
+};
+
+// 点击后字体变大
+btn3.onclick = function () {
+    title.style.fontSize = "40px";
+};
+
+// 额外加一个"恢复原状"，方便反复演示
+document.getElementById("btn-reset-title").onclick = function () {
+    title.textContent = "原始标题";
+    // 注意：把样式设成空字符串 = 移除这条行内样式，恢复外部/默认样式
+    title.style.color = "";
+    title.style.fontSize = "";
+};
+
+
+// ==========================================================================
+// 二、获取元素
+// ==========================================================================
+document.getElementById("f-id").onclick = function () {
+    clearPanel("out-find");
+    const el = document.getElementById("find-stage");
+    print("out-find", `document.getElementById("find-stage")`);
+    print("out-find", `  → ${el.tagName}.${el.className}（元素本身）`);
+    flash(el);
+};
+
+document.getElementById("f-qs").onclick = function () {
+    clearPanel("out-find");
+    // querySelector 只返回【第一个】匹配的元素
+    const el = document.querySelector(".find-target");
+    print("out-find", `document.querySelector(".find-target")`);
+    print("out-find", `  → 只返回第一个：data-no="${el.dataset.no}"，内容是 "${el.textContent.trim().slice(0, 12)}..."`);
+    print("out-find", `  （页面上共有 ${document.querySelectorAll(".find-target").length} 个 .find-target，它只给你第 1 个）`);
+    flash(el);
+};
+
+document.getElementById("f-qsa").onclick = function () {
+    clearPanel("out-find");
+    // querySelectorAll 返回 NodeList（类数组，有 forEach）
+    const list = document.querySelectorAll(".find-target");
+    print("out-find", `document.querySelectorAll(".find-target")`);
+    print("out-find", `  → 返回 NodeList，长度 = ${list.length}`);
+    print("out-find", `  → typeof 是 "${typeof list}"，但它不是真数组（没有 map / filter）`);
+    print("out-find", `  → 想用数组方法要转一下：[...list].map(...) 或 Array.from(list)`);
+    print("out-find", "");
+    // forEach 是 NodeList 自带的方法，现代浏览器都支持
+    list.forEach(function (el, i) {
+        print("out-find", `  [${i}] data-no="${el.dataset.no}"`);
+        flash(el);
+    });
+    print("out-find", "");
+    print("out-find", `提示：querySelectorAll 拿到的是【静态】快照，之后新增的元素不会自动出现在里面。`);
+};
+
+document.getElementById("f-tag").onclick = function () {
+    clearPanel("out-find");
+    // getElementsByTagName 返回 HTMLCollection（动态集合，没有 forEach）
+    const btns = document.getElementsByTagName("button");
+    print("out-find", `document.getElementsByTagName("button")`);
+    print("out-find", `  → HTMLCollection，当前页面共有 ${btns.length} 个 button`);
+    print("out-find", `  → 它是【动态】集合：之后新增 button，这个集合的长度会自动变化`);
+    print("out-find", `  → 没有 forEach 方法，要用 for 循环或 Array.from() 转换`);
+    print("out-find", `  → 第一个按钮的文字："${btns[0].textContent}"`);
+    print("out-find", "");
+    print("out-find", `  ⚠️ 用 for...of 遍历 HTMLCollection 在部分老浏览器不可靠，`);
+    print("out-find", `     推荐 Array.from(btns).forEach(...)`);
+};
+
+document.getElementById("f-attr").onclick = function () {
+    clearPanel("out-find");
+    // 属性选择器 —— CSS 里学过的选择器，这里原样复用
+    const el = document.querySelector('[data-no="3"]');
+    print("out-find", `document.querySelector('[data-no="3"]')`);
+    print("out-find", `  → 用【属性选择器】精确定位：${el.textContent.trim()}`);
+    flash(el);
+};
+
+document.getElementById("f-closest").onclick = function () {
+    clearPanel("out-find");
+    // 先拿到"目标 2 的子元素"，再向上找最近的 .find-target 祖先
+    const child = document.querySelector('[data-no="2-1"]');
+    const parent = child.closest(".find-target");
+    print("out-find", `子元素.closest(".find-target")`);
+    print("out-find", `  子元素的 data-no = "${child.dataset.no}"`);
+    print("out-find", `  向上找到的最近祖先 data-no = "${parent.dataset.no}"（就是"目标 2"）`);
+    flash(parent);
+};
+
+document.getElementById("f-clear").onclick = function () {
+    clearPanel("out-find");
+    document.querySelectorAll(".flash").forEach(function (el) {
+        el.classList.remove("flash");
+    });
+    print("out-find", "已清除所有高亮。");
+};
+
+
+// ==========================================================================
+// 三、textContent vs innerHTML
+// ==========================================================================
+const contentDemo = document.getElementById("content-demo");
+
+document.getElementById("c-text").onclick = function () {
+    clearPanel("out-content");
+    // textContent：把整串内容当成【纯文本】，标签不会被解析
+    contentDemo.textContent = "<b>加粗</b>不会生效";
+    print("out-content", '执行：contentDemo.textContent = "<b>加粗</b>不会生效";');
+    print("out-content", "结果：页面上原样显示了 <b> 这些字符，没有加粗。");
+};
+
+document.getElementById("c-html").onclick = function () {
+    clearPanel("out-content");
+    // innerHTML：字符串会被当成 HTML 解析并渲染
+    contentDemo.innerHTML = "<b>加粗</b>会生效";
+    print("out-content", '执行：contentDemo.innerHTML = "<b>加粗</b>会生效";');
+    print("out-content", "结果：<b> 被解析成真正的标签，文字加粗了。");
+};
+
+document.getElementById("c-read").onclick = function () {
+    clearPanel("out-content");
+    print("out-content", `textContent → "${contentDemo.textContent}"`);
+    print("out-content", `innerHTML   → "${contentDemo.innerHTML}"`);
+    print("out-content", `innerText   → "${contentDemo.innerText}"`);
+    print("out-content", "");
+    print("out-content", "对比：当前元素里的 HTML 标签在 textContent 里变成了纯文本，");
+    print("out-content", "      在 innerHTML 里则保留为标签源码。");
+};
+
+document.getElementById("c-reset").onclick = function () {
+    contentDemo.innerHTML = "原始内容（<b>这里本来有加粗标签</b>）";
+    clearPanel("out-content");
+    print("out-content", "已恢复原始内容。");
+};
+
+
+// ==========================================================================
+// 四、style 与 classList
+// ==========================================================================
+const styleDemo = document.getElementById("style-demo");
+
+document.getElementById("s-red").onclick = function () {
+    clearPanel("out-style");
+    styleDemo.style.color = "red";
+    print("out-style", 'styleDemo.style.color = "red";     ← 写成了行内样式');
+    print("out-style", `当前 style 属性：${styleDemo.getAttribute("style")}`);
+};
+
+document.getElementById("s-big").onclick = function () {
+    clearPanel("out-style");
+    // 注意：JS 里写 fontSize，不是 font-size
+    styleDemo.style.fontSize = "36px";
+    print("out-style", 'styleDemo.style.fontSize = "36px";   ← CSS 的 font-size 要写成 fontSize');
+};
+
+document.getElementById("s-bg").onclick = function () {
+    clearPanel("out-style");
+    styleDemo.style.backgroundColor = "#fff8e1";
+    print("out-style", 'styleDemo.style.backgroundColor = "#fff8e1";');
+    print("out-style", "（CSS 的 background-color → JS 的 backgroundColor）");
+};
+
+// 用 classList 的方式：样式定义在 <style> 里，JS 只负责换类名
+document.getElementById("cl-blue").onclick = function () {
+    clearPanel("out-style");
+    styleDemo.classList.add("theme-blue");
+    print("out-style", 'classList.add("theme-blue")');
+    reportClasses();
+};
+document.getElementById("cl-green").onclick = function () {
+    clearPanel("out-style");
+    // toggle = 有就删，没有就加
+    const has = styleDemo.classList.toggle("theme-green");
+    print("out-style", `classList.toggle("theme-green") → 现在是 ${has ? "已加上" : "已移除"}`);
+    reportClasses();
+};
+document.getElementById("cl-red").onclick = function () {
+    clearPanel("out-style");
+    styleDemo.classList.add("theme-red");
+    print("out-style", 'classList.add("theme-red")');
+    reportClasses();
+};
+document.getElementById("cl-big").onclick = function () {
+    clearPanel("out-style");
+    const has = styleDemo.classList.toggle("big-text");
+    print("out-style", `classList.toggle("big-text") → 现在是 ${has ? "大字号" : "正常字号"}`);
+    reportClasses();
+};
+document.getElementById("cl-bold").onclick = function () {
+    clearPanel("out-style");
+    const has = styleDemo.classList.toggle("bold-text");
+    print("out-style", `classList.toggle("bold-text") → 现在是 ${has ? "加粗" : "正常"}`);
+    reportClasses();
+};
+document.getElementById("cl-clear").onclick = function () {
+    clearPanel("out-style");
+    styleDemo.className = "";       // 直接赋值空字符串 = 清空所有 class
+    print("out-style", 'styleDemo.className = "";   ← 清空所有 class');
+    reportClasses();
+};
+document.getElementById("cl-show").onclick = function () {
+    clearPanel("out-style");
+    reportClasses();
+    print("out-style", `classList.contains("theme-blue") → ${styleDemo.classList.contains("theme-blue")}`);
+    print("out-style", `classList 是可迭代的，也可以用 [...styleDemo.classList] 转成数组`);
+};
+
+/** 打印当前元素的 class 列表（给上面几个按钮复用） */
+function reportClasses() {
+    const arr = [...styleDemo.classList];
+    print("out-style", `当前 class = [${arr.join(", ")}]（共 ${arr.length} 个）`);
+    print("out-style", `classList.contains("theme-red") = ${styleDemo.classList.contains("theme-red")}`);
+}
+
+
+// ==========================================================================
+// 五、属性操作
+// ==========================================================================
+const attrLink = document.getElementById("attr-link");
+// 给链接加两个 data-* 属性，用于后面演示 dataset
+attrLink.dataset.userId = "1001";
+attrLink.dataset.role = "admin";
+
+document.getElementById("a-read").onclick = function () {
+    clearPanel("out-attr");
+    print("out-attr", `getAttribute("href") → ${attrLink.getAttribute("href")}`);
+    print("out-attr", `hasAttribute("target") → ${attrLink.hasAttribute("target")}`);
+    print("out-attr", `link.href（属性直接访问）→ ${attrLink.href}`);
+    print("out-attr", "");
+    print("out-attr", "注意区别：");
+    print("out-attr", `  getAttribute("href") 返回写的那串字符：${attrLink.getAttribute("href")}`);
+    print("out-attr", `  link.href 返回浏览器解析后的绝对地址：${attrLink.href}`);
+};
+
+document.getElementById("a-write").onclick = function () {
+    clearPanel("out-attr");
+    attrLink.setAttribute("href", "https://www.python.org");
+    attrLink.textContent = "我是一个链接（href 已被 JS 改成 python.org）";
+    print("out-attr", 'setAttribute("href", "https://www.python.org")');
+    print("out-attr", `现在 href = ${attrLink.getAttribute("href")}`);
+};
+
+document.getElementById("a-target").onclick = function () {
+    clearPanel("out-attr");
+    attrLink.setAttribute("target", "_blank");
+    print("out-attr", 'setAttribute("target", "_blank")  ← 现在点击会在新标签页打开');
+};
+
+document.getElementById("a-remove").onclick = function () {
+    clearPanel("out-attr");
+    attrLink.removeAttribute("target");
+    print("out-attr", 'removeAttribute("target")');
+    print("out-attr", `hasAttribute("target") → ${attrLink.hasAttribute("target")}`);
+};
+
+document.getElementById("a-data").onclick = function () {
+    clearPanel("out-attr");
+    print("out-attr", "data-* 自定义属性（用 dataset 读写，自动做中划线↔小驼峰转换）：");
+    print("out-attr", `  元素当前的属性：${attrLink.outerHTML.slice(0, 90)}...`);
+    print("out-attr", `  dataset.userId → "${attrLink.dataset.userId}"   （对应 HTML 的 data-user-id）`);
+    print("out-attr", `  dataset.role   → "${attrLink.dataset.role}"     （对应 HTML 的 data-role）`);
+    // 写回一个新值
+    attrLink.dataset.userId = "1002";
+    print("out-attr", "");
+    print("out-attr", '  执行 dataset.userId = "1002" 之后：');
+    print("out-attr", `  getAttribute("data-user-id") → "${attrLink.getAttribute("data-user-id")}"`);
+    print("out-attr", "  ← 可以看到 HTML 上的属性名被自动写了回去。");
+};
+
+document.getElementById("a-reset").onclick = function () {
+    attrLink.setAttribute("href", "https://example.com");
+    attrLink.removeAttribute("target");
+    attrLink.textContent = "我是一个链接（href=\"https://example.com\"）";
+    attrLink.dataset.userId = "1001";
+    attrLink.dataset.role = "admin";
+    clearPanel("out-attr");
+    print("out-attr", "已恢复原始属性。");
+};
+
+
+// ==========================================================================
+// 六、增删元素
+// ==========================================================================
+
+// ---------- 待办清单 ----------
+const todoInput = document.getElementById("todo-input");
+const todoList  = document.getElementById("todo-list");
+const todoCount = document.getElementById("todo-count");
+
+/**
+ * 创建并插入一条待办。
+ * 这就是"动态生成 DOM"的完整流程：创建 → 配置 → 插入。
+ * @param {string} text 待办文字
+ */
+function addTodo(text) {
+    // ① 创建 <li>
+    const li = document.createElement("li");
+
+    // ② 创建显示文字的 <span>
+    const span = document.createElement("span");
+    span.className = "todo-text";
+    span.textContent = text;
+    // 点击文字可以切换"完成"状态 —— 这里演示 classList.toggle 的实战用法
+    span.style.cursor = "pointer";
+    span.title = "点击切换完成状态";
+    span.addEventListener("click", function () {
+        li.classList.toggle("done");
+    });
+
+    // ③ 创建删除按钮
+    const delBtn = document.createElement("button");
+    delBtn.className = "del-btn";
+    delBtn.textContent = "删除";
+    delBtn.addEventListener("click", function () {
+        li.remove();          // 删掉自己所在的这一条
+        updateTodoCount();
+    });
+
+    // ④ 把子元素装进 li
+    li.appendChild(span);
+    li.appendChild(delBtn);
+
+    // ⑤ 关键一步：把 li 插入到页面上（不插入就只存在于内存里）
+    todoList.appendChild(li);
+
+    updateTodoCount();
+}
+
+/** 更新"当前 N 条"的显示 */
+function updateTodoCount() {
+    // children 只统计元素节点（自动忽略换行产生的文本节点）
+    todoCount.textContent = `当前 ${todoList.children.length} 条`;
+}
+
+document.getElementById("todo-add").onclick = function () {
+    clearPanel("out-dom");
+    const text = todoInput.value.trim();   // trim() 去掉首尾空白
+    if (text === "") {
+        print("out-dom", "⚠️ 内容为空，没有添加。");
+        return;                            // 提前返回，后面的代码不再执行
+    }
+    addTodo(text);
+    print("out-dom", `已添加：${text}`);
+    print("out-dom", `现在列表里有 ${todoList.children.length} 条（todoList.children.length）`);
+    todoInput.value = "";                   // 清空输入框
+    todoInput.focus();                      // 让光标回到输入框，方便连续输入
+};
+
+// 支持按回车快速添加（键盘事件，详见 03_事件处理.html）
+todoInput.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+        document.getElementById("todo-add").click();   // 直接触发按钮的点击
+    }
+});
+
+document.getElementById("todo-clear").onclick = function () {
+    clearPanel("out-dom");
+    const n = todoList.children.length;
+    // 方式一：删掉每一个子元素
+    // while (todoList.firstElementChild) { todoList.firstElementChild.remove(); }
+    // 方式二（更常用）：把容器的 innerHTML 清空
+    todoList.innerHTML = "";
+    updateTodoCount();
+    print("out-dom", `已清空 ${n} 条待办（list.innerHTML = "" 一行搞定）。`);
+};
+
+
+// ---------- 用数据生成表格 ----------
+const tableWrap = document.getElementById("table-wrap");
+
+// 这份数据在实际项目里通常来自后端接口
+const students = [
+    { name: "张三", age: 20, city: "北京" },
+    { name: "李四", age: 22, city: "上海" },
+    { name: "王五", age: 19, city: "广州" }
+];
+
+/**
+ * 根据数据数组渲染一张表格。
+ * 演示"数据 → DOM"的映射思想（这也是 React/Vue 的核心思想）。
+ * @param {Array} rows 数据数组
+ */
+function buildTable(rows) {
+    // 先创建 table / thead / tbody 的骨架
+    const table = document.createElement("table");
+    table.className = "data-table";
+
+    // --- 表头 ---
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    ["姓名", "年龄", "城市"].forEach(function (title) {
+        const th = document.createElement("th");
+        th.textContent = title;
+        headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    // --- 表体 ---
+    const tbody = document.createElement("tbody");
+    rows.forEach(function (row) {
+        const tr = document.createElement("tr");
+        // 用 for...of 遍历"值"，顺序和表头一致
+        for (const value of [row.name, row.age, row.city]) {
+            const td = document.createElement("td");
+            // ⚠️ 用 textContent 而不是 innerHTML —— 数据来自外部时不信任它
+            td.textContent = value;
+            tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    return table;
+}
+
+document.getElementById("table-build").onclick = function () {
+    clearPanel("out-dom");
+    // replaceChildren 会用新内容整体替换旧内容（比先清空再添加更简洁）
+    tableWrap.replaceChildren(buildTable(students));
+    print("out-dom", `已根据 ${students.length} 条数据生成表格（createElement + appendChild）。`);
+    print("out-dom", "核心思想：把【数据】映射成【DOM 节点】—— 这正是 React / Vue 做的事。");
+};
+
+document.getElementById("table-append").onclick = function () {
+    clearPanel("out-dom");
+    const tbody = tableWrap.querySelector("tbody");
+    if (!tbody) {
+        print("out-dom", "⚠️ 表格还没生成，请先点【根据数组生成表格】。");
+        return;
+    }
+    // 造一条新数据
+    const newRow = { name: "赵六", age: 21, city: "深圳" };
+    students.push(newRow);
+
+    // 创建一个新的 <tr> 并插入 tbody
+    const tr = document.createElement("tr");
+    [newRow.name, newRow.age, newRow.city].forEach(function (value) {
+        const td = document.createElement("td");
+        td.textContent = value;
+        tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+    print("out-dom", `已追加一行：${newRow.name}；现在表格共有 ${tbody.children.length} 行。`);
+};
+
+document.getElementById("table-clear").onclick = function () {
+    clearPanel("out-dom");
+    tableWrap.innerHTML = "";
+    print("out-dom", 'tableWrap.innerHTML = ""  ← 清空容器最常用的一行。');
+};
+
+
+// ==========================================================================
+// 七、在树里走动
+// ==========================================================================
+const treeSecond = document.getElementById("tree-second");
+const treeList = document.getElementById("tree-list");
+
+document.getElementById("t-parent").onclick = function () {
+    clearPanel("out-tree");
+    const p = treeSecond.parentElement;
+    print("out-tree", `treeSecond.parentElement → <${p.tagName.toLowerCase()} id="${p.id}">`);
+    print("out-tree", `  parentElement 是【父元素】；parentNode 可能返回文本节点等，所以更常用前者。`);
+    flash(p);
+};
+
+document.getElementById("t-children").onclick = function () {
+    clearPanel("out-tree");
+    print("out-tree", `treeList.children → HTMLCollection，长度 ${treeList.children.length}`);
+    // children 是 HTMLCollection，用 Array.from 转成真数组才能用 forEach
+    Array.from(treeList.children).forEach(function (li, i) {
+        print("out-tree", `  [${i}] <${li.tagName.toLowerCase()}> ${li.textContent.trim()}`);
+        flash(li);
+    });
+};
+
+document.getElementById("t-siblings").onclick = function () {
+    clearPanel("out-tree");
+    const prev = treeSecond.previousElementSibling;
+    const next = treeSecond.nextElementSibling;
+    print("out-tree", `treeSecond.previousElementSibling → ${prev ? prev.textContent.trim() : "（没有，返回 null）"}`);
+    print("out-tree", `treeSecond.nextElementSibling     → ${next ? next.textContent.trim() : "（没有，返回 null）"}`);
+    print("out-tree", "");
+    print("out-tree", `对比：nextSibling 会返回换行产生的文本节点（#text），`);
+    print("out-tree", `      nextElementSibling 只返回元素节点，所以更常用。`);
+    if (prev) flash(prev);
+    if (next) flash(next);
+};
+
+document.getElementById("t-closest").onclick = function () {
+    clearPanel("out-tree");
+    const ul = treeSecond.closest("ul");
+    print("out-tree", `treeSecond.closest("ul") → <ul id="${ul.id}">`);
+    print("out-tree", "closest 从自己开始向上找最近的匹配祖先，常用于事件委托里定位所属组件。");
+    flash(ul);
+};
+
+document.getElementById("t-childnodes").onclick = function () {
+    clearPanel("out-tree");
+    print("out-tree", `treeList.childNodes.length  = ${treeList.childNodes.length}  ← 含换行产生的空白文本节点`);
+    print("out-tree", `treeList.children.length    = ${treeList.children.length}    ← 只有元素节点`);
+    print("out-tree", "");
+    print("out-tree", "childNodes 的每一项类型（nodeType）：1=元素, 3=文本, 8=注释");
+    Array.from(treeList.childNodes).forEach(function (node, i) {
+        const typeName = { 1: "元素 Element", 3: "文本 Text", 8: "注释 Comment" }[node.nodeType] || "其他";
+        const preview = node.nodeType === 1
+            ? `<${node.tagName.toLowerCase()}>`
+            : JSON.stringify(node.textContent);
+        print("out-tree", `  [${i}] nodeType=${node.nodeType} (${typeName})  ${preview}`);
+    });
+    print("out-tree", "");
+    print("out-tree", "⚠️ 这就是为什么「遍历子节点」时要用 children 而不是 childNodes ——");
+    print("out-tree", "   HTML 源码里的缩进换行会变成一堆空白文本节点，干扰你的逻辑。");
+};
+
+
+// ==========================================================================
+// 页面初始化
+// ==========================================================================
+updateTodoCount();
+print("out-dom", "提示：先在输入框里写点内容，点【添加】就能看到动态创建 DOM 的完整过程。");
+</script>
+
+</body>
+</html>

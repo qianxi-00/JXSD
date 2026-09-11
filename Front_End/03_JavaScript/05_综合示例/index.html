@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：05_综合示例/index.html
+对应课案章节：JavaScript → 综合示例：三者结合
+             （课案原文：「HTML搭骨架 → CSS化妆 → JS加交互」）
+
+本节知识点：
+  1. 课案原文的「三者结合」示例完整复现。
+  2. 一份完整的网页工程要怎么拆：结构(HTML) / 样式(CSS) / 行为(JS) 各一个文件。
+  3. 进阶实践：把前面三章的知识全部串起来，做一个「可用的小应用」——
+     · 点击计数器（课案原文）
+     · 待办清单（数据驱动视图 + 事件委托 + DOM 增删）
+     · 表单校验（input / submit 事件 + preventDefault + 正则）
+     · 亮/暗主题切换（classList + CSS 变量）
+     · 数据持久化（localStorage，刷新页面数据不丢）
+     · 键盘快捷键（/ 聚焦、Esc 清空、Ctrl+Enter 提交）
+
+配套文件：
+  css/style.css  —— 全部样式（含 CSS 变量与主题切换）
+  js/app.js      —— 全部交互逻辑
+
+如何打开查看：直接用浏览器打开本文件，动手点一点、输一输。
+              ⚠️ 注意保持 index.html / css/ / js/ 三者的相对位置不变。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>综合示例：HTML + CSS + JavaScript 三者结合</title>
+
+    <!-- ============ CSS：网页的外观 ============ -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ==================================================================== -->
+<!-- HTML：网页的结构（骨架）                                              -->
+<!-- ==================================================================== -->
+
+<header class="topbar">
+    <div class="topbar-inner">
+        <div class="brand">
+            <span class="brand-logo">◆</span>
+            <span class="brand-name">三者结合示例</span>
+        </div>
+        <!-- 导航：纯 HTML 结构，样式交给 CSS，交互交给 JS -->
+        <nav class="nav">
+            <a href="#section-three" class="nav-link">三者结合</a>
+            <a href="#section-todo" class="nav-link">待办清单</a>
+            <a href="#section-form" class="nav-link">表单校验</a>
+            <a href="#section-recap" class="nav-link">重点回顾</a>
+        </nav>
+        <!-- 主题切换按钮：它的功能完全由 JS 实现 -->
+        <button class="theme-toggle" id="theme-toggle" type="button" title="切换亮色 / 暗色主题">
+            <span id="theme-icon">🌙</span>
+            <span id="theme-label">暗色</span>
+        </button>
+    </div>
+</header>
+
+<main class="container">
+
+    <!-- ============================================================ -->
+    <section class="hero">
+        <h1>HTML 搭骨架 → CSS 化妆 → JS 加交互</h1>
+        <p class="hero-sub">
+            这是课案「综合示例：三者结合」的完整落地版本。
+            同一个页面上，三个文件各司其职，最终交付一个「能用」的小应用。
+        </p>
+        <div class="hero-files">
+            <span class="file-chip html">index.html<span>结构</span></span>
+            <span class="file-chip css">css/style.css<span>样式</span></span>
+            <span class="file-chip js">js/app.js<span>行为</span></span>
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card" id="section-three">
+        <h2><span class="num">1</span>课案原文：三者结合的完整示例</h2>
+
+        <p>课案给出了三个文件，拼在一起就是一个能点的页面。<b>请仔细看每个文件负责什么。</b></p>
+
+        <div class="code-grid">
+            <div class="code-col">
+                <div class="code-head html-head">HTML（结构）</div>
+<pre>&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;title&gt;外部JS示例&lt;/title&gt;
+    &lt;link rel="stylesheet" href="styles.css"&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;h1 id="title"&gt;点击次数：0&lt;/h1&gt;
+&lt;button id="btn"&gt;点我&lt;/button&gt;
+&lt;script src="app.js"&gt;&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;</pre>
+            </div>
+            <div class="code-col">
+                <div class="code-head css-head">CSS（样式）：styles.css</div>
+<pre>#title {
+    color: #333;
+    font-size: 24px;
+}</pre>
+            </div>
+            <div class="code-col">
+                <div class="code-head js-head">JavaScript（交互）：app.js</div>
+<pre>let count = 0;
+let btn = document.getElementById("btn");
+let title = document.getElementById("title");
+
+btn.onclick = function() {
+    count++;
+    title.textContent = "点击次数：" + count;
+};</pre>
+            </div>
+        </div>
+
+        <div class="callout">
+            <b>三者的分工，一句话记住：</b><br>
+            <b>HTML</b> 说「这里有一个 id 叫 <code>title</code> 的标题、一个 id 叫 <code>btn</code> 的按钮」——<b>只描述结构</b>。<br>
+            <b>CSS</b> 说「<code>#title</code> 这个元素长成什么样」——<b>只看选择器，不关心内容</b>。<br>
+            <b>JS</b> 说「找到 <code>btn</code>，当它被点击时，把 <code>title</code> 的文字改成新的计数」——<b>靠 id 把两者连起来</b>。
+        </div>
+
+        <h3>课案版本的实时复现</h3>
+        <div class="demo-area">
+            <h3 id="title" class="counter-title">点击次数：0</h3>
+            <button class="btn btn-primary" id="btn" type="button">点我</button>
+            <button class="btn" id="btn-reset" type="button">重置</button>
+            <p class="hint">
+                本页的 <code>#title</code> 和 <code>#btn</code> 与课案完全一致，
+                逻辑写在 <code>js/app.js</code> 里。
+            </p>
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card" id="section-todo">
+        <h2><span class="num">2</span>进阶实践一：待办清单（数据驱动视图）</h2>
+
+        <p>
+            这是<b>真实项目里最常见的一类需求</b>：一个列表，能增、能删、能标记完成。
+            它的实现思想叫「<b>数据驱动视图</b>」：
+        </p>
+        <div class="flow">
+            <span class="flow-node">数据（数组）</span>
+            <span class="flow-arrow">──render()──▶</span>
+            <span class="flow-node">页面（DOM）</span>
+            <span class="flow-arrow">◀──用户操作──</span>
+            <span class="flow-node">改数据</span>
+        </div>
+        <p class="hint">
+            只维护一份数据，任何变化后都重新渲染一次 —— <b>这正是 React / Vue 的核心思想</b>，
+            用原生 JS 也能体会一遍。
+        </p>
+
+        <div class="demo-area">
+            <div class="todo-input-row">
+                <input type="text" id="todo-input" placeholder="输入待办事项，按回车快速添加">
+                <button class="btn btn-primary" id="todo-add" type="button">添加</button>
+            </div>
+            <div class="todo-toolbar">
+                <div class="filters" id="todo-filters">
+                    <button class="filter active" data-filter="all" type="button">全部</button>
+                    <button class="filter" data-filter="active" type="button">未完成</button>
+                    <button class="filter" data-filter="done" type="button">已完成</button>
+                </div>
+                <button class="btn btn-ghost btn-sm" id="todo-clear-done" type="button">清除已完成</button>
+            </div>
+            <ul class="todo-list" id="todo-list"></ul>
+            <p class="todo-stats" id="todo-stats"></p>
+        </div>
+
+        <details class="tech-note">
+            <summary>这个清单用到了哪些知识点？（点开看）</summary>
+            <ul>
+                <li><b>DOM 操作</b>：<code>createElement</code> / <code>appendChild</code> /
+                    <code>remove()</code> / <code>innerHTML = ""</code> 清空容器。</li>
+                <li><b>事件处理</b>：<code>addEventListener</code>；
+                    <code>keydown</code> 判断 <code>event.key === "Enter"</code>。</li>
+                <li><b>事件委托</b>：监听器只绑在 <code>&lt;ul&gt;</code> 上，
+                    靠 <code>event.target.closest("[data-action]")</code> 判断点了哪个按钮 ——
+                    所以每次重新渲染出来的新元素也自动生效。</li>
+                <li><b>数组方法</b>：<code>push</code> / <code>filter</code> / <code>find</code> / <code>forEach</code>。</li>
+                <li><b>classList</b>：用 <code>toggle("done")</code> 切换完成状态的样式。</li>
+                <li><b>localStorage</b>：把数据存到浏览器本地，刷新页面不丢。</li>
+                <li><b>CSS</b>：Flexbox 做左右布局，<code>text-decoration: line-through</code> 做删除线。</li>
+            </ul>
+        </details>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card" id="section-form">
+        <h2><span class="num">3</span>进阶实践二：表单校验（阻止默认提交）</h2>
+
+        <p>
+            表单是网页与用户交互最重要的入口。这一节演示<b>完整的表单处理流程</b>：
+            实时校验 → 提交前总校验 → 阻止页面刷新 → 模拟提交。
+        </p>
+
+        <div class="demo-area">
+            <form id="signup-form" novalidate>
+                <!-- novalidate：关掉浏览器自带的校验气泡，方便展示我们自己写的校验 -->
+                <div class="field">
+                    <label for="f-name">姓名 <span class="req">*</span></label>
+                    <input type="text" id="f-name" placeholder="至少 2 个字符" autocomplete="off">
+                    <span class="err" id="f-name-err"></span>
+                </div>
+                <div class="field">
+                    <label for="f-email">邮箱 <span class="req">*</span></label>
+                    <input type="text" id="f-email" placeholder="name@example.com" autocomplete="off">
+                    <span class="err" id="f-email-err"></span>
+                </div>
+                <div class="field">
+                    <label for="f-city">城市</label>
+                    <select id="f-city">
+                        <option value="北京">北京</option>
+                        <option value="上海">上海</option>
+                        <option value="广州">广州</option>
+                        <option value="深圳">深圳</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>兴趣</label>
+                    <div class="checkbox-group" id="f-hobbies">
+                        <label><input type="checkbox" value="篮球"> 篮球</label>
+                        <label><input type="checkbox" value="音乐"> 音乐</label>
+                        <label><input type="checkbox" value="编程"> 编程</label>
+                        <label><input type="checkbox" value="旅行"> 旅行</label>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="f-bio">简介</label>
+                    <textarea id="f-bio" rows="3" maxlength="120"
+                              placeholder="最多 120 字，输入时会实时显示剩余字数"></textarea>
+                </div>
+                <p class="hint" id="f-bio-counter">还可输入 120 字</p>
+
+                <div class="form-actions">
+                    <button class="btn btn-primary" type="submit">提交</button>
+                    <button class="btn" type="button" id="f-reset">重置</button>
+                    <span class="hint">提示：在简介框里按 <kbd>Ctrl</kbd> + <kbd>Enter</kbd> 也能提交</span>
+                </div>
+            </form>
+            <div id="form-result" class="form-result"></div>
+        </div>
+
+        <div class="callout warn">
+            <b>最容易忘的一行：<code>event.preventDefault()</code>。</b>
+            表单的默认行为是「把数据提交到 action 指定的地址，然后<b>刷新整个页面</b>」。
+            不阻止它，你写的所有 JS 状态都会丢失，用户会看到页面闪一下什么都没发生。
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="card" id="section-recap">
+        <h2><span class="num">4</span>重点回顾</h2>
+        <div class="recap-grid">
+            <div class="recap-item html-item">
+                <h4>HTML —— 定义网页结构</h4>
+                <ul>
+                    <li>标签 + 属性描述「这里是什么」</li>
+                    <li><code>class</code> 可重复，<code>id</code> 必须唯一</li>
+                    <li>文档在浏览器里是一棵 <b>DOM 树</b></li>
+                </ul>
+            </div>
+            <div class="recap-item css-item">
+                <h4>CSS —— 控制网页样式</h4>
+                <ul>
+                    <li><b>盒子模型</b>：content → padding → border → margin</li>
+                    <li><b>Flexbox</b>：弹性盒子，轻松对齐</li>
+                    <li>用 CSS 变量统一管理配色，可一键换主题</li>
+                </ul>
+            </div>
+            <div class="recap-item js-item">
+                <h4>JavaScript —— 实现网页交互</h4>
+                <ul>
+                    <li><b>DOM 操作</b>：用 JS 动态修改网页内容</li>
+                    <li><b>事件处理</b>：让网页响应用户操作</li>
+                    <li><b>事件委托</b>：一个监听器管一堆动态元素</li>
+                </ul>
+            </div>
+        </div>
+        <p class="recap-tail">
+            把这三件事合起来，你就能做出一个真正可用的网页。
+            下一步（见 <code>../../05_前端框架生态/README.md</code>）是了解
+            React / Vue 这些框架如何把「数据驱动视图」这件事做到极致。
+        </p>
+    </section>
+
+</main>
+
+<footer class="page-footer">
+    <p>
+        对应课案：前端基础 → JavaScript → 综合示例：三者结合<br>
+        你也可以直接右键「查看网页源代码」对照本页的 HTML；
+        按 <kbd>F12</kbd> 打开开发者工具，在 Elements 面板里能看到 app.js 动态生成的所有节点。
+    </p>
+</footer>
+
+<!-- ============ JS：网页的行为 ============ -->
+<script src="js/app.js" defer></script>
+
+</body>
+</html>

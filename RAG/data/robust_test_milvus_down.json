@@ -1,0 +1,7 @@
+{
+  "tag": "milvus_down",
+  "question": "查一下孙俊那趟航班的登机信息?",
+  "route": "rag",
+  "error_message": "⚠️ 知识库服务(Milvus)当前不可用,无法完成检索。请在数据库目录下执行 `powershell -File F:\\DockerDesktopData\\start-dbs.ps1` 启动服务后重试。",
+  "elapsed_s": 4.44
+}

@@ -1,0 +1,70 @@
+/* 06_FastAPI/static/style.css
+   这个文件由 app.mount("/static", StaticFiles(directory=...), name="static") 对外提供。
+   生产环境通常由 Nginx 承接 /static/ 前缀：
+       location /static/ { alias /opt/app/static/; expires 7d; }
+   这样可以省掉应用进程的 IO 与上下文切换。 */
+
+:root {
+    --accent: #6b4fd8;
+    --border: #dcdfe6;
+    --text: #2c3e50;
+    --ok: #2e9e5b;
+    --warn: #d98b1f;
+    --danger: #cf3f3f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: #f7f9fc;
+    color: var(--text);
+    font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+    line-height: 1.75;
+}
+
+.site-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 24px;
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+}
+
+.site-header nav { margin-left: auto; display: flex; gap: 16px; }
+.site-header a { color: var(--accent); text-decoration: none; font-size: 14px; }
+.site-header a:hover { text-decoration: underline; }
+
+.container { max-width: 880px; margin: 24px auto; padding: 0 24px; }
+
+h1 { font-size: 24px; }
+h2 { font-size: 18px; margin-top: 28px; border-left: 4px solid var(--accent); padding-left: 8px; }
+
+code {
+    background: #eef2f7;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: Consolas, monospace;
+    font-size: 13px;
+}
+
+.hint { color: #5b6b7c; font-size: 14px; }
+
+table { width: 100%; border-collapse: collapse; background: #fff; font-size: 14px; }
+th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; }
+th { background: #f0f0fa; }
+
+.tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; color: #fff; }
+.tag.ok { background: var(--ok); }
+.tag.warn { background: var(--warn); }
+.tag.danger { background: var(--danger); }
+
+.site-footer {
+    margin-top: 40px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    color: #8896a5;
+    font-size: 13px;
+    text-align: center;
+}

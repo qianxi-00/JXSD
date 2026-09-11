@@ -1,0 +1,64 @@
+# ============================================================
+# .editorconfig —— 编辑器统一约定（跨 IDE 生效）
+# ============================================================
+# 作用：让 VS Code / PyCharm / Vim / Sublime 等不同编辑器
+#       在缩进、换行符、编码、末尾空行这些"小事"上保持一致，
+#       从源头上避免"我这边好好的，你那边整个文件都变了"。
+#
+# 使用：把本文件复制到项目根目录（或 Back_End 目录），编辑器会自动读取。
+#       多数编辑器需要安装/启用 EditorConfig 插件（VS Code 有官方扩展，
+#       PyCharm 已内置支持）。
+#
+# 语法：root = true 表示"到这里就不再往上找配置了"；
+#       [*] 匹配所有文件，[*.py] 只匹配 Python 文件。
+# ============================================================
+
+# 该文件是项目内的顶层配置，向上不再继承任何 .editorconfig
+root = true
+
+# ---------- 所有文件的通用规则 ----------
+[*]
+charset = utf-8                     # 统一 UTF-8，中文注释不会乱码
+end_of_line = lf                    # 统一 LF。Windows 上如果混入 CRLF，Git diff 会整文件变化
+insert_final_newline = true         # 文件末尾保留一个空行（POSIX 约定，很多工具依赖）
+trim_trailing_whitespace = true     # 自动删除行尾多余空格
+indent_style = space                # 用空格缩进（不要用 Tab）
+indent_size = 4                     # 默认 4 空格
+max_line_length = 120               # 与 ruff.toml 的 line-length 保持一致
+
+# ---------- Python ----------
+[*.py]
+indent_size = 4                     # PEP 8 规定 4 空格
+max_line_length = 120               # 与 ruff/black 的 line-length 保持一致
+
+# ---------- 配置文件 ----------
+[*.{yml,yaml}]
+indent_size = 2                     # YAML 用 2 空格（缩进敏感，层级多时更清晰）
+
+[*.{json,toml}]
+indent_size = 2
+
+[*.{html,css,js,ts,jsx,tsx}]
+indent_size = 2                     # 前端资源统一 2 空格
+
+# ---------- Markdown ----------
+[*.md]
+# Markdown 里"行尾两个空格"表示强制换行，因此不能清理行尾空格
+trim_trailing_whitespace = false
+max_line_length = off               # 中文文档不强制换行
+
+# ---------- 特殊文件 ----------
+[Makefile]
+indent_style = tab                  # Makefile 必须用 Tab，用空格会报 "missing separator"
+
+[*.{bat,cmd}]
+end_of_line = crlf                  # Windows 批处理必须 CRLF
+
+[*.ps1]
+end_of_line = crlf                  # PowerShell 脚本用 CRLF 兼容性最好
+
+[Dockerfile]
+indent_size = 4
+
+[*.{sh,bash}]
+indent_size = 4

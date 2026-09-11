@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<!--
+=====================================================================================
+文件：04_Flex布局.html
+对应课案章节：CSS → Flexbox布局
+本节知识点：
+  1. Flexbox 是什么：父容器设置 display:flex，子元素自动按规则排列。
+  2. 课案原文示例（justify-content: center / align-items: center / gap: 10px）完整复现。
+  3. 两根轴：主轴（main axis）与交叉轴（cross axis）—— 理解 Flex 的关键。
+  4. 容器属性：display / flex-direction / justify-content / align-items / flex-wrap /
+     align-content / gap
+  5. 项目属性：flex-grow / flex-shrink / flex-basis / flex 简写 / align-self / order
+  6. 课案表格里的每一个 justify-content 和 align-items 取值，本页都有可点击的真实演示。
+如何打开查看：直接用浏览器打开本文件，点击各个按钮切换属性值，实时观察上方盒子的变化。
+=====================================================================================
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSS Flexbox 弹性布局</title>
+    <style>
+        /* ============ 页面基础排版（非知识点） ============ */
+        body {
+            font-family: "Microsoft YaHei", "微软雅黑", Arial, sans-serif;
+            max-width: 1000px; margin: 24px auto; padding: 0 16px;
+            line-height: 1.75; color: #24292f;
+        }
+        code {
+            background: #f3f4f6; padding: 2px 6px; border-radius: 3px;
+            font-family: Consolas, Monaco, monospace; color: #c7254e;
+        }
+        pre {
+            background: #1f2430; color: #e6e6e6; padding: 12px 14px;
+            border-radius: 6px; overflow-x: auto; line-height: 1.5;
+        }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #b9c0c8; padding: 6px 12px; text-align: left; }
+        th { background: #f0f4f8; }
+        .tip { background:#fff8e1; border-left:4px solid #f0ad4e; padding:10px 14px; margin:14px 0; border-radius:4px; }
+        .sec {
+            border: 1px solid #e1e4e8; border-left: 5px solid #2980b9;
+            border-radius: 6px; padding: 12px 20px; margin: 20px 0; background: #f9fcff;
+        }
+        .sec > h2 { margin-top: 6px; color: #1f618d; }
+
+        /* ==================================================================
+           课案原文的 Flexbox 示例，一字不改地复现
+           ================================================================== */
+        /* 注意：课案里写的是 body { margin: 0; }，本页为了排版没有用，
+           但下面这个 .container 和 .box 与课案完全一致。 */
+        .container {
+            display: flex;              /* 关键的一行：把父元素变成 flex 容器 */
+            justify-content: center;    /* 主轴（默认水平）方向对齐：居中 */
+            align-items: center;        /* 交叉轴（默认垂直）方向对齐：居中 */
+            gap: 10px;                  /* 子元素之间的间隔 */
+            height: 100px;              /* 容器高度，这样垂直居中有意义 */
+            background-color: #eee;
+        }
+        .box {
+            width: 60px;
+            height: 60px;
+            background-color: #3498db;
+            color: white;
+            /* 每个小方块自己也是一个 flex 容器，用来让里面的数字居中 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        /* ==================================================================
+           交互演示用的容器
+           ================================================================== */
+        .playground {
+            display: flex;
+            background: #eef4fa;
+            border: 2px dashed #2980b9;
+            border-radius: 6px;
+            height: 180px;              /* 固定高度，这样 align-items 才有视觉效果 */
+            margin: 12px 0;
+            /* 下面这些属性由 JS 动态覆盖 */
+            flex-direction: row;
+            justify-content: flex-start;
+            align-items: stretch;
+            flex-wrap: nowrap;
+            gap: 8px;
+        }
+        .pbox {
+            background: #2980b9;
+            color: #fff;
+            padding: 10px 16px;
+            border-radius: 4px;
+            font-family: Consolas, Monaco, monospace;
+            text-align: center;
+            min-width: 56px;
+        }
+        /* 给不同项目一点高度差异，这样 align-items 的效果才看得出来 */
+        .pbox:nth-child(1) { height: 40px; line-height: 20px; }
+        .pbox:nth-child(2) { height: 70px; line-height: 50px; }
+        .pbox:nth-child(3) { height: 54px; line-height: 34px; }
+        .pbox:nth-child(4) { height: 30px; line-height: 10px; }
+
+        .btn-row { margin: 8px 0 4px; }
+        .btn-row > b { display:inline-block; min-width: 130px; font-family: Consolas, Monaco, monospace; font-size: 13px; color:#1f618d; }
+        .btn {
+            font-family: Consolas, Monaco, monospace;
+            font-size: 12px;
+            padding: 4px 10px;
+            margin: 2px 4px 2px 0;
+            border: 1px solid #b9c0c8;
+            background: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn:hover { background: #eaf4ff; border-color: #2980b9; }
+        .btn.active { background: #2980b9; color: #fff; border-color: #2980b9; }
+
+        /* 两根轴示意图 */
+        .axis-demo {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 12px;
+            height: 150px;
+            background: #eef4fa;
+            border: 2px dashed #2980b9;
+            border-radius: 6px;
+            margin: 12px 0;
+        }
+        .axis-demo .axis-box {
+            width: 64px; height: 64px;
+            background: #3498db; color: #fff;
+            display: flex; justify-content: center; align-items: center;
+            border-radius: 4px; font-weight: bold;
+        }
+
+        /* 卡片布局实战：flex-wrap + flex:1 */
+        .cards {
+            display: flex;
+            flex-wrap: wrap;         /* 一行放不下就换行 */
+            gap: 16px;
+        }
+        .card {
+            flex: 1 1 220px;         /* grow=1 shrink=1 basis=220px：能伸能缩，基准 220px */
+            background: #fff;
+            border: 1px solid #d0d7de;
+            border-radius: 8px;
+            padding: 14px 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.06);
+        }
+        .card h4 { margin: 0 0 6px; color: #1f618d; }
+
+        /* 经典「圣杯/三栏」布局 */
+        .holy-grail {
+            display: flex;
+            gap: 12px;
+            height: 120px;
+        }
+        .hg-side  { flex: 0 0 120px; background:#d6eaf8; padding:10px; border-radius:4px; }
+        .hg-main  { flex: 1;         background:#aed6f1; padding:10px; border-radius:4px; }
+        .holy-grail .hg-side:last-child { background:#d5f5e3; }
+    </style>
+</head>
+<body>
+
+<h1>CSS Flexbox 弹性布局</h1>
+
+<p>
+    <b>Flexbox（弹性盒子）</b>是目前最主流的 CSS 布局方式，专门解决「一堆元素怎么排」的问题。
+    它的一句话原理是：<b>给父容器设置 <code>display: flex;</code>，
+    它所有的直接子元素就自动变成"弹性项目"，按父容器设定的规则自动排列。</b>
+    在 Flexbox 出现之前，让一个盒子垂直居中需要各种"奇技淫巧"；现在只需要两行。
+</p>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>一、课案原文示例（完整复现）</h2>
+
+    <div class="container">
+        <div class="box">1</div>
+        <div class="box">2</div>
+        <div class="box">3</div>
+    </div>
+
+<pre>&lt;div class="container"&gt;
+    &lt;div class="box"&gt;1&lt;/div&gt;
+    &lt;div class="box"&gt;2&lt;/div&gt;
+    &lt;div class="box"&gt;3&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;style&gt;
+.container {
+    display: flex;              /* ① 让子元素变成弹性项目 */
+    justify-content: center;    /* ② 水平方向：居中 */
+    align-items: center;        /* ③ 垂直方向：居中 */
+    gap: 10px;                  /* ④ 三个方块之间间隔 10px */
+    height: 100px;              /* ⑤ 给容器高度，垂直居中有意义 */
+    background-color: #eee;
+}
+.box {
+    width: 60px;
+    height: 60px;
+    background-color: #3498db;
+    color: white;
+    display: flex;              /* 小方块自己也是容器，用来居中数字 */
+    justify-content: center;
+    align-items: center;
+}
+&lt;/style&gt;</pre>
+
+    <p><b>效果说明（课案原文）：</b></p>
+    <ul>
+        <li><code>justify-content: center</code>：子元素水平居中排列。</li>
+        <li><code>align-items: center</code>：子元素垂直居中排列。</li>
+        <li><code>gap: 10px</code>：三个蓝色方块之间间隔 10px。</li>
+    </ul>
+    <div class="tip">
+        把上面容器里的 <code>display: flex;</code> 删掉试试（用 F12 在 Elements 里取消勾选），
+        三个方块会立刻变成「上下叠放的整行块」，因为 <code>&lt;div&gt;</code> 默认是块级元素。
+        <b>这就是 Flex 最直观的价值。</b>
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>二、理解 Flex 的关键：两根轴</h2>
+
+    <p>
+        Flex 布局里所有的属性，都是在回答两个问题：
+        <b>「沿哪根轴排？」</b>和<b>「在这根轴上怎么对齐？」</b>
+    </p>
+
+    <div class="axis-demo">
+        <div class="axis-box">1</div>
+        <div class="axis-box">2</div>
+        <div class="axis-box">3</div>
+    </div>
+
+    <table>
+        <tr><th>概念</th><th>默认方向</th><th>谁控制方向</th><th>谁负责这根轴上的对齐</th></tr>
+        <tr>
+            <td><b>主轴</b> main axis</td>
+            <td>水平向右（→）</td>
+            <td><code>flex-direction</code></td>
+            <td><code>justify-content</code></td>
+        </tr>
+        <tr>
+            <td><b>交叉轴</b> cross axis</td>
+            <td>垂直向下（↓）</td>
+            <td>由主轴方向决定（与主轴垂直）</td>
+            <td><code>align-items</code> / <code>align-content</code></td>
+        </tr>
+    </table>
+
+    <div class="tip">
+        <b>最容易搞混的地方：</b><code>justify-content</code> 管的是<b>主轴</b>，
+        <code>align-items</code> 管的是<b>交叉轴</b>。
+        <br>默认（<code>flex-direction: row</code>）时主轴是水平的，所以：
+        <b>justify-content = 水平对齐，align-items = 垂直对齐</b>。
+        <br>但一旦设成 <code>flex-direction: column</code>，主轴变成垂直的，
+        这两个属性的作用就<b>完全颠倒</b>了：justify-content 变成垂直，align-items 变成水平。
+        <br><b>所以不要死记"水平/垂直"，要记"主轴/交叉轴"。</b>
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>三、交互演示：点按钮，看效果</h2>
+    <p>下面这个蓝色虚线框就是一个 flex 容器，里面有 4 个刻意做成不同高度的方块，
+       方便你观察对齐效果。点击按钮切换属性值。</p>
+
+    <div class="playground" id="pg">
+        <div class="pbox">1</div>
+        <div class="pbox">2</div>
+        <div class="pbox">3</div>
+        <div class="pbox">4</div>
+    </div>
+
+    <div class="btn-row">
+        <b>flex-direction</b>
+        <button class="btn active" data-prop="flexDirection" data-val="row">row</button>
+        <button class="btn" data-prop="flexDirection" data-val="row-reverse">row-reverse</button>
+        <button class="btn" data-prop="flexDirection" data-val="column">column</button>
+        <button class="btn" data-prop="flexDirection" data-val="column-reverse">column-reverse</button>
+    </div>
+
+    <div class="btn-row">
+        <b>justify-content</b>
+        <button class="btn active" data-prop="justifyContent" data-val="flex-start">flex-start</button>
+        <button class="btn" data-prop="justifyContent" data-val="center">center</button>
+        <button class="btn" data-prop="justifyContent" data-val="flex-end">flex-end</button>
+        <button class="btn" data-prop="justifyContent" data-val="space-between">space-between</button>
+        <button class="btn" data-prop="justifyContent" data-val="space-around">space-around</button>
+        <button class="btn" data-prop="justifyContent" data-val="space-evenly">space-evenly</button>
+    </div>
+
+    <div class="btn-row">
+        <b>align-items</b>
+        <button class="btn" data-prop="alignItems" data-val="stretch">stretch</button>
+        <button class="btn active" data-prop="alignItems" data-val="flex-start">flex-start</button>
+        <button class="btn" data-prop="alignItems" data-val="center">center</button>
+        <button class="btn" data-prop="alignItems" data-val="flex-end">flex-end</button>
+        <button class="btn" data-prop="alignItems" data-val="baseline">baseline</button>
+    </div>
+
+    <div class="btn-row">
+        <b>flex-wrap</b>
+        <button class="btn active" data-prop="flexWrap" data-val="nowrap">nowrap</button>
+        <button class="btn" data-prop="flexWrap" data-val="wrap">wrap</button>
+        <button class="btn" data-prop="flexWrap" data-val="wrap-reverse">wrap-reverse</button>
+    </div>
+
+    <div class="btn-row">
+        <button class="btn" id="reset-btn" style="background:#fdecea;border-color:#e74c3c;color:#c0392b;">
+            重置全部
+        </button>
+    </div>
+
+    <pre id="css-output">.playground {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: flex-start;
+    flex-wrap: nowrap;
+    gap: 8px;
+}</pre>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>四、课案表格逐条讲解</h2>
+
+    <h3>1）justify-content —— 主轴（默认水平）对齐</h3>
+    <table>
+        <tr><th>值</th><th>效果</th><th>一句话记忆</th></tr>
+        <tr><td><code>flex-start</code></td><td>所有元素靠左排列（默认值）</td><td>挤在起点</td></tr>
+        <tr><td><code>center</code></td><td>所有元素居中排列</td><td>挤在中间</td></tr>
+        <tr><td><code>flex-end</code></td><td>所有元素靠右排列</td><td>挤在终点</td></tr>
+        <tr><td><code>space-between</code></td><td>两端贴边，中间均分</td><td>「导航栏左 logo 右菜单」就用它</td></tr>
+        <tr><td><code>space-around</code></td><td>每项左右各留一半间距</td><td>两端间距是中间的一半</td></tr>
+        <tr><td><code>space-evenly</code></td><td>所有间距完全相等（含两端）</td><td>最"均匀"</td></tr>
+    </table>
+
+    <h3>2）align-items —— 交叉轴（默认垂直）对齐</h3>
+    <table>
+        <tr><th>值</th><th>效果</th></tr>
+        <tr><td><code>stretch</code></td><td>所有元素靠顶对齐？<b>不</b>——是<b>拉伸</b>填满交叉轴（默认值）。所以子元素不写 height 时会被拉满容器高度</td></tr>
+        <tr><td><code>flex-start</code></td><td>所有元素靠顶对齐</td></tr>
+        <tr><td><code>center</code></td><td>所有元素垂直居中</td></tr>
+        <tr><td><code>flex-end</code></td><td>所有元素靠底对齐</td></tr>
+        <tr><td><code>baseline</code></td><td>按文字的基线对齐（做「图标 + 文字」行内对齐很有用）</td></tr>
+    </table>
+    <div class="tip">
+        <b>注意 <code>stretch</code> 是默认值</b>，这也是为什么「我在 flex 里给子元素设百分比高度没生效」——
+        它被拉伸了。<b>想让子元素自己决定高度，先设 <code>align-items: flex-start;</code>。</b>
+    </div>
+
+    <h3>3）flex-direction —— 决定主轴方向</h3>
+    <table>
+        <tr><th>值</th><th>主轴方向</th><th>justify-content 管的是</th><th>align-items 管的是</th></tr>
+        <tr><td><code>row</code>（默认）</td><td>水平，从左到右</td><td>水平</td><td>垂直</td></tr>
+        <tr><td><code>row-reverse</code></td><td>水平，从右到左</td><td>水平（方向反了）</td><td>垂直</td></tr>
+        <tr><td><code>column</code></td><td>垂直，从上到下</td><td><b>垂直</b></td><td><b>水平</b></td></tr>
+        <tr><td><code>column-reverse</code></td><td>垂直，从下到上</td><td><b>垂直</b>（方向反了）</td><td><b>水平</b></td></tr>
+    </table>
+
+    <h3>4）flex-wrap —— 放不下怎么办</h3>
+    <table>
+        <tr><th>值</th><th>效果</th></tr>
+        <tr><td><code>nowrap</code>（默认）</td><td>不换行，子元素被<b>压缩</b>挤在一行里（可能变形）</td></tr>
+        <tr><td><code>wrap</code></td><td>放不下就换到下一行</td></tr>
+        <tr><td><code>wrap-reverse</code></td><td>换行，但行的顺序反过来（第一行在最下面）</td></tr>
+    </table>
+    <p>配合 <code>align-content</code> 可以控制<b>多行之间</b>在交叉轴上的分布
+        （注意：只有换了行、且容器有剩余高度时才有效果）。</p>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>五、写在子元素上的属性（弹性项目属性）</h2>
+    <table>
+        <tr><th>属性</th><th>作用</th></tr>
+        <tr><td><code>flex-grow</code></td><td>「还有剩余空间时，我要不要分一点？」0=不分（默认），1=分。数值是<b>比例</b></td></tr>
+        <tr><td><code>flex-shrink</code></td><td>「空间不够时，我要不要被压缩？」1=可以缩（默认），0=<b>不许缩</b></td></tr>
+        <tr><td><code>flex-basis</code></td><td>分配空间前的「基准尺寸」，写 <code>200px</code> 或 <code>auto</code>（默认，看 width）</td></tr>
+        <tr><td><code>flex</code></td><td>上面三个的简写：<code>flex: grow shrink basis</code></td></tr>
+        <tr><td><code>align-self</code></td><td>单独覆盖父容器的 <code>align-items</code>，只影响自己</td></tr>
+        <tr><td><code>order</code></td><td>改变排列顺序（数字越小越靠前，默认都是 0），<b>不改 HTML 结构</b></td></tr>
+    </table>
+
+<pre>/* 最常用的三种写法 */
+.item-a { flex: 1; }        /* = 1 1 0%   ：等分剩余空间（做等宽列） */
+.item-b { flex: auto; }     /* = 1 1 auto ：按内容大小分配并伸展 */
+.item-c { flex: none; }     /* = 0 0 auto ：固定大小，不伸不缩（做侧边栏） */
+
+/* 三栏布局：左右固定 150px，中间自适应铺满 */
+.layout { display: flex; gap: 12px; }
+.side   { flex: 0 0 150px; }   /* 不伸不缩，固定 150px */
+.main   { flex: 1; }           /* 吃掉剩下的全部空间 */</pre>
+
+    <p><b>三栏布局实战（左右固定，中间自适应，把窗口拉宽拉窄看看）：</b></p>
+    <div class="holy-grail">
+        <div class="hg-side">左侧栏<br>flex: 0 0 120px</div>
+        <div class="hg-main">主内容区<br>flex: 1（吃掉剩余空间）</div>
+        <div class="hg-side">右侧栏<br>flex: 0 0 120px</div>
+    </div>
+
+    <p style="margin-top:18px;"><b>响应式卡片墙实战（flex: 1 1 220px + flex-wrap: wrap）：</b></p>
+    <div class="cards">
+        <div class="card">
+            <h4>卡片一</h4>
+            <p style="margin:0;">每张卡片基准宽度 220px，能伸能缩。窗口宽时一行放 3 张，窄了自动换行。</p>
+        </div>
+        <div class="card">
+            <h4>卡片二</h4>
+            <p style="margin:0;"><code>flex: 1 1 220px</code> 是响应式卡片墙的黄金公式。</p>
+        </div>
+        <div class="card">
+            <h4>卡片三</h4>
+            <p style="margin:0;">不需要任何媒体查询（@media）就能做到基本的自适应。</p>
+        </div>
+    </div>
+</div>
+
+<!-- ==================================================================== -->
+<div class="sec">
+    <h2>六、重点回顾 & 常见坑</h2>
+    <ul>
+        <li><b>Flex 属性写在父容器上</b>（display / direction / justify / align / wrap / gap），
+            子元素自动成为弹性项目。</li>
+        <li><b>记"主轴/交叉轴"，不要记"水平/垂直"</b>：justify-content 管主轴，
+            align-items 管交叉轴；flex-direction: column 时两者作用互换。</li>
+        <li><b>align-items 默认是 stretch（拉伸）</b>，这是"高度不受控"的最常见原因。</li>
+        <li><b>flex: 1</b> 是等分剩余空间；<b>flex: 0 0 150px</b> 是固定宽度侧边栏。</li>
+        <li><b>gap</b> 是给子元素之间留间距的最佳方式，比给每个子元素写 margin 干净得多
+            （而且不会在两端多出间距）。</li>
+    </ul>
+    <div class="tip">
+        <b>常见坑：</b>
+        <ol style="margin:6px 0 0;">
+            <li><b>flex 只对直接子元素生效</b>。孙子元素不受影响——要么给中间那层也设 display:flex，
+                要么把属性设在正确的层级上。</li>
+            <li><b>flex 容器的子元素，其 <code>float</code> / <code>vertical-align</code> 会失效</b>。</li>
+            <li><b>flex 容器子元素的 <code>margin: auto</code> 有奇效</b>：例如
+                <code>margin-left: auto;</code> 可以把某个项目单独推到最右边
+                （比 <code>justify-content: space-between</code> 更灵活）。</li>
+            <li><b>绝对定位（position: absolute）的子元素不参与 flex 布局</b>。</li>
+        </ol>
+    </div>
+</div>
+
+<hr>
+<p style="color:#57606a;font-size:14px;">
+    下一站：<code>05_外部样式/index.html</code>（把 CSS 拆成独立文件的标准做法）。
+    配套总结见 <code>CSS知识点.md</code>。
+</p>
+
+<script>
+    // ==========================================================================
+    // 交互演示：点击按钮，实时修改上面那个 flex 容器的样式。
+    // 这里用到的是 03_JavaScript 章节的 DOM 操作与事件处理知识。
+    // ==========================================================================
+
+    const pg = document.getElementById("pg");               // 那个 flex 容器
+    const output = document.getElementById("css-output");   // 底部显示 CSS 代码的黑框
+    const allBtns = document.querySelectorAll(".btn[data-prop]");
+
+    // 用一个对象记录「当前状态」，这样刷新后能直接重新渲染
+    const state = {
+        flexDirection: "row",
+        justifyContent: "flex-start",
+        alignItems: "flex-start",
+        flexWrap: "nowrap"
+    };
+
+    /** 把 state 里的值写到容器的 style 上，同时更新右侧代码展示和按钮高亮 */
+    function render() {
+        // 逐个应用样式。JavaScript 里改 CSS 是「中划线转小驼峰」：
+        // CSS 的 flex-direction  →  JS 的 style.flexDirection
+        pg.style.flexDirection  = state.flexDirection;
+        pg.style.justifyContent = state.justifyContent;
+        pg.style.alignItems     = state.alignItems;
+        pg.style.flexWrap       = state.flexWrap;
+
+        // 把当前 CSS 以「中划线写法」打印出来，方便直接复制到自己的代码里
+        output.textContent =
+`.playground {
+    display: flex;
+    flex-direction: ${state.flexDirection};
+    justify-content: ${state.justifyContent};
+    align-items: ${state.alignItems};
+    flex-wrap: ${state.flexWrap};
+    gap: 8px;
+}`;
+
+        // 更新按钮的高亮状态：只有「当前生效」的那个按钮是蓝色
+        allBtns.forEach(function (btn) {
+            const isActive = state[btn.dataset.prop] === btn.dataset.val;
+            btn.classList.toggle("active", isActive);
+        });
+    }
+
+    // 给每个按钮绑定点击事件。用事件委托也行，但这里按钮不多，直接循环绑定更直观。
+    allBtns.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            state[btn.dataset.prop] = btn.dataset.val;   // 改状态
+            render();                                    // 重新渲染
+        });
+    });
+
+    // 重置按钮：把 state 恢复成初始值
+    document.getElementById("reset-btn").addEventListener("click", function () {
+        state.flexDirection  = "row";
+        state.justifyContent = "flex-start";
+        state.alignItems     = "flex-start";
+        state.flexWrap       = "nowrap";
+        render();
+    });
+
+    // 页面加载时先渲染一次
+    render();
+</script>
+
+</body>
+</html>
