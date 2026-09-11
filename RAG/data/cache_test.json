@@ -1,0 +1,43 @@
+[
+  {
+    "case": "1_exact_cache(第一次走RAG,第二次应直接命中)",
+    "first_elapsed_s": 7.86,
+    "second_elapsed_s": 0.001,
+    "first_cache_hit": null,
+    "second_cache_hit": "exact",
+    "second_answer": "根据票据资料，2025年6月阿里巴巴集团开给重庆建筑有限公司的发票有两张：  \n- [1] 票号INV20250177，金额72,059.57元（日期2025-06-18）。  \n- [2] 票号INV20250153，金额87,959.52元（日期2025-06-24）。  \n因此，该月份共有两张发票，金额分别为上述两笔 [1][2]。",
+    "second_sources": [
+      {
+        "source_file": "data/invoice/077_INV20250177.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250177",
+        "rerank_score": 0.9961913824081421
+      },
+      {
+        "source_file": "data/invoice/053_INV20250153.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250153",
+        "rerank_score": 0.9956465363502502
+      }
+    ]
+  },
+  {
+    "case": "2_preset_similarity( paraphrase)",
+    "cache_hit": "preset",
+    "similarity": 0.9585,
+    "matched_question": "王霞购买的火车票金额和日期是多少?",
+    "answer": "王霞的火车票票号T20230526263936,金额147.00元,乘车日期2026年01月03日,从合肥站到乌鲁木齐站,08车08A号。"
+  },
+  {
+    "case": "3_preset_verbatim(与预设原句一致)",
+    "cache_hit": "preset",
+    "similarity": 0.9999,
+    "answer": "根据登机牌,赵飞乘坐CA1276航班,从阿克苏机场(AKESUJICHANG)飞往首都机场(SHOUDUJICHANG)。"
+  },
+  {
+    "case": "4_no_hit(走完整RAG)",
+    "elapsed_s": 0.09,
+    "cache_hit": "preset",
+    "answer": "赵飞的登机牌显示:航班CA1276,座位号31B,登机口B1,登机时间17:00。"
+  }
+]

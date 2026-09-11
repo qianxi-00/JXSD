@@ -1,0 +1,8 @@
+{
+  "collections": [
+    "tick"
+  ],
+  "tick_row_count": 300,
+  "vec_dim_check": 1024,
+  "redis_preset_pairs": 60
+}

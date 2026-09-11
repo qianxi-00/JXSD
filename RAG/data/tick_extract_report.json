@@ -1,0 +1,34 @@
+{
+  "total": 1,
+  "by_type": {
+    "flight": 1
+  },
+  "coverage": {
+    "flight": {
+      "ticket_no": 1,
+      "person": 1,
+      "date_int": 0,
+      "amount_fen": 0,
+      "route": 1,
+      "counterparty": 0
+    }
+  },
+  "samples": {
+    "flight": [
+      {
+        "id": "ticket_928cacfe02073cc1a1bedba0",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "person": "赵飞",
+        "date_int": null,
+        "amount_fen": null,
+        "route": "AKESUJICHANG-SHOUDUJICHANG",
+        "counterparty": null,
+        "semantic_text": "姓名Name ZHAOFEI 赵飞 自From 阿克苏机场 登机口Gate B1 登机口 座位区域 FATING A STAR ALLIANCE MEMBER AKESUJICHANG B1 至To 首都机场 SHOUDUJICHANG 登",
+        "ocr_text": "姓名Name\nZHAOFEI\n赵飞\n自From 阿克苏机场\n登机口Gate B1\n登机口\n座位区域\nFATING\nA STAR ALLIANCE MEMBER\nAKESUJICHANG\nB1\n至To 首都机场\nSHOUDUJICHANG\n登",
+        "source_file": "data/flight/ticket-001.png",
+        "vec": null
+      }
+    ]
+  }
+}

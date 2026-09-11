@@ -1,0 +1,8 @@
+{
+  "tag": "redis_down",
+  "question": "帮我看看萧勇那次航班的登机口和时间?",
+  "route": "rag",
+  "rerank_kept": 7,
+  "answer_head": "根据资料 [1]，萧勇（XIAOYONG）的航班登机口为 **B24**，登机时间为 **18:00**。",
+  "elapsed_s": 38.61
+}

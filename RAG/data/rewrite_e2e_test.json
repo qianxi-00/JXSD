@@ -1,0 +1,50 @@
+[
+  {
+    "question": "帮我看一下票据库里,公司2025年1月到6月从百度在线网络技术有限公司进货服务器的合计支出金额?",
+    "route": "rag",
+    "retrieve": {
+      "direct_vector": 10,
+      "direct_keyword": 10,
+      "rewrite_vector": 0,
+      "rewrite_keyword": 0,
+      "merged": 11
+    },
+    "rerank_kept": 8,
+    "rerank_scores": [
+      0.993,
+      0.93,
+      0.919,
+      0.915,
+      0.912,
+      0.907,
+      0.762,
+      0.747
+    ],
+    "answer_head": "根据票据资料，2025年1月至6月涉及从百度在线网络技术有限公司购买服务器的发票仅有 [1]，金额为 **120,122.15元**。",
+    "rewrite": null
+  },
+  {
+    "question": "帮我核对票据:2026年3月3日与2026年8月8日两天里,各自是哪位乘客在哈尔滨站登上火车的?",
+    "route": "rag",
+    "retrieve": {
+      "direct_vector": 10,
+      "direct_keyword": 10,
+      "rewrite_vector": 0,
+      "rewrite_keyword": 0,
+      "merged": 13
+    },
+    "rerank_kept": 8,
+    "rerank_scores": [
+      0.948,
+      0.922,
+      0.911,
+      0.872,
+      0.864,
+      0.808,
+      0.803,
+      0.802
+    ],
+    "answer_head": "根据提供的票据资料，未找到日期为2026年3月3日或2026年8月8日的票据，因此无法核对这两天在哈尔滨站登车的乘客信息。 [1-8]",
+    "rewrite": null
+  }
+]

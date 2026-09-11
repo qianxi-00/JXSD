@@ -1,0 +1,62 @@
+[
+  {
+    "forced_method": "subquery",
+    "rewrite": {
+      "label": "子查询检索",
+      "rewritten": [
+        "窦云那张一等座火车票的票价是多少？",
+        "窦云那张一等座火车票的乘车日期是哪天？",
+        "窦云那张一等座火车票的车厢和座位号是什么？"
+      ]
+    },
+    "retrieve": {
+      "direct_vector": 10,
+      "direct_keyword": 10,
+      "rewrite_vector": 30,
+      "rewrite_keyword": 30,
+      "merged": 20
+    },
+    "rerank_kept": 2,
+    "rerank_scores": [
+      0.992,
+      0.741
+    ],
+    "answer_head": "根据资料 [1]，窦云的一等座火车票信息如下：\n- 票价：935.80元\n- 乘车日期：2027年05月21日\n- 车厢座位：17车17c号（一等座）"
+  },
+  {
+    "forced_method": "backtrack",
+    "rewrite": {
+      "label": "回溯问题检索",
+      "rewritten": [
+        "在票据记录中，窦云有一次乘坐一等座的出行，请问这次出行的具体日期、区间、车次以及费用等详细信息是怎样的？"
+      ]
+    },
+    "retrieve": {
+      "direct_vector": 10,
+      "direct_keyword": 10,
+      "rewrite_vector": 10,
+      "rewrite_keyword": 10,
+      "merged": 18
+    },
+    "rerank_kept": 1,
+    "rerank_scores": [
+      0.91
+    ],
+    "answer_head": "根据票据 [1]，窦云的一等座出行情况为：2027年5月21日11:27从乌鲁木齐站（Wulumuqi）出发，乘坐Z370次列车（票号T20230922559564）前往兰州站（Lanzhou），座位为17车17C号，舱位为一等座，票价93"
+  },
+  {
+    "forced_method": "direct",
+    "retrieve": {
+      "direct_vector": 10,
+      "direct_keyword": 8,
+      "rewrite_vector": 0,
+      "rewrite_keyword": 0,
+      "merged": 17
+    },
+    "rerank_kept": 1,
+    "rerank_scores": [
+      0.976
+    ],
+    "answer_head": "根据票据资料 [1]，窦云的火车票金额为 **935.80元**。"
+  }
+]

@@ -1,0 +1,272 @@
+[
+  {
+    "question": "2025年11月腾讯科技有限公司开给武汉通信有限公司的发票总金额是多少?",
+    "answer": "根据票据资料，2025年11月腾讯科技有限公司开给武汉通信有限公司的发票只有一张，票号INV20250101，金额为39,802.91元 [1]。因此总金额为39,802.91元。",
+    "sources": [
+      {
+        "source_file": "data/invoice/001_INV20250101.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250101",
+        "rerank_score": 0.9985874891281128
+      },
+      {
+        "source_file": "data/invoice/079_INV20250179.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250179",
+        "rerank_score": 0.9701894521713257
+      },
+      {
+        "source_file": "data/invoice/049_INV20250149.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250149",
+        "rerank_score": 0.9693509340286255
+      },
+      {
+        "source_file": "data/invoice/024_INV20250124.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250124",
+        "rerank_score": 0.9031816124916077
+      },
+      {
+        "source_file": "data/invoice/025_INV20250125.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250125",
+        "rerank_score": 0.8978148102760315
+      },
+      {
+        "source_file": "data/invoice/093_INV20250193.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250193",
+        "rerank_score": 0.8919975161552429
+      },
+      {
+        "source_file": "data/invoice/015_INV20250115.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250115",
+        "rerank_score": 0.8668254613876343
+      },
+      {
+        "source_file": "data/invoice/076_INV20250176.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250176",
+        "rerank_score": 0.7658891081809998
+      },
+      {
+        "source_file": "data/invoice/059_INV20250159.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250159",
+        "rerank_score": 0.7082007527351379
+      },
+      {
+        "source_file": "data/invoice/047_INV20250147.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250147",
+        "rerank_score": 0.6483672857284546
+      },
+      {
+        "source_file": "data/invoice/002_INV20250102.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250102",
+        "rerank_score": 0.5950045585632324
+      },
+      {
+        "source_file": "data/invoice/060_INV20250160.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250160",
+        "rerank_score": 0.5348405838012695
+      },
+      {
+        "source_file": "data/invoice/039_INV20250139.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250139",
+        "rerank_score": 0.487276554107666
+      }
+    ]
+  },
+  {
+    "question": "王霞购买的火车票金额和日期是多少?",
+    "answer": "根据票据 [1]，王霞购买的火车票金额为147.00元，日期为2026年01月03日。",
+    "sources": [
+      {
+        "source_file": "data/train/002_T20230526263936.png",
+        "ticket_type": "train",
+        "ticket_no": "T20230526263936",
+        "rerank_score": 0.9723137617111206
+      },
+      {
+        "source_file": "data/train/013_T20161022167934.png",
+        "ticket_type": "train",
+        "ticket_no": "T20161022167934",
+        "rerank_score": 0.2625211775302887
+      },
+      {
+        "source_file": "data/train/060_T20190728109792.png",
+        "ticket_type": "train",
+        "ticket_no": "T20190728109792",
+        "rerank_score": 0.24895262718200684
+      },
+      {
+        "source_file": "data/train/064_T20170305367486.png",
+        "ticket_type": "train",
+        "ticket_no": "T20170305367486",
+        "rerank_score": 0.15526743233203888
+      },
+      {
+        "source_file": "data/train/091_T20200621005295.png",
+        "ticket_type": "train",
+        "ticket_no": "T20200621005295",
+        "rerank_score": 0.08441697061061859
+      },
+      {
+        "source_file": "data/train/099_T20250414622454.png",
+        "ticket_type": "train",
+        "ticket_no": "T20250414622454",
+        "rerank_score": 0.0514356791973114
+      },
+      {
+        "source_file": "data/train/018_T20241103408349.png",
+        "ticket_type": "train",
+        "ticket_no": "T20241103408349",
+        "rerank_score": 0.020393988117575645
+      },
+      {
+        "source_file": "data/train/042_T20191003124392.png",
+        "ticket_type": "train",
+        "ticket_no": "T20191003124392",
+        "rerank_score": 0.018540406599640846
+      },
+      {
+        "source_file": "data/train/014_T20181221382209.png",
+        "ticket_type": "train",
+        "ticket_no": "T20181221382209",
+        "rerank_score": 0.018364818766713142
+      },
+      {
+        "source_file": "data/train/071_T20251129467375.png",
+        "ticket_type": "train",
+        "ticket_no": "T20251129467375",
+        "rerank_score": 0.01611485332250595
+      },
+      {
+        "source_file": "data/invoice/060_INV20250160.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250160",
+        "rerank_score": 0.003163149580359459
+      },
+      {
+        "source_file": "data/invoice/038_INV20250138.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250138",
+        "rerank_score": 0.001811778056435287
+      },
+      {
+        "source_file": "data/invoice/045_INV20250145.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250145",
+        "rerank_score": 0.0017462989781051874
+      },
+      {
+        "source_file": "data/invoice/075_INV20250175.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250175",
+        "rerank_score": 0.0017281273612752557
+      },
+      {
+        "source_file": "data/invoice/030_INV20250130.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250130",
+        "rerank_score": 0.0016729756025597453
+      },
+      {
+        "source_file": "data/invoice/026_INV20250126.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250126",
+        "rerank_score": 0.0014899465022608638
+      },
+      {
+        "source_file": "data/invoice/017_INV20250117.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250117",
+        "rerank_score": 0.0014897302025929093
+      },
+      {
+        "source_file": "data/invoice/087_INV20250187.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250187",
+        "rerank_score": 0.0014871732564643025
+      },
+      {
+        "source_file": "data/invoice/013_INV20250113.png",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250113",
+        "rerank_score": 0.0013738293200731277
+      }
+    ]
+  },
+  {
+    "question": "赵飞坐的航班从哪里到哪里?",
+    "answer": "根据资料[1]，赵飞乘坐的航班是从阿克苏机场（AKESUJICHANG）到首都机场（SHOUDUJICHANG）。",
+    "sources": [
+      {
+        "source_file": "data/flight/ticket-001.png",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "rerank_score": 0.9986769556999207
+      },
+      {
+        "source_file": "data/flight/ticket-089.png",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "rerank_score": 0.9818265438079834
+      },
+      {
+        "source_file": "data/flight/ticket-085.png",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "rerank_score": 0.9406076669692993
+      },
+      {
+        "source_file": "data/flight/ticket-080.png",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "rerank_score": 0.929214358329773
+      },
+      {
+        "source_file": "data/flight/ticket-004.png",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "rerank_score": 0.9256107807159424
+      },
+      {
+        "source_file": "data/flight/ticket-055.png",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "rerank_score": 0.9126721620559692
+      },
+      {
+        "source_file": "data/flight/ticket-025.png",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "rerank_score": 0.8543067574501038
+      },
+      {
+        "source_file": "data/flight/ticket-073.png",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "rerank_score": 0.15807951986789703
+      },
+      {
+        "source_file": "data/flight/ticket-048.png",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "rerank_score": 0.0921301320195198
+      },
+      {
+        "source_file": "data/flight/ticket-092.png",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "rerank_score": 0.04230808839201927
+      }
+    ]
+  }
+]

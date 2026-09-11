@@ -1,0 +1,32 @@
+[
+  {
+    "query": "赵凡的登机牌上座位号是多少?",
+    "best_preset": "赵飞的登机牌座位号是多少?",
+    "similarity": 0.9008,
+    "hit(>=0.85)": true
+  },
+  {
+    "query": "赵飞的登机牌上座位号是多少?",
+    "best_preset": "赵飞的登机牌座位号是多少?",
+    "similarity": 0.9951,
+    "hit(>=0.85)": true
+  },
+  {
+    "query": "今天上海的天气怎么样?",
+    "best_preset": "黄丹的航班信息有哪些?",
+    "similarity": 0.4691,
+    "hit(>=0.85)": false
+  },
+  {
+    "query": "帮我推荐一部好看的电影",
+    "best_preset": "谢梅的火车票是硬卧吗?",
+    "similarity": 0.4239,
+    "hit(>=0.85)": false
+  },
+  {
+    "query": "公司2025年3月买服务器花了多少钱?",
+    "best_preset": "阿里巴巴2025年3月开的云服务费发票金额是多少?",
+    "similarity": 0.6564,
+    "hit(>=0.85)": false
+  }
+]
