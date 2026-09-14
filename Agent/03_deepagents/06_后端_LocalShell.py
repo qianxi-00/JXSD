@@ -36,11 +36,15 @@ if __name__ == "__main__":
     agent = create_deep_agent(
         model=llm,
         backend=backend,
-        system_prompt="你是运维助手，只能执行只读命令，不要删除任何东西。",
+        system_prompt="你是运维助手，不要删除任何东西。",
     )
 
+    # result = agent.invoke(
+    #     {"messages": [("user", "看看当前目录有哪些文件，统计一下 Python 文件数量")]},
+    #     config={"recursion_limit": 50},
+    # )
+    # print("AI：", result["messages"][-1].content)
+
     result = agent.invoke(
-        {"messages": [("user", "看看当前目录有哪些文件，统计一下 Python 文件数量")]},
-        config={"recursion_limit": 50},
-    )
-    print("AI：", result["messages"][-1].content)
+        {"messages": [{"role": "user", "content": "创建一个py文件，py文件里面的内容是创建一个txt文件，并执行py文件"}]})
+    print(result["messages"][-1].content)

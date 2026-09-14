@@ -3,6 +3,16 @@
 课案来源：`G:\笔记\LLM\课件导出\Agent.html`
 本项目把课案中全部代码按章节整理为可独立运行的 Python 文件，附详尽中文注释。
 
+目录下有**两套**代码，并存不冲突：
+
+| 版本 | 文件命名 | 特点 |
+|---|---|---|
+| 精简版 | `01_基础图.py` | 早期整理，一节能跑通的最小实现，注释偏「知道怎么用」 |
+| **课案版** | `01_基础图_jxsd.py` | **对照课案原文的完整实现**，代码量与讲解都更足，注释偏「知道为什么」 |
+
+`_jxsd` = 课案（江西师大课件）版本。两套文件**除后缀外同名**，可以左右对照阅读：
+精简版看骨架，`_jxsd` 版看细节、边界情况、课案原文与实测差异。
+
 ## 环境
 
 ```bash
@@ -22,23 +32,104 @@ $env:PYTHONUTF8 = "1"
 | `02_langchain/` | 模型/消息/智能体/工具、记忆、流式、结构化输出、人工审核、中间件、多 Agent、管道 |
 | `03_deepagents/` | create_deep_agent、7 种后端、人工审核、记忆、子智能体、Skills |
 | `04_function_call/` | 原生 OpenAI / LangChain / DeepAgents 三种实现对比 |
-| `05_mcp/` | FastMCP 服务端/客户端、资源、提示词、JWT 权限、Docker 部署 |
-| `06_langfuse/` | 追踪、会话与用户、提示词管理、打分、RAG/Agent 评估 |
+| `05_mcp/` | FastMCP 服务端/客户端、资源、提示词、JWT 权限、Docker 部署、调试工具 |
+| `06_langfuse/` | 追踪、会话与用户、提示词管理、打分、RAG/Agent 评估、标注与数据 |
 | `07_protocols/` | ACP（编辑器↔Agent）、A2A（Agent↔Agent）协议 |
+| `08_skills/` | 课案「skills」章：概念/原理/SKILL.md/渐进式加载/云技能（`_jxsd` 版新增目录） |
+| `09_aegra_deploy/` | 课案「部署」章：LangSmith Deployments 的 license 坑 + Aegra 开源替代（`_jxsd` 版新增目录） |
+| `10_workflow_platform/` | 课案「工作流 → 可视化平台」：Coze/Dify/n8n/Langflow 与 Langflow API（`_jxsd` 版新增目录） |
+
+## 课案版（`_jxsd`）覆盖范围
+
+共 78 个 `_jxsd.py`，按课案章节一一对应：
+
+| 目录 | 个数 | 课案来源 |
+|---|---|---|
+| `01_langgraph/` | 10 | 智能体框架概览 + langgraph 基本概念/核心组件 |
+| `02_langchain/` | 14 | langChain 核心组件 + 中间件 + 多 Agent |
+| `03_deepagents/` | 13 | deepAgents 智能体/流式/运行环境/人工审核/记忆/子智能体 |
+| `04_function_call/` | 5 | 工具调用 → function call（概念/实例/参数类型/langchain/deepagents） |
+| `05_mcp/` | 12 | MCP 协议：快速开始/资源/提示词/四种协议/调试/Agent 调用/权限/部署 |
+| `06_langfuse/` | 7 | 监控与评估：追踪/会话/提示词/打分/RAG 评估/Agent 指标/标注与数据 |
+| `07_protocols/` | 5 | 协议：ACP（实操/原理）、A2A（CrewAI 端/DeepAgents 端/互相通信） |
+| `08_skills/` | 5 | skills 全章 |
+| `09_aegra_deploy/` | 5 | 部署全章 |
+| `10_workflow_platform/` | 2 | 可视化平台 + Langflow API |
+
+对照关系：`01_基础图.py` ↔ `01_基础图_jxsd.py`；课案独有的小节则用
+`NN_主题_jxsd.py` 命名（如 `08_时间旅行_jxsd.py` 在精简版里没有单独文件）。
+`02_langchain/15_管道.py` 课案没有对应章节，因此没有 `_jxsd` 版本。
 
 ## 使用前准备
 
 1. 配置在 Python_Base 根目录 `.env`（已就绪，含大模型 API Key、数据库、Langfuse 等）。
+   **全仓库只此一份配置**，`_jxsd` 代码不另建 `conf.py`。
 2. PostgreSQL（持久化记忆用）：
    ```bash
-   docker run -e POSTGRES_PASSWORD=postgres -d --name postgres -p 5432:5432 postgres:18
+   docker run -e POSTGRES_PASSWORD=<你的口令> -d --name postgres -p 5432:5432 postgres:18
    docker exec -it postgres psql -U postgres -c "CREATE DATABASE langgraph;"
    ```
-3. 运行任意示例：`uv run 01_langgraph/01_基础图.py`
+   连接串写在 `.env` 的 `PG_URI`（形如 `postgresql://<用户名>:<口令>@127.0.0.1:5432/langgraph`）。
+3. 运行任意示例：`uv run Agent/01_langgraph/01_基础图_jxsd.py`
+   或 `& '.\.venv\Scripts\python.exe' 'Agent\01_langgraph\01_基础图_jxsd.py'`
 
 ## 运行顺序建议
 
 1. `01_langgraph` → `02_langchain` → `03_deepagents` → `04_function_call`（基础能力）
-2. `05_mcp`：先启动 `01_服务端.py http`，再运行客户端
+2. `05_mcp`：先启动 `01_服务端_jxsd.py http`，再运行客户端
 3. `06_langfuse`：先在 Langfuse 控制台建好项目并把密钥填入根目录 `.env`
 4. `07_protocols`：需额外安装 `deepagents-acp` / `a2a_auto_wrapper`（见各文件头部说明）
+5. `08_skills`：`02_SKILL示例_jxsd.py` 会先在磁盘上生成一个真实 skill 目录
+6. `09_aegra_deploy`：`02_项目骨架_jxsd.py` 会生成一套 Aegra 项目骨架
+7. `10_workflow_platform`：Langflow 未启动时自动降级为 dry-run
+
+## `_jxsd` 版的几处设计约定
+
+- **缺包不报错**：课案里用到但本项目没装的第三方库（`ragas` / `crewai` / `a2a` /
+  `deepagents-acp` / `langsmith` 沙箱 等）一律 `try/except ImportError` 兜住，
+  模块层永远能 import 成功；`__main__` 里检测前置条件，缺什么就打印中文提示
+  （要装什么包、要起什么服务），**不抛 traceback**。
+- **缺密钥不报错**：Langfuse / 百度千帆 / Gitee / DashScope 的密钥为空时走降级演示，
+  密钥填上即自动切回真实链路。
+- **交互式 `input()`**：保留课案的「按回车继续」演示效果，但加了 `isatty()` +
+  `EOFError` 兜底，非交互环境自动继续（本机实测 `isatty()` 返回 True 但读取会直接 EOF）。
+- **不硬编码凭据**：数据库连接串一律 `settings.pg_uri`；课案原文里的连接串字面量
+  已脱敏为 `<用户名>` / `<口令>@127.0.0.1`，只作对照保留。
+
+## 课案原文的已知问题（`_jxsd` 版已修正并在注释里标注）
+
+| 位置 | 课案写法 | 实际情况 |
+|---|---|---|
+| 多处 | `from conf import settings` / `setting.MODEL_NAME` | 课案自己有 `conf.py`，但函数名与变量名前后不一致；本项目统一 `from config import settings` |
+| `01_langgraph` 短期记忆 | `DELETE FROM checkpoint WHERE created_at < ...` | 实测表名是 `checkpoints`（复数）且**没有 `created_at` 列**，该 SQL 跑不通 |
+| `01_langgraph` 长期记忆 | `store.search(ns, query=...)` | 没配向量索引时 `query` 被**静默忽略**，退化成按时间倒序取 N 条 |
+| `03_deepagents` 记忆 | `store.put(ns, "/memories/AGENTS.md", ...)` | `CompositeBackend` 会剥掉路由前缀，写成这样 Agent 会在 `/memories/memories/` 找文件 |
+| `03_deepagents` 子智能体 | 三个 SubAgent 都叫 `researcher` | 直接 `ValueError: Duplicate subagent name` |
+| `04_function_call` 参数类型 | `{"type": "number", "enum": ["celsius", "fahrenheit"]}` | 枚举值却是字符串，类型标错 |
+| `08_skills` 云技能 | `store.put(ns, "/skills/code-review/SKILL.md", ...)` | 同上前缀问题，会导致「发现技能数 = 0」 |
+| `08_skills` deepagents 技能 | `skills=["/"]`（扫根目录） | 参数要指向**技能的父目录**；指向具体技能目录会 0 发现 |
+| `09_aegra_deploy` | `aegra.json` 里 graph 名是 `agent`，调用段写 `bushu` | 调用段会 404 |
+| `05_mcp` 提示词 | `@mcp.prompt` 返回 `list[dict]` | FastMCP 3.4.7 会报 `messages[0] must be Message or str`，要用 `Message` 对象 |
+| `05_mcp` 权限 | `create_token` 只签 `sub/exp/iat` | 配 `required_scopes=["read"]` 会全部 401 —— 令牌里必须有 `scope` |
+| `05_mcp` 部署 | 内置工具含 `write_todos` | deepagents 0.7.13 已移除该工具，实际内置 9 个（`ls/read_file/write_file/edit_file/delete/glob/grep/execute/task`） |
+
+## 验证方式与结果
+
+每个 `_jxsd.py` 交付前都按同一套标准过检：
+
+| 检查 | 做法 | 结果 |
+|---|---|---|
+| 语法 | `python -m py_compile` | 78/78 通过 |
+| 真跑 | 独立子进程实跑，记录退出码与输出 | 78/78 退出码 0、无顶层 traceback |
+| 配置引用 | AST 级扫描「真代码」（注释/docstring 不计） | 78 个文件里，用到 `settings.*` 的**全部** `from config import settings`；不存在的字段 0 处；非白名单环境变量 0 处；硬编码凭据 0 处 |
+| 脱敏 | 正则扫描连接串 / Key / 内网 IP | 0 处命中（课案原文里的 `postgres:postgres@localhost` 已改成 `<用户名>:<口令>@127.0.0.1`） |
+| 讲解密度 | （注释行 + docstring 行 + 含中文的字符串行）/ 总行数 | 平均 **57%**，最低 42% |
+
+## 关于本机模型的实测提示
+
+`_jxsd` 版里凡是要调大模型的地方都用 `.env` 的 `MODEL_NAME`。
+实测当前模型在**单个工具的 function call 上 8/8 稳定**，
+但在「工具多、中间件多、system prompt 复杂」的 Agent 里**偶发不发 `tool_calls`，
+而是把调用过程写进正文**（与代码无关，同一份代码连跑会出现不同结果）。
+相关文件已加中文提示与重跑建议；首轮 `tool_choice="required"` 可强制至少真调一次工具。
+要彻底稳定建议换成 tool calling 更可靠的模型端点，改 `.env` 的 `MODEL_NAME` 即可。

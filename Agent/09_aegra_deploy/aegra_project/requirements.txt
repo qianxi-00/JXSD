@@ -1,0 +1,10 @@
+# Aegra 项目依赖（由 09_aegra_deploy/02_项目骨架_jxsd.py 生成）
+# 课案原文这 8 行包名，各自作用见 05_对接Langfuse_jxsd.py 里的常量说明。
+aegra-cli
+aegra-api
+langgraph
+langchain
+langchain-openai
+deepagents
+langfuse
+pydantic-settings

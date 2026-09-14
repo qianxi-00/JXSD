@@ -119,3 +119,11 @@ pip-delete-this-directory.txt
 .files/
 files/
 logs/
+# Agent 课案示例的运行时产物（每次运行都会重新生成，不入库）
+Agent/*/tmp_*/
+Agent/*/tmp_deepagents_*/
+# 人工审核 / 内置中间件示例按课案原文写到工作目录的文件
+output.txt
+# LocalShell 后端示例会在「执行时的工作目录」（通常是仓库根）落下这两个脚本
+/create_txt.py
+/run_create_txt.py
