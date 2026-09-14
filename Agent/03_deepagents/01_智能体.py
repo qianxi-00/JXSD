@@ -51,4 +51,5 @@ if __name__ == "__main__":
         {"messages": [("user", "调研一下 LangGraph 是什么，写成调研笔记")]},
         config={"recursion_limit": 50},  # 深度智能体步数多，放宽步数上限
     )
+    print(result)
     print("AI：", result["messages"][-1].content)

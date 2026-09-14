@@ -1,0 +1,78 @@
+# Docker Compose - PostgreSQL + Redis + API
+# aegra dev  -> docker compose up postgres -d  (database only, in-memory broker)
+# aegra up   -> docker compose up --build      (full stack, Redis broker)
+# （由 09_aegra_deploy/02_项目骨架_jxsd.py 生成；口令默认值已改为 change-me 占位符）
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: my_agent_project-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-my_agent_project}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-my_agent_project}
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-my_agent_project}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: my_agent_project-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  my_agent_project:
+    build: .
+    container_name: my_agent_project-api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-2026}:${PORT:-2026}"
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-my_agent_project}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-change-me}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-my_agent_project}
+      - AEGRA_CONFIG=aegra.json
+      - AUTH_TYPE=${AUTH_TYPE:-noop}
+      - PORT=${PORT:-2026}
+      - REDIS_BROKER_ENABLED=true
+      - REDIS_URL=redis://redis:6379/0
+      # 启用 Langfuse 追踪；容器内 localhost 指向自身，需走宿主机网关访问 langfuse
+      - OTEL_TARGETS=LANGFUSE
+      - LANGFUSE_BASE_URL=http://host.docker.internal:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${PORT:-2026}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ./src:/app/src:ro
+      - ./aegra.json:/app/aegra.json:ro
+
+volumes:
+  postgres_data:
+  redis_data:

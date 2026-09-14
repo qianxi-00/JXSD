@@ -67,6 +67,15 @@ class _CoreSettings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
 
+    # ---- Agent 课案里额外用到的第三方平台密钥（全部留空，只在本地 .env 提供）----
+    # 百度千帆：课案「多 Agent / 子Agent」用它的联网搜索 MCP
+    baidu_qfan_api_key: str = ""
+    # Gitee：课案「多 Agent / 路由与合并」用它的代码仓库 MCP
+    gitee_api_key: str = ""
+    # 阿里云百炼（DashScope）：课案「监控与评估 / RAG评估」用它跑评测模型
+    dashscope_api_key: str = ""
+    dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
     # ============ 数据库配置（Python_Base 原有） ============
     # 说明：下面这些字段一律只保留「主机 / 端口」这类无敏感的默认值，
     #       用户名、口令、库名全部留空，统一由根目录 .env 提供。

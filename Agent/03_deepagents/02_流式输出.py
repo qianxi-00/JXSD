@@ -37,8 +37,8 @@ if __name__ == "__main__":
     input_data = {"messages": [{"role": "user", "content": "如何制作披萨"}]}
 
     # updates：每完成一个节点就输出增量
-    for chunk in agent.stream(input_data, stream_mode="messages"):
-        print(chunk[0].content, end="")
+    # for chunk in agent.stream(input_data, stream_mode="messages"):
+    #     print(chunk[0].content, end="")
 
     # 多模式流式：每个事件是 (mode, data) 元组；
     # messages 模式的 data 又是 (消息块, 元数据) 二元组
