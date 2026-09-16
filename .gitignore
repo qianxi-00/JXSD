@@ -127,3 +127,8 @@ output.txt
 # LocalShell 后端示例会在「执行时的工作目录」（通常是仓库根）落下这两个脚本
 /create_txt.py
 /run_create_txt.py
+
+/example.txt
+
+# 全量跑批时 demo 在仓库根生成的临时工作目录（Composite/Filesystem 后端、skills 报告等）
+/tmp_*/
