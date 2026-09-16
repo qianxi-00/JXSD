@@ -78,6 +78,7 @@ $env:PYTHONUTF8 = "1"
 | `01_langgraph/12_记忆_持久化与中断进阶_官方补充.py` | 记忆裁剪/删除/摘要、durability 三档、多中断并行、工具内中断 | ✅ 0 次模型调用 |
 | `02_langchain/16_测试与护栏_官方补充.py` | 假模型单测、轨迹断言、确定性护栏、Runtime Context 注入 | ✅ 假模型 |
 | `02_langchain/17_Skills渐进披露_官方补充.py` | Skills 工具化加载 + 引用感知（多 Agent 第 4 种模式） | ⚠️ 需真实模型 |
+| `02_langchain/18_自定义工作流_官方补充.py` | agent 当节点、三节点 RAG 工作流、条件边回炉循环（第 5 种模式） | ⚠️ 需真实模型 |
 | `02_langchain/11_内置中间件_官方补充.py` | ToolError / ModelFallback / ToolCallLimit / PII / LLMToolEmulator | ✅ 假模型 |
 | `03_deepagents/14_上下文治理_官方补充.py` | 内置上下文压缩（卸载）、FilesystemPermission、write_todos opt-in | ✅ 剧本模型 |
 | `03_deepagents/15_自定义后端_官方补充.py` | 从零实现 BackendProtocol、只读后端、审计与限流/校验策略钩子 | ✅ 剧本模型 |
