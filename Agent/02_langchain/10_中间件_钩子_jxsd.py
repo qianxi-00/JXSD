@@ -85,6 +85,11 @@ LangChain 中间件：钩子（Hooks）
     # | 典型用途    | 打日志、裁剪历史、注入上下文      | 重试、缓存、限流、监控耗时、统一异常处理  |
     # | 嵌套顺序    | 按 middleware 列表顺序依次执行    | **洋葱模型**：先注册的在最外层          |
 
+补充说明（官方核对时发现并补上）：官方其实还有**第 7 个装饰器** `dynamic_prompt`
+（动态系统提示词）—— 课案 HTML 的六钩子表没列它，但课案精简版
+`10_中间件_钩子.py` 把它当「钩子 3」用了；本文件此前照 HTML 转录时随之漏掉，
+文末「补充」段已补回（签名已对照 langchain 1.4.0 源码核实）。
+
 课案给出的预期运行结果（本文件实测一致，`tool_call_id` 因供应商而异）：
 
     [before_agent] Agent 启动
@@ -125,6 +130,7 @@ LangChain 中间件：钩子（Hooks）
 import sys
 sys.stdout.reconfigure(encoding="utf-8")   # Windows 控制台默认 GBK，防中文/emoji 报错
 
+from datetime import datetime
 from typing import Any, Callable
 
 from langchain.agents import create_agent
@@ -136,6 +142,7 @@ from langchain.agents.middleware import (
     after_model,
     before_agent,
     before_model,
+    dynamic_prompt,
     wrap_model_call,
     wrap_tool_call,
 )
@@ -249,6 +256,36 @@ agent = create_agent(
     ],
 )
 
+
+# ---------- 补充：第 7 个装饰器 dynamic_prompt（课案精简版的「钩子 3」） ----------
+# 课案 HTML 的六钩子表没列它，但课案精简版 10_中间件_钩子.py 把它当「钩子 3」用了。
+# 官方实现（langchain 1.4.0）本质是 wrap_model_call 的便捷封装：每次调模型**前**
+# 执行被装饰函数，把返回值设为本次请求的 system prompt。
+# 注意签名跟六个钩子都不一样 —— 被装饰函数接收的是 request: ModelRequest
+# （不是 (state, runtime)）：
+#   request.state    —— 完整状态（想按消息数定制提示词就从这里取）
+#   request.runtime  —— 运行时上下文（context / store / config）
+# 返回值：str 或 SystemMessage。
+
+
+@dynamic_prompt
+def inject_time(request: ModelRequest) -> str:
+    """每次调模型前动态生成系统提示词，注入当前时间（课案精简版「钩子 3」原文）。"""
+    # 典型用途：把「模型天生不知道的事」实时喂进去 —— 当前时间、日期、用户身份。
+    # 写在 create_agent(system_prompt=...) 里是静态的；这里每次现算。
+    # （这句 print 是本文件加的观察点，课案原文没有）
+    print(f"[dynamic_prompt] 注入系统提示词，当前时间 {datetime.now():%H:%M:%S}")
+    return f"你是时间助手。当前时间：{datetime.now()}，回答要简短。"
+
+
+# 单独再组一个 Agent：上面那个六个钩子的 Agent 是课案原文，保持原样不动；
+# 这个只挂 dynamic_prompt，避免两套注入互相干扰、看不清谁在起作用。
+agent_dynamic = create_agent(
+    model=llm,
+    tools=[],
+    middleware=[inject_time],   # 装饰后即是中间件对象，直接放列表（同六个钩子）
+)
+
 if __name__ == "__main__":
     # 「计算 3 + 5」是课案原文的问法：它必定触发工具调用（第 1 轮），
     # 再让模型把工具结果组织成话（第 2 轮），两轮循环才够把六个钩子的顺序演示完整。
@@ -266,6 +303,16 @@ if __name__ == "__main__":
     for index, msg in enumerate(result["messages"], start=1):
         # msg.type 就是 02_消息_jxsd.py 里那张表说的角色值（human / ai / tool）
         print(f"  [{index}] {msg.type:<7} {str(msg.content)[:60]}")
+
+    # ---------- 补充 Demo：dynamic_prompt（第 7 个装饰器，课案精简版的「钩子 3」） ----------
+    print("\n===== 补充：dynamic_prompt 动态注入系统提示词 =====")
+    # 观察点：[dynamic_prompt] 那行打印发生在模型调用之前；模型本身并不知道真实时间，
+    # 它的回答引用的正是注入进去的「当前时间」—— 这就是「动态」提示词的意义：
+    # 信息每次现算、随请求注入，而不是写死在 create_agent(system_prompt=...) 里。
+    result_dynamic = agent_dynamic.invoke(
+        {"messages": [{"role": "user", "content": "现在是几点？"}]}
+    )
+    print("AI：", result_dynamic["messages"][-1].content)
 
 
 # ================================================================
@@ -288,3 +335,7 @@ if __name__ == "__main__":
 # 5. 踩坑提示 C —— 消息数阈值：`if len(state["messages"]) > 20` 判断的是**消息条数**不是 token 数，
 #    长文本场景下 20 条可能已经远超上下文窗口，真正上线要换成 SummarizationMiddleware
 #    （见 11_内置中间件_jxsd.py 的 Demo 1）。
+# 6. 补充段说明（官方核对时补上的内容）—— dynamic_prompt：课案 HTML 的六钩子表没列它，
+#    课案精简版 10_中间件_钩子.py 却把它当「钩子 3」用了；本文件此前照 HTML 转录时漏掉。
+#    签名已对照 langchain 1.4.0 源码核实：被装饰函数必须接收 request: ModelRequest，
+#    返回 str 或 SystemMessage —— 与六个钩子的 (state, runtime) 签名不同，别写串。

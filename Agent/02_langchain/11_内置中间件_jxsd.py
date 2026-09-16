@@ -549,3 +549,13 @@ if __name__ == "__main__":
 #    生产里应当按真实 token 数设（如 trigger=("tokens", 10000)），否则每轮都在清。
 # 5. 踩坑提示 C —— Demo 5 不适合照搬到写操作：ToolRetryMiddleware 重试的是**同一次调用**，
 #    对「扣款 / 发消息」这类非幂等操作盲目重试等于重复执行（课案表格里也专门标了这句）。
+# 6. 官方核对补记 —— 本文件 7 个中间件的参数已逐一对照 langchain 1.4.0 的真实签名：
+#    **全部合法**，且没有用到废弃参数（max_tokens_before_summary / messages_to_keep
+#    已废弃，课案用的 trigger=/keep= 正是新写法）。两点措辞更正：
+#      - 课案表格把 checkpointer 列为 HITL 的「关键参数」，实际它是 create_agent 的
+#        参数，HumanInTheLoopMiddleware 自己只有 interrupt_on / description_prefix；
+#      - ClearToolUsesEdit 的 trigger/keep 是**整数**，SummarizationMiddleware 的是
+#        (单位, 数值) **元组** —— 同名参数不同类型，抄参数时别互相带。
+#    官方还有 5 个课案没讲的内置中间件（ToolError / ModelFallback / ToolCallLimit /
+#    PII / LLMToolEmulator），可运行演示见同目录 11_内置中间件_官方补充.py（全离线可复现）；
+#    课案没讲的 trigger 组合写法（字典=AND、列表=OR、fraction 按窗口比例）也收录在该文件头。
