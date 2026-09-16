@@ -15,7 +15,7 @@ LangGraph 框架总览：LangGraph / LangChain / DeepAgents 的三层关系
                      这些中间件预配好，开箱即用。
 
 一句话记忆：
-    DeepAgents ⊃ create_agent ⊃ create_agent 内部拼出的那张 StateGraph
+    DeepAgents ⊃ create_agent ⊃ 内部拼出的那张 StateGraph
     （越往上层越省事，越往下层越自由）
 
 **什么是钩子（Hook）**：
