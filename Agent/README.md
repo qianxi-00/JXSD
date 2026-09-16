@@ -75,6 +75,7 @@ $env:PYTHONUTF8 = "1"
 |---|---|---|
 | `01_langgraph/10_控制流与函数式API_官方补充.py` | Send 并行扇出、`Command(goto)`、`@entrypoint/@task` 函数式 API | ✅ 0 次模型调用 |
 | `01_langgraph/11_容错与测试_官方补充.py` | `RetryPolicy`、节点超时、官方测试三模式 | ✅ 0 次模型调用 |
+| `01_langgraph/12_记忆_持久化与中断进阶_官方补充.py` | 记忆裁剪/删除/摘要、durability 三档、多中断并行、工具内中断 | ✅ 0 次模型调用 |
 | `02_langchain/16_测试与护栏_官方补充.py` | 假模型单测、轨迹断言、确定性护栏、Runtime Context 注入 | ✅ 假模型 |
 | `02_langchain/11_内置中间件_官方补充.py` | ToolError / ModelFallback / ToolCallLimit / PII / LLMToolEmulator | ✅ 假模型 |
 | `03_deepagents/14_上下文治理_官方补充.py` | 内置上下文压缩（卸载）、FilesystemPermission、write_todos opt-in | ✅ 剧本模型 |
