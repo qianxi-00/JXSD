@@ -79,6 +79,7 @@ $env:PYTHONUTF8 = "1"
 | `02_langchain/16_测试与护栏_官方补充.py` | 假模型单测、轨迹断言、确定性护栏、Runtime Context 注入 | ✅ 假模型 |
 | `02_langchain/11_内置中间件_官方补充.py` | ToolError / ModelFallback / ToolCallLimit / PII / LLMToolEmulator | ✅ 假模型 |
 | `03_deepagents/14_上下文治理_官方补充.py` | 内置上下文压缩（卸载）、FilesystemPermission、write_todos opt-in | ✅ 剧本模型 |
+| `03_deepagents/15_自定义后端_官方补充.py` | 从零实现 BackendProtocol、只读后端、审计与限流/校验策略钩子 | ✅ 剧本模型 |
 
 这些文件**不是课案内容**，所以不带 `_jxsd` 后缀；共同特点：全部可离线复现
 （用继承 `ChatOpenAI` 的剧本模型替代真模型），注释里标了官方文档路径与本地实测结论。
