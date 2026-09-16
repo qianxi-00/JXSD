@@ -80,6 +80,7 @@ $env:PYTHONUTF8 = "1"
 | `02_langchain/17_Skills渐进披露_官方补充.py` | Skills 工具化加载 + 引用感知（多 Agent 第 4 种模式） | ⚠️ 需真实模型 |
 | `02_langchain/18_自定义工作流_官方补充.py` | agent 当节点、三节点 RAG 工作流、条件边回炉循环（第 5 种模式） | ⚠️ 需真实模型 |
 | `02_langchain/19_事件流v3_官方补充.py` | v3 类型化投影、interleave 消费规则、工具失败可见性 | ⚠️ 需真实模型 |
+| `02_langchain/20_上下文工程_官方补充.py` | 上下文工程 3×3 总纲索引 + 动态工具集/响应格式/三数据源/生命周期打点 | ⚠️ 需真实模型 |
 | `02_langchain/11_内置中间件_官方补充.py` | ToolError / ModelFallback / ToolCallLimit / PII / LLMToolEmulator | ✅ 假模型 |
 | `03_deepagents/14_上下文治理_官方补充.py` | 内置上下文压缩（卸载）、FilesystemPermission、write_todos opt-in | ✅ 剧本模型 |
 | `03_deepagents/15_自定义后端_官方补充.py` | 从零实现 BackendProtocol、只读后端、审计与限流/校验策略钩子 | ✅ 剧本模型 |
