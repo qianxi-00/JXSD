@@ -132,3 +132,6 @@ output.txt
 
 # 全量跑批时 demo 在仓库根生成的临时工作目录（Composite/Filesystem 后端、skills 报告等）
 /tmp_*/
+
+# .env 的备份文件同样含密钥，绝不允许进仓库
+.env.bak*
