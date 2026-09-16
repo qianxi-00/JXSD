@@ -65,6 +65,23 @@ $env:PYTHONUTF8 = "1"
 另：`10_中间件_钩子_jxsd.py` 在官方核对时补上了课案精简版有、但 HTML 六钩子表漏列的
 `dynamic_prompt`（第 7 个官方装饰器，课案精简版把它当「钩子 3」用）。
 
+## 官方文档缺口补充（非课案，`_官方补充` 系列）
+
+课案讲完之后，我们逐页读完了三个框架的官方 Python 文档并做了比对，
+结论汇总在 **`官方文档缺口对照.md`**（三框架各 12 项缺口 + 已覆盖对照 + 8 条实测踩坑）。
+其中**已补成可运行代码**的有：
+
+| 文件 | 补的缺口 | 是否离线 |
+|---|---|---|
+| `01_langgraph/10_控制流与函数式API_官方补充.py` | Send 并行扇出、`Command(goto)`、`@entrypoint/@task` 函数式 API | ✅ 0 次模型调用 |
+| `01_langgraph/11_容错与测试_官方补充.py` | `RetryPolicy`、节点超时、官方测试三模式 | ✅ 0 次模型调用 |
+| `02_langchain/16_测试与护栏_官方补充.py` | 假模型单测、轨迹断言、确定性护栏、Runtime Context 注入 | ✅ 假模型 |
+| `02_langchain/11_内置中间件_官方补充.py` | ToolError / ModelFallback / ToolCallLimit / PII / LLMToolEmulator | ✅ 假模型 |
+| `03_deepagents/14_上下文治理_官方补充.py` | 内置上下文压缩（卸载）、FilesystemPermission、write_todos opt-in | ✅ 剧本模型 |
+
+这些文件**不是课案内容**，所以不带 `_jxsd` 后缀；共同特点：全部可离线复现
+（用继承 `ChatOpenAI` 的剧本模型替代真模型），注释里标了官方文档路径与本地实测结论。
+
 ## 使用前准备
 
 1. 配置在 Python_Base 根目录 `.env`（已就绪，含大模型 API Key、数据库、Langfuse 等）。
@@ -130,11 +147,47 @@ $env:PYTHONUTF8 = "1"
 | 脱敏 | 正则扫描连接串 / Key / 内网 IP | 0 处命中（课案原文里的 `postgres:postgres@localhost` 已改成 `<用户名>:<口令>@127.0.0.1`） |
 | 讲解密度 | （注释行 + docstring 行 + 含中文的字符串行）/ 总行数 | 平均 **57%**，最低 42% |
 
+### 全仓库运行复核（`_jxsd` + 精简版 + 官方补充，共 142 个 `.py`）
+
+用独立子进程逐个真跑（`run_all.py`：串行/并行分道、端口类文件串行、超时保护、喂空行给
+`input()`），结果：**137 个 PASS + 5 个环境类异常，全部定位清楚、无一是代码 bug**。
+
+| 现象 | 真相 | 处理 |
+|---|---|---|
+| `05_mcp/02_客户端_jxsd.py` 报 TRACEBACK | 课案**故意**演示的 `div(1,0)` 服务端报错（进程退出码其实是 0） | 判定改为「rc=0 优先」，标注 `PASS-LOGTB` |
+| `01_langgraph/07_中断_接口版.py` EXIT3 | 该文件是**常驻 FastAPI（8000 端口）**，与同批的 05_mcp 抢端口 | 归入「常驻服务」类，独占运行、判启动成功 |
+| `05_mcp/08_权限_服务端.py` TIMEOUT | 同上：`mcp.run` 常驻服务，本就永不退出 | 同上（启动无 Traceback 即通过） |
+| `05_mcp/09_权限_客户端.py` 连接被拒/502 | 课案原版要求**先手工启动**认证服务(9000)+权限服务(8000) | 编排两个前置服务后实跑通过（拿到 JWT→列工具→调用成功） |
+| `03_deepagents/05_后端_Filesystem_jxsd.py` 超时 | 当时模型网关抽风挂住了调用；重跑 93.6 秒正常完成 | 无需改动 |
+
+## 排障：跑不起来时先看这 5 条
+
+1. **必须用仓库自带的 venv**，别用系统 Python：
+   - ✅ `uv run Agent/02_langchain/01_模型_jxsd.py`（或 `& .\.venv\Scripts\python.exe Agent\...`）
+   - ❌ PATH 里的 `python` 是 Windows Store 占位符（**静默失败、什么都不输出**）；
+   - ❌ `F:\ProGramApp\Anaconda\python.exe` 里装的是另一套老版本依赖，`import langchain`
+     会因 pydantic 版本冲突直接报错 —— **「大量导包报错」几乎都是解释器用错**，
+     仓库代码本身的导入是干净的（282 个文件 AST 级扫描：语法错误 0、未兜底导入错误 0）。
+2. **命令必须在项目根目录 `F:\ProGram\Python_Base` 下执行**：代码统一 `from config import settings`，
+   换目录会 `ModuleNotFoundError: config`。
+3. **本机开着 Clash 等系统代理时**，127.0.0.1 的回环请求会被代理接管，表现为
+   `McpError: Session terminated` 或莫名的 `502 Bad Gateway`。跑 MCP/HTTP 类示例前设：
+   ```powershell
+   $env:NO_PROXY = "127.0.0.1,localhost"
+   ```
+4. **05_mcp 目录内不要并发跑**：多个文件都要占 8000 端口，必须一个一个来
+   （`01_服务端` / `08_权限_服务端` / `01_langgraph/07_中断_接口版` 属于常驻服务，
+   会一直挂着，验证「能否启动」即可，别等它退出）。
+5. **免费模型额度**：若 `.env` 用的是 OpenRouter 免费档模型，跑一天几十次后会返回
+   `429 ... free-models-per-day`（北京时间 0 点重置）。批量跑示例前先确认额度，
+   或换成不计入免费额度的模型。
+
 ## 关于本机模型的实测提示
 
-`_jxsd` 版里凡是要调大模型的地方都用 `.env` 的 `MODEL_NAME`。
-实测当前模型在**单个工具的 function call 上 8/8 稳定**，
-但在「工具多、中间件多、system prompt 复杂」的 Agent 里**偶发不发 `tool_calls`，
-而是把调用过程写进正文**（与代码无关，同一份代码连跑会出现不同结果）。
-相关文件已加中文提示与重跑建议；首轮 `tool_choice="required"` 可强制至少真调一次工具。
-要彻底稳定建议换成 tool calling 更可靠的模型端点，改 `.env` 的 `MODEL_NAME` 即可。
+`_jxsd` 版里凡是要调大模型的地方都用 `.env` 的 `MODEL_NAME`（当前 `grok-4.6`）。
+**最新实测（2026-09）**：该端点在单个工具的 function call 上 3/3 稳定，
+在「工具多、中间件多、system prompt 复杂」的 Agent 里也能正常发起 `tool_calls`；
+代码里为早期不稳定版本加的中文兜底提示（「本轮模型没有发起工具调用」）无需删除 ——
+换个端点时它们仍然有用。
+两点观察：① 该模型回答风格偏「有个性」（会在正文里吐槽），演示时注意别当成 bug；
+② 它走的是 OpenRouter 免费额度，批量跑会触发 429（见排障第 5 条）。
