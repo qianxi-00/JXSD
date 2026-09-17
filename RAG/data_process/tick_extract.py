@@ -672,6 +672,27 @@ def main() -> None:
         print(f"count(*): {live}（本轮抽出 {len(records)} 条）")
         print(f"row_count: {stats.get('row_count')}（含 upsert 标记删除的旧版本，不作为幂等判据）")
 
+        # 空文本行的存在必须被**点出来**，不能让它悄悄混在 count(*) 里：
+        # 这些行的 vec 恒为 NULL、BM25 也切不出词 ⇒ **永远召不回**，但它们照样占着分母，
+        # 于是"300 条票据"与"实际能召回的 282 条"是两个数。两个数都对，混着用才错，
+        # 所以这里把两个数一起打出来（真机实测 300 行里 18 行为空，全是 OCR 失败的 flight）。
+        # 刻意**不删这些行**：删了就等于把"有 18 张票的 OCR 是空的"这件事从库里抹掉，
+        # 而那正是该被修的数据缺口（失败明细见 data/ocr_results_clean.json 的 ocr_status=failed）。
+        blank = 0
+        try:
+            blank_rows = client.query(
+                collection_name=name, filter='semantic_text == ""', output_fields=["count(*)"]
+            )
+            blank = int(blank_rows[0].get("count(*)", 0)) if blank_rows else 0
+        except Exception as exc:  # noqa: BLE001 - 统计失败不该让导入失败
+            print(f"WARN 统计空文本行失败（不影响导入结果）: {exc}")
+        if blank:
+            print(
+                f"空 semantic_text: {blank} 条 ⇒ **可召回 {live - blank} 条**；"
+                "这些行的 vec 恒为 NULL、关键词也切不出词，语义/关键词两路都搜不到它们"
+                "（不是 bug，是 OCR 没出文本；修数据前别把它们算进'能查到的票据数'）"
+            )
+
         # 检索前必须 load：Milvus 的集合要先加载进内存才能 query/search，
         # 否则报 "collection not loaded"。注意此时 vec 还没回填（那是 embed_tickets.py 的事），
         # 所以下面只做标量 query 抽样，不做向量搜索。

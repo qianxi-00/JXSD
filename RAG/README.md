@@ -76,6 +76,7 @@
 | 加数据（新票据） | 二 步骤 ①~⑦ | OCR → JSON → 抽字段 → 向量 → （可选）PG / Neo4j |
 | 看生产版 Agent 的审批怎么走 | 5.2 安全保障 | `uv run python RAG/script/hitl_demo.py` |
 | 查图谱有没有退化 / 把孤点连回图 | 4.12 | `graph_health.py`（体检，只读）→ `graph_completion.py --dry-run`（看规模）→ `graph_completion.py review-list`（人工审核） |
+| 换网关 / 换模型名之后先确认端点通不通 | 七 | `uv run python RAG/script/check_endpoints.py`（4 个出网端点各一次极小调用，退出码 0/1） |
 | 看一次真实的实验对比 | 5.3 | `uv run python RAG/script/langfuse_evaluation.py --run-name <名字>` |
 | 出问题了先查什么 | 八 | 8.1 环境类（沙箱/服务）/ 8.2 数据口径类 / 8.3 已知欠账 |
 
@@ -210,7 +211,7 @@ L2 是课案要求的进阶能力，L3 是数据与工具（改了才需要读�
 | L2 | `graph_rag/`（7 个文件） | 知识图谱：抽取→入图→Louvain 社区摘要→三种检索→FastAPI 接口；外加健康度指标与链接补全审核 | 多实体关联问题答不好 / 图谱退化看不见 | ~1573 |
 | L2 | `evaluation/`（9 个文件） | 评估体系：样本构造、分阶段指标、排序指标、阈值标定、Ragas 评判 | 改完不知道是变好还是变差 | ~1610 |
 | **L3 数据与工具**（要改数据才读） | `data_process/`（6 个文件） | 图片→OCR→Markdown→JSON→字段抽取→入库→向量回填；预设问答分层灌缓存 | 数据不可复现（换机就跑不出同一份索引） | ~1246 |
-| L3 | `script/`（21 个 .py） | 评估闭环、阈值标定、导入 PG、建图、图谱体检与补全审核、HITL 演示、样本生成 | 不知道怎么重新标阈值 / 复跑实验 / 查图谱退化 | ~2249 |
+| L3 | `script/`（22 个 .py） | 评估闭环、阈值标定、导入 PG、建图、图谱体检与补全审核、HITL 演示、样本生成 | 不知道怎么重新标阈值 / 复跑实验 / 查图谱退化 | ~2249 |
 | L3 | `app/`（3 个文件） | FastAPI + Chainlit 前端 | 改了接口没人知道 | ~382 |
 | L3 | `data/` | 票据图片、OCR 产物、评估集、阈值结果、图谱报告等**产物**（多数可重建） | —— | —— |
 | **L4 工程与验证**（出问题才翻） | `tests/`（37 个文件） | 离线用例为主 + `@integration` 真服务用例；`service_probe.py` 是服务探针 | 改坏了不知道 | ~4970 |
@@ -1045,11 +1046,11 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | 欠账 | 一句话 |
 |---|---|
 | checkpoint / 跨运行恢复未接线 | `build_production_agent(checkpointer=...)` 参数在但无人传 ⇒ `ModelCallLimitMiddleware(thread_limit=80)` **永不累计、等于空转** |
-| 18 条 OCR 失败记录照单入库 | 恒为 null 向量、召不回，却计入"300 条票据"的统计分母 |
+| 18 条 OCR 失败记录照单入库 | ✅ **本轮已修（改口径，不删数据）**：真机实测 `count(*)` **300** 里 **18 条 `semantic_text` 为空**（全是 flight，OCR 没出文本），它们的 `vec` 恒为 NULL、BM25 也切不出词 ⇒ 语义/关键词两路都**永远召不回**，却照样占分母（"300 条票据" vs "实际能召回 282 条"）。`tick_extract.py --insert` 收尾现在**把两个数一起打出来**：`空 semantic_text: 18 条 ⇒ 可召回 282 条`。刻意**不删这些行** —— 删了就等于把"有 18 张票的 OCR 是空的"这个数据缺口从库里抹掉（失败明细在 `data/ocr_results_clean.json` 的 `ocr_status=failed`） |
 | `semantic_text` 未采用课案摘要模板 | 我们用清洗后 OCR 全文；换模板前必须先保证证据文本取 `ocr_text`（已改） |
 | 发票票号 / 航司代码抽取覆盖不足 | 只认"发票编号"（真实发票常写"发票号码"）；机票 `counterparty` 仅 17/100 有值 |
 | 导入不幂等 + 无字段白名单 | ✅ **本轮已修**：`tick_extract.py` 的写库调用从 `client.insert` 改成 **`client.upsert`**（字段白名单本来就有：`build_record` 产出的键与 schema 一一对应）。⚠️ 换 upsert 必须**先读回旧向量**（`_carry_over_vectors`）：upsert 是整实体覆盖，而该脚本的 `vec` 是 None，实测会把向量抹成 NULL。真机验收：重跑一次导入 `count(*)` **300 → 300**、有向量 **282 → 282**（一条没丢）—— 旧实现下同一主键 insert 两次是 **2 行**（一次性集合实测） |
-| 端点自检脚本缺失 | 课案 `test_reranker_endpoint.py` 无等价物，换网关要等主链路报错才发现 |
+| 端点自检脚本缺失 | ✅ **本轮已修**：课案 `test_reranker_endpoint.py` 的等价物 + 扩面 —— `script/check_endpoints.py` 一次探四个**出网的 API 端点**（Embedding / Reranker / 生成模型 / 评判模型），每个一次极小调用，退出码 0/1 可挂 CI。三个判据都**不满足于"HTTP 200"**：Embedding 核对维度是否等于配置（换网关后维度变了，只在写库/检索时报错，离根因很远）；Reranker 要**语义成立**（同句自相似分必须高于无关句，否则说明 `relevance_score` 字段契约变了）；生成模型要**非空正文**（"端点通但模型名下架"常表现为 200 + 空正文）。Milvus/Redis/PG/Neo4j 不在这里探，那是 `GET /api/health` 的职责 |
 | token / 成本指标缺失 | ✅ **本轮已修**：新增 `agentic/usage.py`（`TokenUsageCallback` 走 LangChain 回调累加**整条链路**的用量：主 Agent + evidence-analyst 子代理 + 工具内的调用），`answer_query_agentic` 返回 `tokens`/`cost`；评估脚本条目级出 `tokens_in`/`tokens_out`/`tokens_total`/`llm_calls`，运行级出 `batch_mean_*`。真机一串问答实测 **9 次调用 / 48,735 token（34,559 命中提示缓存）**。⚠️ **成本要填单价**（`USAGE_PRICE_*`，默认 0 ⇒ 只报 token、不出 cost —— 刻意不内置价目表，价格会变、模型名还可能只是网关别名） |
 | **③④ 线路暂不读写缓存** | ✅ **本轮已修**：`pipeline/modes.py::_cached_route` 给 ③GraphRAG 与 ④融合都套上了**线路作用域**缓存（③=`graph`、④=`fusion`，与 ①② 的键互不相通）。三条纪律：命中时直接返回且**不返回上次的 `extra` 明细**（那批社区/关系/SQL 是上次链路的产物，只给 `from_cache=True` 标记）；**多轮（history 非空）既不查也不写**（缓存键只有问题文本，只跳"读"会把依赖历史的答案存成"只看问题文本"的答案）；空答案不写。`_answer_cache()` 进程级复用同一个 `AnswerCache`（避免每次请求重载预设矩阵） |
 | **Agentic 的"检索策略选择"不可观测** | 课案流程图有个节点是"选择查询策略（直接/HyDE/子查询/回溯）"。基础①与融合④ 的改写策略在代码里（`llm/chat.py::rewrite_query`），会作为 `rewrite` 字段进事件流与评估记录；而 **② 是主 Agent 在模型内部选**（`agentic/` 对三套改写模板 0 命中），代码里**没有任何字段记录它选了哪种策略** —— 只能从 `detail["queries"]` 反推。这属能力对齐、可观测性缺口：想知道"这题走的是 HyDE 还是回溯"目前只能看它生成的检索文本 | 待定：要么在提示词里要求模型在工具调用时自报策略（要改工具签名，偏离课案冻结的签名），要么从 Langfuse trace 的推理内容里提取（无需改签名）。当前按**不改签名**处理，登记备查 |
@@ -1204,6 +1205,8 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | **导入幂等（本轮）** | `tick_extract.py --insert` 重跑一次：`count(*)` **300 → 300**、**有向量 282 → 282**（一条没丢）；同主键 `insert` 两次在一次性集合上实测是 **2 行**（旧实现的问题） |
 | **token 用量采集（本轮）** | 真机一串 Agentic 问答：**9 次 LLM 调用 / 输入 41,092 / 输出 7,643 / 合计 48,735 token，其中 34,559 命中提示缓存**（`cached_input_tokens`，DeepSeek 的 `prompt_cache_hit_tokens`）；未填单价时 `cost=None` ⇒ 评估报告里不出成本指标（不把"没算"报成 0） |
 | **接口层补齐（本轮，T8）** | `/api/health` 真机 **1.01s** 返回四依赖全 ok（redis/milvus/postgres/neo4j）；SSE 20 帧 token **每帧带 `query_type`**、收尾帧 `processing_time=2.655s`；`WS /api/ws` 一条连接连问两轮（第 2 轮 **0.001s** 命中缓存）；启动日志 `[预热] FAQ 相似度层 5 条 / 预设矩阵已载入 5 行` + `BM25 语料索引已加载` |
+| **端点自检（本轮，B 表）** | `script/check_endpoints.py` 真机 **4/4 通过、总 3.7s**：Embedding `维度 1024 / BAAI/bge-m3`（1.62s）· Reranker `相关 0.7879 > 无关 0.0000`（0.26s）· 生成模型 `deepseek-flash` 出正文（0.90s）· 评判模型 `deepseek-chat` score=5（0.51s）。`--json` 时 stdout 是**纯 JSON**（实测 `json.loads` 直接可解析、4 条），人类可读结论走 stderr、结论由退出码表达。⚠️ 写这脚本时我自己踩了一个坑并留在用例里：第一版把配置字段名写成 `settings.embedding.embedding_model`（真名 `settings.embedding.model`）⇒ 两个检查直接 AttributeError，是"异常记成 FAIL 明细"那段兜底兜住的 |
+| **OCR 空文本行的真实分母（本轮，B 表）** | 重跑 `tick_extract.py --insert`（幂等，无 LLM 调用）：`count(*) 300 → 300`、`有向量 282 → 282`、空文本 **18**（与重跑前逐项一致，且"空文本且有向量"= 0），收尾多打一行 `空 semantic_text: 18 条 ⇒ 可召回 282 条`。这 18 条是 OCR 没出文本的 flight 票，语义/关键词两路都搜不到 —— 保留在库里当数据缺口的证据，不删 |
 | **图谱健康度与补全闭环（本轮，T6）** | 真机基线（先量再动）：`51 实体 / 66 关系 / 6 社区 / 孤点 0 / 归一化重名 0`，`graph_health.py` 读数与独立只读 Cypher 一致。**闭环真跑**：临时插入一个"像别名"的孤点 `员工培训费用`（图上已有 `员工培训费`）→ 体检立刻报 `孤点 1/52 = 1.92%`，而**重复率仍是 0%**（证明代理指标的盲区，见 §4.12）→ `graph_completion.py --dry-run` 提议 `同义 conf=0.95` 且未写库 → 真跑（`--auto-confidence 0.9`）落库 1 条、入队 2 条 → `review-ok` 批准的那条真进了图、`review-no` 驳回的没进 → 清理探针后回到 `51/66`、队列文件删除。**真跑抓到一个真 bug**：`review-ok` 崩在 `No Neo4j connection has been configured`（审核路径只读队列、没人建连接），修在 `apply_review` 并留了一条盯 `models.connect()` 的用例。链接评估：标注 2 条（真别名 + 虚构名）→ `builder.match_entity` 判出 **链接准确率 100%、误建重复率 0%、吞节点 0、连错 0** |
 
 ### 7.2 真机端到端复跑清单（改完链路**必须**跑一遍）
