@@ -578,6 +578,25 @@ VOLATILE_RE = re.compile(
 )
 
 
+def block_region(text: str, start: int, end: int) -> str:
+    """取「这一段的预期输出」的说明范围：从它自己的小标题，到下一个同级/更高级标题之前。
+
+    用于按段判断「这段输出是不是被声明为不确定」。范围里包含标题、```text 块本身、
+    以及紧跟其后的解释性段落（实际写法里「每次不同」这类说明通常写在块后面）。
+
+    ⚠️ 两个位置都得算准，第一版两个都写错、直接把整段判成「无说明」：
+      · 向后找下一个标题必须从 `end`（围栏结束）之后开始找 —— 从 `start` 开始的话，
+        开头的 `### 预期输出` 自己就命中了 `^#{2,3}\\s`，`end` 立刻等于 `start`，范围成空；
+      · 向前找本段标题用 `rfind("###", 0, start)`，取不到就退回 0。
+    """
+    head = text.rfind("###", 0, start)
+    if head == -1:
+        head = 0
+    m = re.search(r"(?m)^#{2,3}\s", text[end:])
+    stop = end + m.start() if m else len(text)
+    return text[head:stop]
+
+
 def norm_lines(text: str) -> list[str]:
     """把输出切成「非空且已去首尾空白」的行列表 —— 比对时忽略缩进与空行差异。"""
     return [ln.strip() for ln in text.split("\n") if ln.strip()]
@@ -653,13 +672,19 @@ def cmd_verify(args: argparse.Namespace) -> int:
                 if text.strip():
                     last_out = norm_lines(text)
                 continue
-            # 这个 markdown 格自己声明了「输出不确定」→ 整格的预期输出都跳过
-            volatile = bool(VOLATILE_RE.search(cell.source))
-            for block in EXPECT_RE.findall(cell.source):
-                want = norm_lines(block)
+            # 按「段」判定不确定，而不是按整格。
+            # 踩坑记录（subagent 反馈出来的设计缺陷）：第一版用 `VOLATILE_RE.search(cell.source)`
+            # 命中就跳过整格。可一个 markdown 格里完全可能同时放「确定性输出」和
+            # 「模型输出」两段 —— 那样确定性那段也被一起跳过，真错误就被盖掉了。
+            # 更糟的是会出现「假通过」：格子里若有句「不同版本这一串名字会变」讲的是
+            # 中间件工具名，与模型输出无关，却让整格蒙混过关。
+            # 所以改成：找出每段「预期输出」自己的说明范围（它的标题 → 下一个标题之前），
+            # 只有那段范围里写了「不确定」才跳过。
+            for block in EXPECT_RE.finditer(cell.source):
+                want = norm_lines(block.group(1))
                 if not want:
                     continue
-                if volatile:
+                if VOLATILE_RE.search(block_region(cell.source, block.start(), block.end())):
                     skipped += 1
                     continue
                 total_blocks += 1
