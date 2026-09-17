@@ -1,69 +1,128 @@
-# Agent 课案代码整理
+# Agent 课案（Jupyter Notebook 版）
 
 课案来源：`G:\笔记\LLM\课件导出\Agent.html`
-本项目把课案中全部代码按章节整理为可独立运行的 Python 文件，附详尽中文注释。
 
-目录下有**两套**代码，并存不冲突：
+本项目把课案全部代码整理成 **32 个 Jupyter Notebook**。相比早先的 `.py` 版本，
+Notebook 化带来的是「**能渲染的讲解**」：知识点用 Markdown 的标题层级展开、
+对比用表格、流程用 mermaid 图、出处用可点击的官方链接，代码按「一格只讲一件事」切分，
+每个有输出的格子后面都跟着一段 **实测的「预期输出」**。
 
-| 版本 | 文件命名 | 特点 |
-|---|---|---|
-| 精简版 | `01_基础图.py` | 早期整理，一节能跑通的最小实现，注释偏「知道怎么用」 |
-| **课案版** | `01_基础图_jxsd.py` | **对照课案原文的完整实现**，代码量与讲解都更足，注释偏「知道为什么」 |
+> 原来的 162 个课程 `.py` **没有删除**，已归档到 `_py_source/`（保留 git 历史，仍可运行、可 grep）。
+> 见下文「源脚本归档」。
 
-`_jxsd` = 课案（江西师大课件）版本。两套文件**除后缀外同名**，可以左右对照阅读：
-精简版看骨架，`_jxsd` 版看细节、边界情况、课案原文与实测差异。
+## 先做一次：注册项目专用内核
 
-## 环境
+⚠️ **这一步不做，notebook 会跑到错误的解释器上**，症状是 `import langchain` 报 pydantic 版本冲突、
+或者干脆什么都不输出（静默失败）。原因：本机默认的 `python3` 内核指向 Anaconda，
+而 `.venv` 自带的 kernelspec 用的是裸 `python`（会落到 Windows Store 占位符）。
 
-```bash
-# 创建虚拟环境并安装全部依赖（已执行）
-uv sync
-
-# Windows 控制台中文乱码时，先执行（脚本内已做 reconfigure 处理）
-$env:PYTHONUTF8 = "1"
+```powershell
+cd F:\ProGram\Python_Base
+& .\.venv\Scripts\python.exe -m ipykernel install --user --name python-base-agent --display-name "Python (Python_Base .venv)"
 ```
 
-## 目录结构
+装完确认一下：
 
-| 目录 | 内容 |
+```powershell
+& .\.venv\Scripts\python.exe -m jupyter kernelspec list      # 应能看到 python-base-agent
+```
+
+之后用 JupyterLab（`& .\.venv\Scripts\jupyter-lab.exe`）或 VS Code 打开 notebook，
+**内核选 `Python (Python_Base .venv)`**（所有 notebook 的 metadata 已经指向它）。
+
+## 怎么读
+
+| 你的目的 | 走哪条路 |
 |---|---|
-| `../config.py` / `../.env` | 全局统一配置（Python_Base 根目录），所有示例统一 `from config import settings` |
-| `01_langgraph/` | 状态图、短期/长期记忆、流式、中断、时间旅行、子图 |
-| `02_langchain/` | 模型/消息/智能体/工具、记忆、流式、结构化输出、人工审核、中间件、多 Agent、管道 |
-| `03_deepagents/` | create_deep_agent、7 种后端、人工审核、记忆、子智能体、Skills |
-| `04_function_call/` | 原生 OpenAI / LangChain / DeepAgents 三种实现对比 |
-| `05_mcp/` | FastMCP 服务端/客户端、资源、提示词、JWT 权限、Docker 部署、调试工具 |
-| `06_langfuse/` | 追踪、会话与用户、提示词管理、打分、RAG/Agent 评估、标注与数据 |
-| `07_protocols/` | ACP（编辑器↔Agent）、A2A（Agent↔Agent）协议 |
-| `08_skills/` | 课案「skills」章：概念/原理/SKILL.md/渐进式加载/云技能（`_jxsd` 版新增目录） |
-| `09_aegra_deploy/` | 课案「部署」章：LangSmith Deployments 的 license 坑 + Aegra 开源替代（`_jxsd` 版新增目录） |
-| `10_workflow_platform/` | 课案「工作流 → 可视化平台」：Coze/Dify/n8n/Langflow 与 Langflow API（`_jxsd` 版新增目录） |
+| 第一次接触，想按顺序学 | `01_langgraph` → `02_langchain` → `03_deepagents` → `04_function_call` |
+| 只想知道「Agent 是怎么写出来的」 | `02_langchain/02_智能体与工具` → `04_function_call/01_工具定义与参数类型` → `02_langchain/04_中间件_钩子与人工审核` |
+| 想接自己的工具/服务 | `05_mcp`（MCP 协议）→ `02_langchain/06_管道_MCP进阶_RAG与测试` |
+| 想上线 | `09_aegra_deploy` → `07_protocols` |
+| 想做评估与质量闭环 | `06_langfuse` 全章 |
+| 想对照官方文档补课 | `官方文档缺口对照.md`（21 个补充篇的缺口清单） |
+| 只想找某段代码 | 直接看 `_py_source/<章>/` 下的原脚本，或在各 notebook 里搜索 |
 
-## 课案版（`_jxsd`）覆盖范围
+**运行条件分三档**，每本 notebook 开头的表格里都标了是哪一档：
 
-共 78 个 `_jxsd.py`，按课案章节一一对应：
-
-| 目录 | 个数 | 课案来源 |
+| 标记 | 含义 | 要准备什么 |
 |---|---|---|
-| `01_langgraph/` | 10 | 智能体框架概览 + langgraph 基本概念/核心组件 |
-| `02_langchain/` | 14 | langChain 核心组件 + 中间件 + 多 Agent |
-| `03_deepagents/` | 13 | deepAgents 智能体/流式/运行环境/人工审核/记忆/子智能体 |
-| `04_function_call/` | 5 | 工具调用 → function call（概念/实例/参数类型/langchain/deepagents） |
-| `05_mcp/` | 12 | MCP 协议：快速开始/资源/提示词/四种协议/调试/Agent 调用/权限/部署 |
-| `06_langfuse/` | 7 | 监控与评估：追踪/会话/提示词/打分/RAG 评估/Agent 指标/标注与数据 |
-| `07_protocols/` | 5 | 协议：ACP（实操/原理）、A2A（CrewAI 端/DeepAgents 端/互相通信） |
-| `08_skills/` | 5 | skills 全章 |
-| `09_aegra_deploy/` | 5 | 部署全章 |
-| `10_workflow_platform/` | 2 | 可视化平台 + Langflow API |
+| 🟢 | 离线可跑 | 什么都不用，装好依赖即可 |
+| 🟡 | 需模型 | 根目录 `.env` 里的 `API_KEY` / `BASE_URL` / `MODEL_NAME` |
+| 🔴 | 需外部服务 | Langfuse / PostgreSQL / Docker / 自起的 MCP 服务……表格里逐条写明 |
 
-对照关系：`01_基础图.py` ↔ `01_基础图_jxsd.py`；课案独有的小节则用
-`NN_主题_jxsd.py` 命名（如 `08_时间旅行_jxsd.py` 在精简版里没有单独文件）。
-`02_langchain/15_管道.py` 课案没有对应章节，因此没有 `_jxsd` 版本。
-`02_langchain/11_内置中间件_官方补充.py` 同样不带 `_jxsd`：它是**官方文档补充篇**
-（课案没讲的 5 个内置中间件 Demo + 课案 7 个中间件的签名核对结论），全部用脚本模型
-离线演示，0 次真实模型调用，输出逐字节稳定。
-另：`10_中间件_钩子_jxsd.py` 在官方核对时补上了课案精简版有、但 HTML 六钩子表漏列的
-`dynamic_prompt`（第 7 个官方装饰器，课案精简版把它当「钩子 3」用）。
+## 目录结构（32 个 Notebook）
+
+| 目录 | notebook |
+|---|---|
+| `01_langgraph/` | `01_基础图与状态`、`02_记忆_短期与长期`、`03_流式与中断`、`04_时间旅行_子图与容错` |
+| `02_langchain/` | `01_模型_消息与结构化输出`、`02_智能体与工具`、`03_记忆与流式`、`04_中间件_钩子与人工审核`、`05_多Agent`、`06_管道_MCP进阶_RAG与测试` |
+| `03_deepagents/` | `01_智能体与流式`、`02_七种后端`、`03_人工审核_记忆_子智能体_Skills`、`04_上下文治理与Rubric评分`、`05_解释器PTC与异步子代理` |
+| `04_function_call/` | `01_工具定义与参数类型`、`02_三种Agent实现对比` |
+| `05_mcp/` | `01_服务端与客户端`、`02_资源与提示词`、`03_三种Agent调用`、`04_权限_JWT认证`、`05_部署与调试` |
+| `06_langfuse/` | `01_追踪_会话与提示词`、`02_评估与打分`、`03_标注与数据` |
+| `07_protocols/` | `01_ACP协议`、`02_A2A协议` |
+| `08_skills/` | `01_概念原理与SKILL示例`、`02_三种技能载体` |
+| `09_aegra_deploy/` | `01_为什么需要部署平台与项目骨架`、`02_本地开发_客户端调用_Langfuse` |
+| `10_workflow_platform/` | `01_可视化平台与Langflow` |
+| `_py_source/` | **归档**：162 个课程 `.py`，与原章节目录结构一一对应 |
+| `_tools/` | 改造与维护工具（见下） |
+| `_nb_template.md` | Notebook 编写规范 —— **改 notebook 之前先看它** |
+
+各 notebook 运行的临时文件落在同目录的 `tmp_nb_work/`（已 gitignore）；
+`08_skills/skills/`、`09_aegra_deploy/aegra_project/` 是被 notebook 引用的**真实资源目录**，不要删。
+
+## 每个 Notebook 长什么样
+
+顺序固定，不要自行调整：
+
+| 区块 | 内容 |
+|---|---|
+| 标题 | 一句话定位 + 全节概念表 + 「由哪几个源文件合并而成」 |
+| **运行条件** | 三档标记 🟢/🟡/🔴 + 依赖 / 密钥 / 前置服务 / 预计耗时 |
+| 本节地图 | mermaid 流程图 **＋ 等价表格**（裸 JupyterLab 不渲染 mermaid，靠表格兜底） |
+| 0. 环境引导 | 固定一格：向上找到仓库根 → `chdir` + 塞 `sys.path`（少了它必 `ModuleNotFoundError: config`） |
+| 1. 课案原版 | 最少代码先跑通，看骨架 |
+| 2. 完整版 | 对照课案原文的完整实现，讲「为什么这么做」 |
+| 3. 官方文档补充 | 该节独有（没有则整节省略） |
+| 小结 / 常见坑 / 官方链接 | 收口 |
+
+**每个有输出的 code cell 后面都跟着 `### 预期输出`**，内容是真跑出来的（不是猜的）。
+输出里含模型措辞、时间戳、随机值的那几格，格子里会明确写「这段每次不同，别逐字比对」——
+工具 `nbtool.py verify` 认这类声明并跳过比对。
+
+## 源脚本归档（`_py_source/`）
+
+162 个课程 `.py` 按原章节目录结构归档在此。搬运用的是 `git mv`，所以**每个文件的历史都还在**。
+它们仍然可运行——凡是「notebook 里被改写过、想对照原文」的地方，都回这里查。
+
+命名沿用旧约定：`NN_主题.py` 是课案精简版、`NN_主题_jxsd.py` 是完整版、
+`NN_主题_官方补充.py` 是官方文档补充篇 —— 三者现在都被合并进同一个 notebook。
+（`_py_source/03_deepagents/create_txt.py` 例外：它是课程演示**运行时生成**的产物，
+不是课案文件，保留归档但不参与合并，已在 `notebook_manifest.json` 里登记为排除项。）
+
+## 工具链（`_tools/`）
+
+| 工具 | 用途 |
+|---|---|
+| `nbtool.py` | `py2nb`（percent 源→ipynb）/ `nb2py`（还原成文本审阅）/ `strip`（清输出）/ `check`（结构检查）/ `coverage`（源脚本零丢失审计）/ `verify`（核对「预期输出」与实跑是否一致） |
+| `run_notebooks.py` | 批量无头执行：分串行/并行车道，判定 PASS / PASS-降级 / TRACEBACK / TIMEOUT |
+| `notebook_manifest.json` | 32 个 notebook ↔ 159 个源脚本的权威映射，也是 `coverage` 的输入 |
+
+**为什么不直接手写 `.ipynb`**：它是 JSON，手改极易出错、diff 也几乎不可读。
+所以这里的做法是「作者写 percent 格式的 `.py` → 工具转成 `.ipynb`」，往返**逐字节一致**。
+改 notebook 的推荐流程：
+
+```powershell
+cd F:\ProGram\Python_Base
+& .\.venv\Scripts\python.exe Agent\_tools\nbtool.py nb2py Agent\01_langgraph\01_基础图与状态.ipynb F:\temp\改我.py
+#  ……编辑 F:\temp\改我.py……
+& .\.venv\Scripts\python.exe Agent\_tools\nbtool.py py2nb F:\temp\改我.py Agent\01_langgraph\01_基础图与状态.ipynb
+& .\.venv\Scripts\python.exe Agent\_tools\nbtool.py check Agent\01_langgraph\01_基础图与状态.ipynb
+& .\.venv\Scripts\python.exe Agent\_tools\run_notebooks.py Agent\01_langgraph\01_基础图与状态.ipynb
+```
+
+> `run_notebooks.py` 的位置参数**两种写法都认**：`Agent\01_langgraph\xx.ipynb`（相对仓库根）
+> 或 `01_langgraph\xx.ipynb`（相对 `Agent/`）；不传则跑全部，传目录名则跑整章。
 
 ## 官方文档缺口补充（非课案，`_官方补充` 系列）
 
@@ -100,26 +159,31 @@ $env:PYTHONUTF8 = "1"
 
 ## 使用前准备
 
-1. 配置在 Python_Base 根目录 `.env`（已就绪，含大模型 API Key、数据库、Langfuse 等）。
-   **全仓库只此一份配置**，`_jxsd` 代码不另建 `conf.py`。
-2. PostgreSQL（持久化记忆用）：
-   ```bash
+1. **配好根目录 `.env`** —— 全仓库只此一份配置，notebook 里统一 `from config import settings`：
+   大模型三件套 `API_KEY` / `BASE_URL` / `MODEL_NAME`、向量化 `EMBEDDING_*`、重排 `RERANK_*`，
+   以及数据库与 Langfuse 的连接信息。
+2. **装依赖**（已执行过）：`uv sync`。
+3. **注册内核**（见开头「先做一次」，只做一次）。
+4. PostgreSQL（持久化记忆用）：
+   ```powershell
    docker run -e POSTGRES_PASSWORD=<你的口令> -d --name postgres -p 5432:5432 postgres:18
    docker exec -it postgres psql -U postgres -c "CREATE DATABASE langgraph;"
    ```
    连接串写在 `.env` 的 `PG_URI`（形如 `postgresql://<用户名>:<口令>@127.0.0.1:5432/langgraph`）。
-3. 运行任意示例：`uv run Agent/01_langgraph/01_基础图_jxsd.py`
-   或 `& '.\.venv\Scripts\python.exe' 'Agent\01_langgraph\01_基础图_jxsd.py'`
+5. **冒烟**：打开任意 🟢 档 notebook 从头跑一遍；或命令行无头执行某一本：
+   ```powershell
+   & .\.venv\Scripts\python.exe Agent\_tools\run_notebooks.py 01_langgraph\01_基础图与状态.ipynb
+   ```
 
-## 运行顺序建议
+## 建议阅读顺序
 
-1. `01_langgraph` → `02_langchain` → `03_deepagents` → `04_function_call`（基础能力）
-2. `05_mcp`：先启动 `01_服务端_jxsd.py http`，再运行客户端
-3. `06_langfuse`：先在 Langfuse 控制台建好项目并把密钥填入根目录 `.env`
-4. `07_protocols`：需额外安装 `deepagents-acp` / `a2a_auto_wrapper`（见各文件头部说明）
-5. `08_skills`：`02_SKILL示例_jxsd.py` 会先在磁盘上生成一个真实 skill 目录
-6. `09_aegra_deploy`：`02_项目骨架_jxsd.py` 会生成一套 Aegra 项目骨架
-7. `10_workflow_platform`：Langflow 未启动时自动降级为 dry-run
+1. `01_langgraph` 4 本 → `02_langchain` 6 本 → `03_deepagents` 5 本 → `04_function_call` 2 本（基础能力）
+2. `05_mcp` 5 本：**服务端在 notebook 内部自己起**，不用再另开窗口（端口已分配好，互不冲突）
+3. `06_langfuse` 3 本：先在 Langfuse 控制台建好项目，把密钥填进根目录 `.env`
+4. `07_protocols` 2 本：需额外安装 `deepagents-acp` / `a2a_auto_wrapper`；缺包时 notebook 会打印中文提示并走降级路径
+5. `08_skills` 2 本：引用仓库里 `skills/` 与 `.claude/` 下的**真实技能目录**（不会另生成一份）
+6. `09_aegra_deploy` 2 本：需要 `aegra` CLI 才能真跑部署那段，缺了就降级演示
+7. `10_workflow_platform` 1 本：Langflow 未启动时自动降级为 dry-run
 
 ## 三个模型端点（都在根目录 `.env`，代码统一 `from config import settings`）
 
