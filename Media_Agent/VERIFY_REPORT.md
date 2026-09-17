@@ -1141,3 +1141,57 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 | HyperFrames | 渲染链路不可用（浏览器依赖拉不下来），默认由 `MEDIA_MASHUP_USE_HYPERFRAMES=false` 走 moviepy 分支；换到浏览器链路正常的机器改成 `true` 即恢复课案原方案。 |
 | `docs/` 下的课案提取文件 | 由 `docs/html提取脚本.py` 从课案 HTML 生成，**课案更新后可重跑**（这句话在修复轮才真正成立）。脚本原先直接跑会 `FileNotFoundError`：两个产物路径都在仓库根的 `_html_parse/` 下，而该目录不在 Git 里、写文件前没有 `mkdir` 兜底。现已在写第一份产物前 `os.makedirs(..., exist_ok=True)`，并于修复轮**真跑过一次**：`text chars: 150114 lines: 4786` / `code blocks: 44 code chars: 141432`，`exit code 0`；产物 `_html_parse/courseware.txt` 与 `courseware_code_only.txt` 的 SHA256 与 `docs/` 下那两份存档**逐字节相同**（`FD309A2D…` / `9CDB1AAC…`），说明重跑结果稳定。真正会挡住重跑的只剩 `SRC`（脚本里的本机 DSH 附件绝对路径，附件被清理后要手改）。 |
 | `workflows/base.py` 无调用方 | **全仓 0 引用**：`from workflows.base` / `workflows.base` 在 `views/`、`workflows/` 下均 0 命中，`safe_llm_call()` 也没有任何调用方（模块只被当作课案「工作流基类」这一节的载体保留，纯转发 `workflows/__init__.py` 的实现）。**已补自检**并纳入 `verify_all.py` 第 1 层清单（`verify_all.py:282`，共 15 个模块）：断言转发对象同一性、`safe_llm_call` 签名、模型不可用时返回提示文本而非抛异常、缺密钥降级为 `[LLM未配置]`。留着不删是刻意的——删掉会让课案结构对不上；若将来确认不需要，可直接删文件 + 摘掉那一行清单。 |
+
+---
+
+## 10. 修复轮之后的联网复验
+
+上面第 1~5 节那些「已打通」的结论**都产生于修复轮之前**。修复轮改了
+`workflows/*`（LLM 失败判据、热点路由、配音路由）、`tools/avatar_client.py`
+（`query_task` 新增 `error` 键、`wait_task` 早退）与多个页面，所以这里补一次
+改动**之后**的真实联网复验。
+
+### 10.1 `verify_all.py --live` —— 18/18，exit 0
+
+```text
+【附加】真实 API 调用检查（--live）
+  ✓ LLM 文本推理: 收到
+  ✓ 热点抓取（NewsNow）: 微博热榜 30 条，第 1 条: 如果你出生于1992年至2003年之间
+  ✓ 百炼 ASR 接线: 参数校验通过（真实转写需要一段音频，见 README 手动验证）
+  ✓ 数字人接线: 模型 pixverse/pixverse-lipsync；真实提交需要一段人脸视频…
+
+共 18 项检查，通过 18 项，失败 0 项。
+全部自检通过 ✓
+```
+
+用量说明（别被「18 项」吓到）：这四项里只有 **1 次真实 LLM 调用**
+（提示词是「只回答两个字：收到」）；热点走免费公共 API；ASR 那一项**不联网**，
+只用不存在的路径验证参数校验分支；数字人那一项**不提交任务**、只报到模型名。
+
+### 10.2 `workflows/hot_topic.py --live` —— 真抓 + 真筛选 + 真选题，exit 0
+
+这一条是本轮**改动密度最高**的链路（`route_fetch` 的分支选择、失效平台的节点守卫、
+`node_suggest` 的短路判据都动过），所以单独跑了一次真实联网：
+
+| 平台 | 结果 |
+|---|---|
+| 抖音（单支分支） | 抓到 **30** 条 |
+| 全部（4 路并行 + 合并） | 抓到 **110** 条 = 抖音 30 + 微博 30 + 知乎 20 + B站 30 |
+
+**关键证据**：日志里只有一行
+`[热点] 小红书 当前不可用，跳过抓取（不发请求）: 上游聚合源 xiaohongshu 已失效…`，
+且 110 条里**没有小红书的份** —— 选「全部」时那约 12 秒的白等与 3 次注定失败的请求
+都确实消失了。图结构**未改动**（仍是 5 个 fetch 节点 + filter + suggest，
+自检打印的 9 节点 / 12 边与改前一致），失效是在节点内部拦下的。
+
+`filtered` / `suggestions` 也拿到了真实模型输出（筛出「影视飓风 iPhoneDuo 首发评测」
+等条目并给出 5 类标题模板），说明 `node_filter → node_suggest` 这条链在改动后仍然通。
+
+### 10.3 这次复验**没有**覆盖的部分（别当成已验证）
+
+- **数字人真实出片**（PixVerse）、**视频剪辑真实出片**（DeepAgents + moviepy）、
+  **声音克隆真实出音**（CosyVoice）：这三条要真素材 + 真实计费，本次没重跑。
+  它们的「已打通」结论仍以第 5 节的记录为准（**修复轮之前**的状态）。
+- `views/review.py --llm` 的真实模型链路：只做了「注入失败串」的 A/B 负向验证。
+- `generate_image()` 的真实接口路径：`MEDIA_IMAGE_*` 三项全空，从未用真 key 跑过。
+
