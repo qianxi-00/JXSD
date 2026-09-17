@@ -77,6 +77,43 @@ class TestFlightFields:
         # 登机牌只有 Jan01 没有年份与金额：按课案口径 null 不落 0
         assert record["date_int"] is None and record["amount_fen"] is None
 
+    def test_airline_from_flight_no_iata_code(self):
+        """票面不写航司全称时，用航班号的两字码反查（真机 83/100 张票**只有**这个信号）。
+
+        实测缺口票里的码分布：CZ 15 / CA 15 / HU 7 / SC 7 / MF 6 / MU 5 / JD 5 / ZH 1。
+        """
+        for text, expected in [
+            ("航班号Flight/日期Date/舱位Class\nZH9146 Jan01 G", "深圳航空"),
+            ("ETKT8762369777769/1\nMU 5678 Jan01 G", "中国东方航空"),  # 码与数字之间被 OCR 插了空格
+            ("CZ3456 Jan01 G", "中国南方航空"),
+        ]:
+            assert te.extract_flight(text)["counterparty"] == expected, text
+
+    def test_ocr_zero_for_letter_o_is_tolerated(self):
+        """OCR 会把字母 O 认成数字 0（实测遇到 `H0`，真码 `HO`）⇒ 数字→字母等价替换后再查一次。"""
+        assert te.extract_flight("H0 1234 Jan01 G")["counterparty"] == "吉祥航空"
+
+    def test_unknown_iata_code_stays_none(self):
+        """查不到的码**不猜**：错填承运方会静默进 SQL 过滤与分组统计。"""
+        assert te.extract_flight("ZZ1234 Jan01 G")["counterparty"] is None
+        # 长数字串不能被当成"两字码 + 3~4 位数字"（ETKT8762… 里的 8762 不是航班号）
+        assert te.extract_flight("ETKT8762369777769/1")["counterparty"] is None
+
+    def test_chinese_airline_names_are_canonicalized(self):
+        """同一家航司的多种写法必须落到同一个值，否则按 counterparty 分组会分裂成几条。"""
+        for text in ["中国国际航空公司", "中国国际航空", "国航", "AIR CHINA"]:
+            assert te.extract_flight(text)["counterparty"] == "中国国际航空", text
+        assert te.extract_flight("海南航空公司")["counterparty"] == "海南航空"
+
+    def test_chinese_name_wins_over_flight_no(self):
+        # 票面同时写了中文全称与航班号时，以更明确的中文名为准
+        record = te.extract_flight("中国南方航空公司\nCZ3456 Jan01 G")
+        assert record["counterparty"] == "中国南方航空"
+
+    def test_cold_airline_keeps_its_name_without_company_suffix(self):
+        # 别名表里没有的中文航司：如实保留（去掉"公司"后缀），不能返回空、也不能硬塞成别家
+        assert te.extract_flight("幸福航空公司\nXX1234")["counterparty"] == "幸福航空"
+
 
 class TestInvoiceFields:
     TEXT = (
@@ -91,6 +128,16 @@ class TestInvoiceFields:
         assert record["amount_fen"] == 3980291
         # 发票没有行程
         assert record["route"] == ""
+
+    def test_invoice_number_label_variants(self):
+        """票号标签两种写法都要认。
+
+        ⚠ 本仓 100 张发票**全部**写"发票编号"，所以"发票号码"这一支只有这条单测覆盖、
+        没有真实样本（README 台账里也是这么写的）。加它是为了换一批真发票时不会整列抽空。
+        """
+        for label in ("发票编号", "发票号码"):
+            text = f"{label}：INV20250101\n开具日期：2025-11-04\n总金额 39,802.91 CNY"
+            assert te.extract_invoice(text)["ticket_no"] == "INV20250101", label
 
     def test_company_roles(self):
         record = te.extract_invoice(self.TEXT)

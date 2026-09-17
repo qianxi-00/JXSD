@@ -103,6 +103,59 @@ TRAIN_MONEY_RE = r"[￥¥]\s*([0-9,]+(?:\.[0-9]+)?)\s*元"
 # 靠数值大小猜会取错（价税合计往往才是要的那个数，但它不一定最大）。
 INVOICE_AMOUNT_RE = r"总金额\s*([0-9,]+\.[0-9]{2})"
 
+# 票面上的中文航司名（"中国国际航空(公司)" / "海南航空" …）。允许"公司"后缀可选。
+# 只描述形状，"这句话到底属于哪家"交给 _canonical_airline 的别名表，与 CN_NAME 同一分工。
+CN_AIRLINE_RE = re.compile(r"([\u4e00-\u9fa5]{2,8}航空)(?:公司)?")
+# 航班号：两个字母/数字 + 3~4 位数字（`ZH9146` / `CA 1234`）。OCR 会在中间插空格，
+# 所以两段之间允许一个空白；末尾要 \b，否则会把长数字串的前 4 位当成航班号。
+FLIGHT_NO_RE = re.compile(r"(?<![A-Z0-9])([A-Z0-9]{2})\s?(\d{3,4})(?![0-9])")
+
+# IATA 两字码 → 规范中文名（不带"公司"后缀，全表口径一致）。
+# 只收**实测在票面上出现过**的码 + 常见航司；未收录的码一律保持 None，不猜。
+# 实测出现过的：CZ 15 / CA 15 / HU 7 / SC 7 / MF 6 / MU 5 / JD 5 / ZH 1 / G5 2 / 8L 2
+AIRLINE_BY_IATA = {
+    "CA": "中国国际航空",
+    "CZ": "中国南方航空",
+    "MU": "中国东方航空",
+    "HU": "海南航空",
+    "SC": "山东航空",
+    "MF": "厦门航空",
+    "JD": "首都航空",
+    "ZH": "深圳航空",
+    "G5": "华夏航空",
+    "8L": "云南祥鹏航空",
+    "3U": "四川航空",
+    "GS": "天津航空",
+    "9C": "春秋航空",
+    "HO": "吉祥航空",
+    "KN": "中国联合航空",
+    "PN": "西部航空",
+    "FM": "上海航空",
+    "EU": "成都航空",
+    "NS": "河北航空",
+    "TV": "西藏航空",
+}
+# 别名 → 规范名。中文全称/简称、英文名都要能落到同一个值上，
+# 否则按 counterparty 分组统计会把同一家航司拆成几条。
+AIRLINE_ALIASES = {
+    "中国国际航空": "中国国际航空",
+    "中国国际航空公司": "中国国际航空",
+    "国航": "中国国际航空",
+    "AIR CHINA": "中国国际航空",
+    "中国南方航空": "中国南方航空",
+    "中国南方航空公司": "中国南方航空",
+    "南航": "中国南方航空",
+    "CHINA SOUTHERN": "中国南方航空",
+    "中国东方航空": "中国东方航空",
+    "中国东方航空公司": "中国东方航空",
+    "东航": "中国东方航空",
+    "CHINA EASTERN": "中国东方航空",
+    "海南航空": "海南航空",
+    "海南航空公司": "海南航空",
+    "海航": "海南航空",
+    "Hainan Airlines": "海南航空",
+}
+
 
 def ticket_id(source_file: str) -> str:
     """根据 source_file 的 SHA-256 前 24 位生成稳定 ID"""
@@ -146,6 +199,54 @@ def is_person_name(s: str) -> bool:
     # 它们本身也符合"2~4 个汉字"，是最容易被人名规则误吞的一类（"虹桥机场""北京南站"）。
     # 注意这里只排除"结尾"，不能排除"包含"——"张家界站"这类地名与人名同形，只能靠上下文。
     return bool(re.fullmatch(CN_NAME, s)) and not s.endswith(("机场", "站"))
+
+
+def _canonical_airline(name: str) -> str:
+    """把票面上的航司写法归一到规范名（`中国国际航空公司` / `国航` → `中国国际航空`）。
+
+    查不到别名表的（冷门航司、OCR 生造写法）**原样返回但去掉"公司"后缀** ——
+    不硬塞进某个规范名，也不能返回空：它确实是票面上写着的中文航司名。
+    """
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return ""
+    if cleaned in AIRLINE_ALIASES:
+        return AIRLINE_ALIASES[cleaned]
+    return re.sub(r"公司$", "", cleaned)
+
+
+def _airline_from_text(text: str) -> str | None:
+    """票面上**写着**航司名时的抽法，两级：
+
+    ① 别名表里找（含 `国航`/`南航`/`AIR CHINA` 这类不含"航空"两字的简称与英文名）——
+       按别名长度从长到短扫，避免 `国航` 先命中而把 `中国国际航空公司` 切一半；
+       比较时两边都转大写，OCR 的大小写不可靠；
+    ② 通用中文航司名形状 `XX航空(公司)`：别名表里没有的冷门航司靠这一级兜住，
+       如实返回（去掉"公司"后缀），不硬塞进某个规范名。
+    """
+    upper = (text or "").upper()
+    for name in sorted(AIRLINE_ALIASES, key=len, reverse=True):
+        if name.upper() in upper:
+            return AIRLINE_ALIASES[name]
+    match = CN_AIRLINE_RE.search(text or "")
+    return _canonical_airline(match.group(1)) if match else None
+
+
+def _airline_from_flight_no(text: str) -> str | None:
+    """票面没写航司名时，从航班号的 IATA 两字码反查；查不到返回 None。
+
+    OCR 会把字母认错（实测遇到 `H0`，真码是 `HO`），所以在原码不命中时做一次
+    **数字→字母**的等价替换再查（只换 `0→O`、`1→I`；不反向替换，因为 IATA 码里
+    数字是有意义的，见 `3U`/`9C`/`8L`/`G5`）。查不到就返回 None —— 宁可不填，
+    也不要凭长相猜一家航司（错填的承运方会静默进 SQL 过滤与分组统计）。
+    """
+    for code, _digits in FLIGHT_NO_RE.findall(text or ""):
+        if code in AIRLINE_BY_IATA:
+            return AIRLINE_BY_IATA[code]
+        swapped = code.replace("0", "O").replace("1", "I")
+        if swapped in AIRLINE_BY_IATA:
+            return AIRLINE_BY_IATA[swapped]
+    return None
 
 
 def extract_flight(text: str) -> dict:
@@ -260,14 +361,18 @@ def extract_flight(text: str) -> dict:
         if len(airports) >= 2:
             out["route"] = f"{airports[0]}-{airports[-1]}"
 
-    # 承运方：中文名优先。正则用"国[际際]"同时接受简繁两种写法——OCR 对"际/際"的识别不稳定，
-    # 只写一种会漏。命中后写成**规范名**而不是原文，让同一航司在不同票上的多种识别结果
-    # 归一成同一个值，否则按 counterparty 分组统计会分裂成好几条。
-    # 注意这里只认"国航"一家：其他航司需要在此补分支，否则 counterparty 保持 None。
-    if re.search(r"中国国[际際]航空公司", text):
-        out["counterparty"] = "中国国际航空公司"
-    elif re.search(r"AIR CHINA", text):
-        out["counterparty"] = "AIR CHINA"
+    # 承运方：先中文名、再"航班号的 IATA 两字码"。
+    #
+    # 为什么必须加 IATA 这一路（真机数据说的）：100 张机票里只有 17 张能在票面上找到
+    # "中国国际航空公司"这种中文全称，其余 83 张**一个中文航司名都没有** —— 票面只写航班号
+    # （如 `ZH9146 Jan01 G`）。实测那 65 张非空 OCR 的缺口票里，航司信号**只有**两字码：
+    # CZ 15 / CA 15 / HU 7 / SC 7 / MF 6 / MU 5 / JD 5 / ZH 1。所以按码查表是这里唯一可行的做法。
+    #
+    # 归一化：命中后一律写表里的**规范名**（不带"公司"后缀），不写票面原文 ——
+    # 同一家航司在不同票上会写成"中国国际航空/中国国际航空公司/国航"，不归一的话
+    # 按 counterparty 分组统计会分裂成好几条。
+    # 顺序：票面写明航司名 > 航班号两字码（后者只是"票面没写"时的替代信号）。
+    out["counterparty"] = _airline_from_text(text) or _airline_from_flight_no(text)
     return out
 
 
@@ -307,7 +412,13 @@ def extract_invoice(text: str) -> dict:
 
     # 发票编号：标签后允许中英文冒号（：/:），取值限字母数字与连字符——
     # 这样遇到"发票编号：12345 开票日期：..."挤在一行的版面时不会把日期一起吞进来。
-    m = re.search(r"发票编号[：:]\s*([A-Za-z0-9\-]+)", text)
+    #
+    # 标签认两种写法：票面上"发票编号"与"发票号码"都常见（真实电子发票多用"发票号码"）。
+    # ⚠ 诚实说明覆盖情况：本仓这 100 张发票**全部**写的是"发票编号"（实测 100/100 抽到票号），
+    # 所以"发票号码"这一支**没有真实样本覆盖**，目前只有单测覆盖（见
+    # `test_invoice_number_label_variants`）。加它是为了换一批真发票时不至于整列抽空 ——
+    # 那属于"静默少一批字段"，比抽错更难发现。
+    m = re.search(r"发票(?:编号|号码)[：:]\s*([A-Za-z0-9\-]+)", text)
     if m:
         out["ticket_no"] = m.group(1)
 
