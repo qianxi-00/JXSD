@@ -125,7 +125,12 @@ def get_prompt(name: str, label: str = "production", version: int | None = None)
     if LANGFUSE_READY:
         # fallback 参数非常关键：服务端不可用 / 这个提示词还没建，
         # SDK 会直接返回 fallback 内容而不是抛异常，保证线上不受影响
-        return langfuse.get_prompt(name, label=label, version=version, fallback=FALLBACK_PROMPT)
+        # ⚠️ label 与 version 必须**二选一**：两个都传时 SDK 会在本地就抛
+        #    `ValueError: Cannot specify both version and label at the same time.`
+        #    （不是服务端报错）—— 所以这里显式只传一个，与下方降级分支保持一致。
+        if version is not None:
+            return langfuse.get_prompt(name, version=version, fallback=FALLBACK_PROMPT)
+        return langfuse.get_prompt(name, label=label, fallback=FALLBACK_PROMPT)
 
     # 降级：本地三个版本，模拟服务端已有的版本历史
     local_versions = {
@@ -133,7 +138,7 @@ def get_prompt(name: str, label: str = "production", version: int | None = None)
         2: (PROMPT_V2, []),
         3: (PROMPT_LATEST, ["production", "latest"]),
     }
-        # version 与 label 二选一：version 是不可变快照（复现历史实验），label 是可移动指针（热更新）。
+    # version 与 label 二选一：version 是不可变快照（复现历史实验），label 是可移动指针（热更新）。
     if version is not None:
         text, labels = local_versions.get(version, (FALLBACK_PROMPT, []))
         return build_prompt_locally(text, version, labels)

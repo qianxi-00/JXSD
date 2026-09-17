@@ -202,7 +202,11 @@ def run_turn(user_text: str, turn_config: dict) -> None:
         print("  ⚠ 本轮模型没有真正发起 write_file 工具调用（本机模型偶发行为），故无中断。")
         print("    模型输出：", str(result.value["messages"][-1].content)[:80])
 
-    while result.interrupts:
+    # 审核轮数是**模型**决定的（同一个提示词，模型可能比脚本预期多申请几轮），
+    # 所以这里必须有轮数上限，避免模型反复申请审核时把演示卡死。
+    rounds = 0
+    while result.interrupts and rounds < MAX_REVIEW_ROUNDS:
+        rounds += 1
         requests = result.interrupts[0].value["action_requests"]
         print(f"  [中断] 待审核动作 {len(requests)} 个，工具尚未执行")
         decisions = [review(request) for request in requests]
@@ -212,22 +216,41 @@ def run_turn(user_text: str, turn_config: dict) -> None:
             config=turn_config,
             version="v2",
         )
+    if result.interrupts:
+        print(f"  [提醒] 审核已达上限 {MAX_REVIEW_ROUNDS} 轮，本轮演示到此为止"
+              "（模型仍在申请审核，不是代码卡死）")
 
     print("  AI:", result.value["messages"][-1].content)
 
 
 # ---------- 5. 适配：用预设答案替换 input()，让 review() 在非交互环境也能跑 ----------
-def scripted_input(answers: list[str]):
+# 审核轮数由模型决定，脚本化的答案序列只是「预期」，用完必须兜底 —— 否则
+# 模型多申请一轮就会 `answers[0]` 抛 IndexError（本文件实测踩过：决策 B 脚本
+# 给了 3 个答案，模型发起了第 4 轮审核）。兜底值取 approve：演示的目标是走完
+# 「审核 → 执行」，不该卡在审核里。
+MAX_REVIEW_ROUNDS = 6      # 单轮对话最多处理几次审核中断
+DEFAULT_DECISION = "approve"
+
+
+def scripted_input(answers: list[str], default: str = DEFAULT_DECISION):
     """把 builtins.input 临时换成「按顺序吐预设答案」，用于非交互演示。
 
     这样做的价值：跑的是**课案原样的 review() 函数**（同一条代码路径），
     而不是另写一段假逻辑，演示与真实交互的效果一致。
+
+    预设答案用完后按 `default` 兜底，并在日志里说明 —— 让「脚本喂的答案不够」
+    这件事可见，而不是静默改变演示语义。
     """
     answers = list(answers)
 
     def fake_input(prompt: str = "") -> str:
-        print(f"{prompt}{answers[0]}")     # 回显，让日志看起来像真人输入的
-        return answers.pop(0)
+        if answers:
+            answer = answers.pop(0)
+        else:
+            answer = default
+            print(f"  （预设答案已用完，按兜底值处理：{answer}）")
+        print(f"{prompt}{answer}")     # 回显，让日志看起来像真人输入的
+        return answer
 
     return fake_input
 

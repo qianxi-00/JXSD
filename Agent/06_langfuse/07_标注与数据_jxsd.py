@@ -30,7 +30,7 @@ Langfuse ⑦：评估之「标注」+「数据」——课案完整版（新增�
     | data_type    | 用途           | 必填项                                | 例子                       |
     |-------------|----------------|--------------------------------------|---------------------------|
     | NUMERIC     | 连续评分        | min_value / max_value                 | 准确性 0~1、满意度 1~5      |
-    | CATEGORICAL | 单选分类        | categories（每个含 value + label）     | 问题类型：咨询/投诉/其他     |
+    | CATEGORICAL | 单选分类        | categories（每个含 value(数字) + label）| 问题类型：咨询/投诉/其他     |
     | BOOLEAN     | 是/否           | 无                                    | 回答是否有害、是否答非所问    |
 
 二、数据（Datasets）—— 把标注结果沉淀成回归测试集
@@ -158,10 +158,15 @@ def create_score_configs() -> dict:
         name="问题类型",
         data_type="CATEGORICAL",
         categories=[
-            {"value": "consult", "label": "咨询"},
-            # CATEGORICAL 要给 categories：每个类别含 value（存储值）与 label（显示名）。
-            {"value": "complaint", "label": "投诉"},
-            {"value": "other", "label": "其他"},
+            # ⚠️ 实测踩坑：CATEGORICAL 的 **value 必须是数字**，不能写字符串。
+            #    SDK 的 `ConfigCategory.value` 类型是 `float`，写成 "consult" 这种
+            #    字符串会被服务端拒掉：
+            #      Category must be an array of objects with label value pairs,
+            #      where labels and values are unique.
+            #    label 才是给人看的显示名 —— 两者分工别搞反。
+            {"value": 0, "label": "咨询"},
+            {"value": 1, "label": "投诉"},
+            {"value": 2, "label": "其他"},
         ],
         description="给用户问题归类，便于分桶看指标",
     )
@@ -182,15 +187,31 @@ def build_annotation_queue(configs: dict, trace_ids: list[str]) -> str:
 
     # 1) 建队列，把三个打分维度挂上去（标注员进队列看到的表单就是这几个维度）
     # queue 的 id 要留给后面「放样本」「指派标注员」两步用，所以必须接住返回值。
-    queue = api_call(
-        "/api/public/annotation-queues",
-        (langfuse.api.annotation_queues.create_queue if LANGFUSE_READY else None),
-        "queue-local-001",
-        name=QUEUE_NAME,
-        description="把 accuracy 低的 trace 挑出来，人工复核后给出标准答案，沉淀成数据集",
-        score_config_ids=[cfg.id for cfg in configs.values()],
-    )
-    print(f"  ✓ 队列已建：{queue.name}  id={queue.id}")
+    #
+    # 幂等处理：Langfuse **不允许同名队列** —— 再建会 400
+    # `A queue with this name already exists.`（实测踩坑）。
+    # 本文件是可以反复跑的演示脚本，所以先按名字查一遍，已有就直接复用；
+    # 否则第二次跑必崩，而「重跑一次」在演示/回归里是最常见的动作。
+    queue = None
+    if LANGFUSE_READY:
+        existing = langfuse.api.annotation_queues.list_queues(limit=100)
+        queue = next(
+            (q for q in getattr(existing, "data", []) if getattr(q, "name", None) == QUEUE_NAME),
+            None,
+        )
+        if queue is not None:
+            print(f"  · 已存在同名队列，直接复用：{queue.name}  id={queue.id}")
+
+    if queue is None:
+        queue = api_call(
+            "/api/public/annotation-queues",
+            (langfuse.api.annotation_queues.create_queue if LANGFUSE_READY else None),
+            "queue-local-001",
+            name=QUEUE_NAME,
+            description="把 accuracy 低的 trace 挑出来，人工复核后给出标准答案，沉淀成数据集",
+            score_config_ids=[cfg.id for cfg in configs.values()],
+        )
+        print(f"  ✓ 队列已建：{queue.name}  id={queue.id}")
 
     # 2) 逐条把要复核的 trace 放进队列（object_type 还能是 OBSERVATION / SESSION）
     for trace_id in trace_ids:
@@ -205,17 +226,43 @@ def build_annotation_queue(configs: dict, trace_ids: list[str]) -> str:
         )
         print(f"  ✓ 已入队：{item.object_id}  status={item.status}")
 
-    # 3) 指派标注员（user_id 就是 Langfuse 组织成员的用户 id）
-    assignment = api_call(
-        "/api/public/annotation-queues/{queueId}/assignments",
-        (langfuse.api.annotation_queues.create_queue_assignment if LANGFUSE_READY else None),
-        "queue-assignment-001",
-        queue_id=queue.id,
-        # 指派之后，标注员登录 Langfuse 就能在 Human Annotation 页面看到这个队列。
-        user_id="user_A",
-    )
-    print(f"  ✓ 已指派标注员：{assignment.user_id}")
+    # 3) 指派标注员（user_id 是 Langfuse **组织成员**的用户 id，必须是项目里真实存在的成员）
+    #    ⚠️ 实测踩坑：随便填一个（如 "user_A"）会被服务端拒掉 ——
+    #       404 `User not found or not authorized for this project`。
+    #       真实 id 在 Langfuse 控制台 → Settings → Members 里看。
+    #       这是服务端的**引用完整性校验**，只有拿到真实 id 才能通过；所以这里兜住不崩：
+    #       队列与样本都已经建好了，指派失败不影响本节其余演示。
+    try:
+        assignment = api_call(
+            "/api/public/annotation-queues/{queueId}/assignments",
+            (langfuse.api.annotation_queues.create_queue_assignment if LANGFUSE_READY else None),
+            "queue-assignment-001",
+            queue_id=queue.id,
+            # 指派之后，标注员登录 Langfuse 就能在 Human Annotation 页面看到这个队列。
+            user_id="user_A",
+        )
+        print(f"  ✓ 已指派标注员：{assignment.user_id}")
+    except Exception as exc:   # noqa: BLE001 —— 填的是示例 id，被服务端拒绝属预期情况
+        print(f"  ⚠️ 指派标注员失败（{type(exc).__name__}）：{str(exc)[:110]}")
+        print("     user_id 必须是本项目里真实存在的成员 id"
+              "（控制台 Settings → Members 查看）。")
+        print("     队列与样本都已建好，这一步不影响后续演示。")
     return queue.id
+
+
+# 人工打分在 SDK 侧长什么样：没接服务端、或部署形态不支持取分接口时用它做示例。
+EXAMPLE_SCORES = [
+    {"traceId": "<trace-id>", "name": "回答准确性", "value": 1.0,
+     "dataType": "NUMERIC", "source": "ANNOTATION", "comment": "答对了，但没给出单位"},
+    {"traceId": "<trace-id>", "name": "回答是否有害", "value": 0,
+     "dataType": "BOOLEAN", "source": "ANNOTATION", "comment": ""},
+]
+
+
+def print_example_scores() -> None:
+    """打印「人工分数长什么样」的示例结构（两条降级路径共用）。"""
+    print("    人工在 UI 上打完分之后，SDK 侧取到的数据结构形如：")
+    print(json.dumps(EXAMPLE_SCORES, ensure_ascii=False, indent=2))
 
 
 def read_queue(queue_id: str) -> None:
@@ -229,22 +276,29 @@ def read_queue(queue_id: str) -> None:
         items = langfuse.api.annotation_queues.list_queue_items(queue_id=queue_id)
         for item in getattr(items, "data", []):
             print(f"  {item.object_id}  {item.status}")
+
         # 按分数名取人工打出来的分（source=ANNOTATION 表示来自标注队列）
         # source=ANNOTATION 是「人工打的分」与「代码打的分」唯一的区分字段，筛选时用它。
-        scores = langfuse.api.scores.get_many(name="回答准确性", limit=10)
-        for score in getattr(scores, "data", []):
-            print(f"  trace={score.trace_id}  {score.name}={score.value}  comment={score.comment}")
+        # ⚠️ 实测踩坑：Langfuse **v4 的 events_only 模式**下这条 REST 路径不存在 ——
+        #    404 `This endpoint is not available on deployments running in Langfuse v4
+        #    events_only mode.`（v4 把分数改走事件通道了）。
+        #    这里兜住并打印数据结构：让读者知道「是部署形态不支持这条路径」，
+        #    而不是让整份演示崩在最后一步。
+        try:
+            scores = langfuse.api.scores.get_many(name="回答准确性", limit=10)
+        except Exception as exc:   # noqa: BLE001 —— 部署形态差异，不该把演示炸掉
+            print(f"  ⚠️ 按分数名取分失败（{type(exc).__name__}）：{str(exc)[:120]}")
+            print("     本机 Langfuse 是 v4 events_only 模式，/api/public/v2/scores 不可用；")
+            print("     分数在 UI 的 Human Annotation 页面能正常看到，程序取数要走 v4 的 metrics 接口。")
+            print_example_scores()
+        else:
+            for score in getattr(scores, "data", []):
+                print(f"  trace={score.trace_id}  {score.name}={score.value}  comment={score.comment}")
         langfuse.flush()
     else:
         print("    [降级] 本应调用  GET /api/public/annotation-queues/{queueId}/items")
         print("    [降级] 本应调用  GET /api/public/v2/scores?name=回答准确性")
-        print("    人工在 UI 上打完分之后，SDK 侧取到的数据结构形如：")
-        print(json.dumps([
-            {"traceId": "<trace-id>", "name": "回答准确性", "value": 1.0,
-             "dataType": "NUMERIC", "source": "ANNOTATION", "comment": "答对了，但没给出单位"},
-            {"traceId": "<trace-id>", "name": "回答是否有害", "value": 0,
-             "dataType": "BOOLEAN", "source": "ANNOTATION", "comment": ""},
-        ], ensure_ascii=False, indent=2))
+        print_example_scores()
 
 
 # ---------- 3. 数据：把标注结果沉淀成数据集 ----------
