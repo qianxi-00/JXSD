@@ -16,8 +16,9 @@
 | 环境契约检查（配置 / 依赖 API 形状 / 关键文件 / 降级路径） | **通过** |
 | 真实联网检查（LLM / 热点 / 百炼接线） | **4/4 通过** |
 | Streamlit 应用启动 + 七页渲染 | **通过（0 console error / 0 stException）** |
-| 端到端 LLM 链路（账号定位 / 热点监控 / 数据复盘） | **通过**（详见第 5 节） |
-| 需要 GPU 或需开通付费模型的链路 | **未验证**（见第 7 节「未验证项」） |
+| 端到端链路（账号定位 / 热点监控 / 数据复盘 / 内容复刻） | **4/4 通过** |
+| 百炼 ASR 真实转写（208 秒音频 → 文本 + SRT） | **通过**，并**修复了 2 个真 bug**（见 5.4） |
+| 声音克隆 / 数字人出片 / DeepAgents 出片 / 抖音真实采集 | **未验证**（见第 8 节） |
 
 **一键复现**：
 
@@ -239,16 +240,113 @@ for k in ('funnel_diagnosis','content_assessment','suggestions'): print(k, len(r
 - **优化策略**：`立即执行核心是复制第1条模式（45秒 + 具体收益数字 + "实测"承诺 + 工具提效）…`
   —— 给出了带具体标题与脚本骨架的可执行方案。
 
-### 5.4 三条链路汇总
+### 5.4 百炼 ASR 真实转写（**本轮发现并修复了一个真 bug**）
+
+**素材**：`yt-dlp` 从 `https://www.bilibili.com/video/BV1GJ411x7h7/` 下载的 208 秒音频
+（`.cache/videos/downloads/BV1GJ411x7h7_audio.mp3`，4.86 MB）。
+
+**命令**：
+
+```powershell
+& '...\python.exe' -u -c "
+import sys; sys.path.insert(0, '.')
+from tools.audio_transcriber import transcribe, sentences_to_srt
+audio = r'.cache\videos\downloads\BV1GJ411x7h7_audio.mp3'
+r1 = transcribe(audio, want_timestamps=False)
+print('纯文本', len(r1['text']), '字')
+r2 = transcribe(audio, want_timestamps=True)
+print('时间戳', len(r2['text']), '字 /', len(r2['sentences']), '句')
+sentences_to_srt(r2['sentences'], 'out.srt')
+"
+```
+
+**结果**（exit 0）：
+
+| 模式 | 耗时 | 产出 |
+|---|---|---|
+| 纯文本（非流式） | **34~57s** | 1793~2132 字 |
+| 带句级时间戳 | **34~81s** | 64 句 + 可用 SRT |
+
+最终 SRT 片段（**每句独立、时间戳单调递增、无重叠**）：
+
+```
+1
+00:00:19,010 --> 00:00:22,010
+We're no strangers to love,
+
+2
+00:00:22,970 --> 00:00:23,410
+you know,
+
+3
+00:00:23,530 --> 00:00:31,730
+the rules and so do i feel commitments while i'm thinking of
+```
+
+#### ⚠️ 这次验证推翻了第一版的实现假设（重要，值得单独记）
+
+第一版按官方文档的字面理解实现：以为 `output.sentence` 是「当前这一句」，
+于是走 `X-DashScope-SSE: enable` 并**按 `sentence_id` 收集每一帧**。
+实测打出来的 SRT 是这样的：
+
+```
+1
+00:00:19,010 --> 00:00:34,770
+We're no strangers to love, you know, the rules and so do i feel commitments...
+2
+00:00:19,010 --> 00:00:56,010
+We're no strangers to love, ... Never gonna give you up, ...     ← 前面内容的累加
+3
+00:00:19,010 --> 00:01:16,950
+We're no strangers to love, ... （更长的累加）
+```
+
+**dump 原始 SSE 帧后真相清楚了**：`output.sentence` 是「到目前为止的全量快照」，
+不是逐句递进 ——
+
+```
+帧 1: sentence_id=1, begin_time=19010, end_time=34770,  words=36,  text 长 140
+帧 2: sentence_id=2, begin_time=19010, end_time=56010,  words=71,  text 长 318
+帧 3: sentence_id=3, begin_time=19010, end_time=76950,  words=106, text 长 496
+                   ↑ begin_time 恒定，text / words 单调增长
+```
+
+**由此得到三条实测结论，并据此重写了模块**：
+
+1. **SSE 给不出逐句切分** —— 按 `sentence_id` 收集只会得到逐级变长的重复文本。
+2. **根本不需要 SSE**：非流式一次调用就返回覆盖全音频的完整 `words[]`
+   （208 秒音频 → 401 个词，跨 19010~207970ms），且**比 SSE 快一倍**（34s vs 81s）。
+3. **句级切分自己做**：验证过 `"".join(w["text"] + w["punctuation"] for w in words)`
+   与 `output.text` **完全一致**，所以 `words[]` 完整可用。
+
+**同时修掉第二个 bug**：`words[]` 里有独立的空格 token
+（`{"text": " ", "punctuation": ""}`，418 个词里有 22 个）。
+第一版的切句函数写了 `if not token.strip(): continue`，把空格丢了，
+于是拼出 `so doi feel` 这种粘连文本。修正为「原样拼接、只在记录时间时跳过空白词」，
+并在自检里加了回归断言。
+
+**顺带补了一个课案没有的兜底**：单条字幕的**时长上限 8 秒**。
+实测 ASR 在连读/唱歌片段会长时间不吐标点，只按标点切会切出跨 16 秒、140 字符的
+巨型字幕行 —— 画面上没法看。超过 8 秒就在当前词处收束一句。
+
+> 这三条都已写进 `tools/audio_transcriber.py` 的文件头 docstring，
+> 避免后来者再按文档的字面印象重踩一遍。
+
+### 5.5 三条链路汇总
 
 ```
   ✓ 账号定位  324.9s
   ✓ 热点监控  177.8s
   ✓ 数据复盘  112.7s
+  ✓ 内容复刻  287.9s  （下载 → ffmpeg 抽音频 → 百炼 ASR 转写 2132 字 → 3 次 LLM）
 ```
 
-三条链路的**输入都是真实数据**（真实 LLM、真实热点 API、真实作品数据），
+四条链路的**输入都是真实数据**（真实 LLM、真实热点 API、真实视频、真实作品数据），
 输出都是具体可读的中文内容，不是占位文本。
+
+> 内容复刻用的是课案自带的示例链接，而它是 Rick Astley 的《Never Gonna Give You Up》
+> （课案作者留的是个 rickroll），所以转写出来是英文歌词 ——
+> **中文口播的 ASR 质量没验到**，这是本节唯一的缺口。
 
 ---
 
@@ -333,24 +431,26 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 
 以下是**本轮没有真实验证**的部分，不要当成已验证：
 
-1. **百炼 ASR 的真实转写** —— 只验证了「接线正确 + 参数校验 + 失败返回结构化结果」，
-   没有拿真实音频跑过一次完整转写（需要有 DASHSCOPE_API_KEY 且音频文件）。
-2. **声音克隆（CosyVoice）的真实创建音色** —— 未验证。需要：
+1. **声音克隆（CosyVoice）的真实创建音色** —— 未验证。需要：
    一段人声清晰的参考音频 + 百炼已开通 CosyVoice + 音色配额。
-3. **数字人对口型（PixVerse）的真实出片** —— 未验证。需要：
+   （ASR 那一段已经真跑通了，两者不是一回事：ASR 用的是 `Fun-ASR-Flash`，
+   声音复刻要另外在控制台开通 `CosyVoice`。）
+2. **数字人对口型（PixVerse）的真实出片** —— 未验证。需要：
    百炼控制台**手动开通 PixVerse**、一段 10~30 秒人脸视频、`DASHSCOPE_WORKSPACE_ID`（如需）。
-4. **视频剪辑（DeepAgents）的真实出片** —— 未验证。只验证了：
+3. **视频剪辑（DeepAgents）的真实出片** —— 未验证。只验证了：
    图结构、路径清洗、SKILL.md 格式、system_prompt 约束完整性、DeepAgents API 形状。
    真实跑一次要几分钟且会消耗不少 token。另：**HyperFrames 未安装**，会走 moviepy 降级分支。
-5. **抖音数据采集的真实链路** —— 未验证。本机**没有 Docker 服务**，
+4. **抖音数据采集的真实链路** —— 未验证。本机**没有 Docker 服务**，
    只验证了「服务不可达 → 返回带修复命令的中文错误 → 降级入口可用」。
    响应体的真实层级、Cookie 是否够用、`/user/self` 解析是否有效，全都需要真跑服务才能确认。
    ⚠️ 另有一个上游版本风险：`Evil0ctal/Douyin_TikTok_Download_API` 的 `main` 已是 **v5**
    （改为 `/api/v1/...` 且需 API Key，端口 80 → 8000），本项目代码按 **v4** 形态实现，
    docker 命令里 pin 的是 `:V4.1.2`。若部署 v5 需要改端点常量与鉴权。
-6. **`_read_edge_cookies()`（从 Edge 读抖音 Cookie）** —— 未实跑。
+5. **`_read_edge_cookies()`（从 Edge 读抖音 Cookie）** —— 未实跑。
    它会 `taskkill` 掉所有 Edge 进程再起无头实例，副作用大，不适合在验证阶段触发。
    仅验证了端口探活函数不可达时返回 `False` 且不抛异常。
+6. **中文口播的 ASR 质量** —— 转写链路本身已真跑通，但用的素材是英文歌曲
+   （课案示例链接是个 rickroll），**中文语音的识别质量与标点准确度没有验证过**。
 
 ### 环境限制（影响验证方式，不是代码问题）
 
