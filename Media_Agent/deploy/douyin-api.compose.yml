@@ -1,0 +1,39 @@
+# 自托管抖音采集服务 —— 数据复盘模块用（tools/douyin_client.py）
+#
+# 用法（在本文件所在目录执行）：
+#     docker compose -f douyin-api.compose.yml up -d
+#     docker compose -f douyin-api.compose.yml logs -f
+#
+# 起来之后在根 .env 里配：
+#     MEDIA_DOUYIN_API_BASE=http://127.0.0.1:8080
+#     MEDIA_DOUYIN_COOKIE=<浏览器里复制的抖音 Cookie>
+#
+# ⚠️ 为什么不用镜像默认的 start.sh
+#   镜像的 start.sh 执行的是 `uvicorn.run(..., reload=True)`。reload 模式要起
+#   一个监督进程 + 子进程（走 multiprocessing / /dev/shm，容器里默认只有 64MB），
+#   在本机 Docker Desktop 实测**起不来**：容器状态 running、但容器内 80 端口
+#   始终没有监听，`docker logs` 里除了 DNS 报错什么都没有，前台跑 60 秒
+#   stdout 一个字都不输出。
+#   把 reload 关掉之后 45 秒内正常启动，`GET /docs` 返回 200。
+#   reload 本来就是开发特性，常驻服务不该开。
+#
+# ⚠️ 端口
+#   容器内是 80（config.yaml 的 API.Host_Port），映射到宿主机 8080 ——
+#   与 tools/douyin_client.py 里 douyin_api_base 的默认值一致。
+services:
+  douyin-api:
+    image: evil0ctal/douyin_tiktok_download_api:V4.1.2
+    container_name: dtk-v4
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    command:
+      - python3
+      - -u
+      - -c
+      - |
+        import uvicorn
+        uvicorn.run('app.main:app', host='0.0.0.0', port=80,
+                    reload=False, log_level='info')
+    environment:
+      TZ: Asia/Shanghai

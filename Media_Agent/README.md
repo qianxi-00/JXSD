@@ -290,8 +290,26 @@ from moviepy.video.tools.subtitles import SubtitlesClip
 本项目改用自托管的 [Evil0ctal/Douyin_TikTok_Download_API](https://github.com/Evil0ctal/Douyin_TikTok_Download_API)：
 
 ```powershell
-docker run -d -p 8080:80 evil0ctal/douyin_tiktok_download_api
+# 用项目自带的 compose 定义（推荐）
+cd Media_Agent\deploy
+docker compose -f douyin-api.compose.yml up -d
+Invoke-WebRequest http://127.0.0.1:8080/docs -UseBasicParsing   # 起来后应返回 200
 ```
+
+> ⚠️ **别用镜像默认的启动命令**（`docker run ... evil0ctal/douyin_tiktok_download_api:V4.1.2`）。
+> 它内部跑 `uvicorn.run(..., reload=True)`，实测在本机 Docker Desktop 上**服务起不来**：
+> 容器状态是 running、但容器内 80 端口始终没有监听，`docker logs` 只有 DNS 报错，
+> 前台跑 60 秒 stdout 一个字都不输出。compose 里显式关掉了 `reload`，45 秒内正常启动。
+
+**Cookie 怎么配**（采集本人主页数据必需）：
+
+1. 浏览器登录 <https://www.douyin.com>；
+2. `F12` → **Network** → 刷新页面 → 点任意一条发往 `douyin.com` 的请求；
+3. **Headers → Request Headers** → 复制整条 `Cookie:` 的值；
+4. 粘到根 `.env` 的 `MEDIA_DOUYIN_COOKIE=` 等号后面（**整行、不要加引号**）。
+
+`.env` 在 `.gitignore` 里、不会入库。也支持在页面上临时粘贴（只作用于当前会话，
+重启即失效，不会留下忘记清理的持久凭据）。
 
 ---
 

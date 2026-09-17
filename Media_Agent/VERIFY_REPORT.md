@@ -21,7 +21,8 @@
 | **声音克隆全链路**（自建托管 → `create_voice` → 克隆音色合成） | **通过**（见 5.8④） |
 | **自建公网素材托管**（`tools/asset_host.py` + nginx 只读 location） | **通过**（见 5.8①） |
 | **DeepAgents 视频剪辑真实出片** | **通过** —— 12 个 moviepy 动画素材 + 百炼 ASR 字幕 + 上下排布合成，产出 `mashup_final.mp4`（1280×960 / 20.0s / 30fps / 2.9MB，已逐帧核对），见 5.10 |
-| 数字人出片 / 抖音真实采集 | **未验证**（见第 8 节） |
+| **数字人对口型真实出片（PixVerse）** | **通过** —— 6 秒素材 + edge-tts 配音，产出 `avatar_27280.mp4`（1280×720 / 6.3s / 44.7s 端到端），ASR 复核确认音轨被替换，见 5.11 |
+| 抖音真实采集 | 采集服务**已部署并连通**（`is_available=True`）；真实拉取待你填 Cookie（见第 8 节第 4 条） |
 
 > 第二轮验证（5.8）另外修掉 3 个真问题：`MediaAgentSettings` **漏写 `env_prefix`**
 > 导致所有 `MEDIA_*` 配置从未被读取；`asset_host.unpublish()` 的 **shell 注入隐患**；
@@ -51,7 +52,7 @@ Set-Location F:\ProGram\Python_Base\Media_Agent
 | 百炼 | `DASHSCOPE_API_KEY` 已配置（**根 `.env` 既有值**，非本次工作新增，详见第 8 节第 6 条），端点 `https://dashscope.aliyuncs.com/api/v1` |
 | ffmpeg / yt-dlp / edge-tts | 均已安装可用 |
 | HyperFrames | CLI **可用**（`npx --yes hyperframes --version` → `0.8.46`），但**渲染链路不可用**：`init`/`render` 实测卡到 300s 超时。默认已由 `MEDIA_MASHUP_USE_HYPERFRAMES=false` 切到 moviepy 分支（见 5.9④） |
-| Docker 服务 | **未启动**（抖音采集走降级入口） |
+| Docker 服务 | **可用**（29.7.2）。抖音采集服务已部署：`Media_Agent/deploy/douyin-api.compose.yml` → `http://127.0.0.1:8080` |
 | GPU | 不需要（本项目不含本地模型） |
 
 ---
@@ -780,6 +781,64 @@ OK   font='msyh.ttc'
 moviepy 降级分支的指令、`node_edit_video` 的默认任务提示；
 并在自检里加了**实测断言**：用 `C:/Windows/Fonts/msyh.ttc` 构造 TextClip 必须成功。
 
+### 5.11 ✅ 数字人对口型真实出片（第四轮验证，**通过**）
+
+**前置**：账号此前对计费模型返回 `Arrearage`，充值后复测：
+
+| 探测目标 | 充值前 | 充值后 |
+|---|---|---|
+| compatible-mode `qwen-turbo` | ❌ `Arrearage` | ✅ **HTTP 200** |
+| `voice-enrollment`（声音复刻） | ❌ `Arrearage` | ✅ **HTTP 200** |
+| `pixverse/pixverse-lipsync` | ❌ `Arrearage` | ✅ **提交成功，拿到 task_id** |
+
+**成本控制**：PixVerse lipsync 官方价 **0.12 元/秒**（[价目页](https://help.aliyun.com/zh/model-studio/pixverse-lipsync)），
+所以把 20 秒模特视频裁成 **6 秒**再测，一条约 0.76 元。
+
+**跑的是项目自己的工作流**（不是绕过它直接调 API）：
+
+```
+run_video(raw_script=..., mode="avatar", avatar_path=<6s 素材>, use_cloned_voice=False)
+  → node_generate_video → edge-tts 配音 → submit_lipsync(音频驱动) → 轮询 → 下载
+```
+
+**结果**：
+
+```
+task_id = 2bfe34f5-c821-4d0c-8185-87ccb45ae13b
+输出     = .cache/videos/avatar_27280.mp4
+1280×720 / 6.33s / 30fps / 有音轨 / 1,384,295 bytes
+端到端 44.7s（官方文档说 2~5 分钟）
+```
+
+**三重校验（不是"接口返回 200 就算过"）**：
+
+1. **属性**：成片 1280×720 / 6.33s，与 TTS 配音 6.26s 基本一致（PixVerse 输出时长跟随音频）；
+2. **画面**：抽 6 帧做联系表，逐帧可见口型在开合之间变化（张口/闭口/圆唇）；
+3. **音轨**：对成片跑 ASR，转出的是**我写的台词**
+   `大家好，这里是口播视频工作流的数字人出片测试，3、2、1，结束。` ——
+   而不是源素材的原话。这条最关键：证明音轨确实被替换成了新配音、口型由它驱动。
+
+#### 🎯 顺带解开了 5.9 留下的一个未解疑问
+
+上一轮报告里写过：「**不知道 PixVerse 收不收 `oss://`**，如果不收，数字人也需要自建公网托管」。
+
+**实测答案：收。** 本项目的 `submit_lipsync()` 走的正是
+`tools/dashscope_upload.upload_file()` → 百炼临时存储 `oss://`，
+PixVerse 直接接受并成功出片。所以：
+
+> **数字人这条链路不需要自建素材托管**；需要托管的只有 CosyVoice `create_voice`（见 5.7）。
+
+这条差异值得记住：同一把百炼 key，不同模型的资源 URL 要求并不一致。
+
+**产物已归档**（`.cache/` 已 gitignore）：
+
+| 文件 | 用途 |
+|---|---|
+| `.cache/fixtures/cn/cn_avatar_6s.mp4` | 6 秒模特素材（成本控制用） |
+| `.cache/videos/avatar_27280.mp4` | 数字人成片 |
+| `.cache/fixtures/cn/avatar_sheet.png` | 6 帧联系表 |
+| `.cache/e2e_avatar.py` | 可重跑的 E2E 脚本 |
+
 ---
 
 ## 6. Streamlit 应用验证
@@ -865,29 +924,42 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 
 1. ~~声音克隆（CosyVoice）出音~~ —— **已于第二轮验证打通**（见 5.8④）：
    自建公网托管（自己的服务器 + nginx 只读 location）+ `create_voice` + 克隆音色合成全通。
-2. **数字人对口型（PixVerse）的真实出片** —— 未验证，且**当前被账号状态挡住**。
-   实测提交请求返回 `400 Arrearage`（`Access denied, please make sure your account is
-   in good standing`），根因见下方第 6 条，**不是**「模型未开通」。
-   素材与托管这两环都已就绪：普通话人脸素材 `.cache/fixtures/cn/cn_avatar_20s.mp4`（20s / 1280x720），
-   公网托管 `http://43.128.75.66/media-assets/...` 可用（见 5.8①），
-   即使 PixVerse 不吃 `oss://` 也不影响。
-   账号恢复后可直接跑：`python -c "from tools.avatar_client import generate_avatar_video; ..."`。
+2. ~~**数字人对口型（PixVerse）的真实出片**~~ —— **已于第四轮验证出片**（见 5.11）。
+   账号充值后 `Arrearage` 消失，走项目自己的 `run_video(mode="avatar")` 出片成功：
+   1280×720 / 6.33s / 44.7s 端到端；并用 ASR 复核确认音轨被替换成新配音。
+   同时确认 **PixVerse 接受 `oss://`**，数字人链路**不需要**自建公网托管。
 3. ~~**视频剪辑（DeepAgents）的真实出片**~~ —— **已于第三轮验证出片**（见 5.10）：
    12 个 moviepy 动画素材 + 百炼 ASR 字幕 + 上下排布合成，产出
    `mashup_final.mp4`（1280×960 / 20.0s / 2.9MB），`elapsed=394.3s`。
    过程中修掉了 4 个真缺陷（5.9 全节）。
    仍需注意：**HyperFrames 渲染链路在本机不可用**（见 5.9④），
    默认已由 `MEDIA_MASHUP_USE_HYPERFRAMES=false` 切到 moviepy 分支。
-4. **抖音数据采集的真实链路** —— 未验证。本机**没有 Docker 服务**，
-   只验证了「服务不可达 → 返回带修复命令的中文错误 → 降级入口可用」。
-   响应体的真实层级、Cookie 是否够用、`/user/self` 解析是否有效，全都需要真跑服务才能确认。
-   ⚠️ 另有一个上游版本风险：`Evil0ctal/Douyin_TikTok_Download_API` 的 `main` 已是 **v5**
-   （改为 `/api/v1/...` 且需 API Key，端口 80 → 8000），本项目代码按 **v4** 形态实现，
-   docker 命令里 pin 的是 `:V4.1.2`。若部署 v5 需要改端点常量与鉴权。
+4. **抖音数据采集的真实拉取** —— **服务已部署连通，卡在 Cookie**。
+   本轮完成的部分：
+
+   | 项 | 结果 |
+   |---|---|
+   | 镜像拉取 | ✅ `evil0ctal/douyin_tiktok_download_api:V4.1.2` |
+   | 服务部署 | ✅ 宿主机 `http://127.0.0.1:8080`，`GET /docs` → **200** |
+   | 项目客户端连通 | ✅ `tools/douyin_client.is_available()` → **True** |
+   | 接口真实调用 | ✅ 打到了 `/api/douyin/web/fetch_user_post_videos`，返回 400（缺 Cookie） |
+
+   ⚠️ **踩到一个部署坑（已修并写进 compose）**：镜像默认的 `start.sh` 跑的是
+   `uvicorn.run(..., reload=True)`，在本机 Docker Desktop 上**服务起不来** ——
+   容器状态 running、但容器内 80 端口始终没监听、`docker logs` 只有 DNS 报错、
+   前台跑 60 秒 stdout 一个字都没有。关掉 `reload` 后 45 秒内正常启动。
+   定义已固化为 `Media_Agent/deploy/douyin-api.compose.yml`。
+
+   **仍需你做的**：在根 `.env` 里填 `MEDIA_DOUYIN_COOKIE`（见 README 的步骤）。
+   填完后 `fetch_user_videos()` 的真实响应层级（`data.aweme_list` 还是别的键）、
+   `/user/self` 解析是否有效，才能最终确认 —— 本文件的 `_extract_aweme_list()`
+   已经按"常见层级都试一遍"写，但没有真实响应就无法收口。
+   ⚠️ 上游版本风险仍在：`Evil0ctal/Douyin_TikTok_Download_API` 的 `main` 已是 **v5**
+   （`/api/v1/...` 且需 API Key），本项目按 **v4** 形态实现、compose 里 pin 的是 `:V4.1.2`。
 5. **`_read_edge_cookies()`（从 Edge 读抖音 Cookie）** —— 未实跑。
    它会 `taskkill` 掉所有 Edge 进程再起无头实例，副作用大，不适合在验证阶段触发。
    仅验证了端口探活函数不可达时返回 `False` 且不抛异常。
-6. **【新增·需要你处理】百炼账号对计费模型返回 `Arrearage`** —— 账号欠费/无可用额度。
+6. **~~【需要你处理】~~ 百炼账号对计费模型返回 `Arrearage`** —— **已充值解决**。
    本轮实测（同一把 key，`sha256[:12]=b96e9a10cb9f`，len 35）：
 
    | 探测目标 | 结果 |
@@ -901,15 +973,13 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
    对照项证明**错误码有先后顺序**：先校验模型是否存在、再校验账号状态 ——
    所以 PixVerse 报 `Arrearage` 说明**模型本身存在且已开通**，卡的是账号状态。
 
-   **需要你做的**：登录阿里云百炼控制台 → 费用中心，查「免费额度」与账户余额，
-   结清欠费或充值。恢复之前，声音克隆与数字人出片**不可用**，ASR 与热点链路不受影响。
+   **✅ 已解决**：你充值 5 元后复测，三项全部恢复 —— 见 5.11 的对照表。
+   声音克隆与数字人出片均已实测可用。
 
    > 关于 key 归属：`DASHSCOPE_API_KEY` 是根 `.env` 里**本来就有的**一行，
    > 位于注释「阿里云百炼 DashScope —— 课案「监控与评估 / RAG评估」的评测模型 + 向量模型」
    > 之下，由 RAG 子项目共用；本次工作只是**复用它**，没有引入、替换或新增任何百炼密钥。
    > 它也不是记忆栈那把 key（`F:\ProGramApp\DSH\memory\.env` 的 `MEMORY_LLM_API_KEY`）。
-   > 该行是否属于你的个人账号，只有你能最终确认 —— 但账号处于欠费状态这一点，
-   > 与「公司共享账号」的特征不符。
 
 ### 环境限制（影响验证方式，不是代码问题）
 

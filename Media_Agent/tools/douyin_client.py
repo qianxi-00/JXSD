@@ -15,8 +15,22 @@
 
 本项目方案：自托管 Evil0ctal/Douyin_TikTok_Download_API（REST 接口，仍在维护）::
 
+    # 用项目里的 compose 定义（推荐，已把 reload 关掉）：
+    cd Media_Agent/deploy
+    docker compose -f douyin-api.compose.yml up -d
+
+    # 等价的手写命令：
     docker run -d --name dtk-v4 --restart unless-stopped -p 8080:80 \
-      evil0ctal/douyin_tiktok_download_api:V4.1.2
+      evil0ctal/douyin_tiktok_download_api:V4.1.2 \
+      python3 -u -c "import uvicorn; uvicorn.run('app.main:app', \
+        host='0.0.0.0', port=80, reload=False, log_level='info')"
+
+⚠️ **不要直接用镜像默认的 `start.sh`**（也就是不写上面最后那行 `python3 -u -c ...`）：
+它跑的是 ``uvicorn.run(..., reload=True)``，实测在本机 Docker Desktop 上
+**服务起不来** —— 容器状态是 running、但容器内 80 端口始终没有监听，
+``docker logs`` 里只有 DNS 报错，前台跑 60 秒 stdout 一个字都不输出。
+reload 要起监督进程 + 子进程（多进程 + /dev/shm，容器里默认仅 64MB），
+而 reload 本来就是开发特性，常驻服务应当关掉。关掉后 45 秒内启动、``GET /docs`` 返回 200。
 
 与课案的落地差异
     | 项 | 课案 | 本项目 |
@@ -411,9 +425,10 @@ def fetch_user_videos(profile_url: str, limit: int = 20) -> dict:
     if not is_available():
         return _fail(
             f"抖音采集服务不可达（{base}）。\n"
-            "该服务需要自己起：\n"
-            "    docker run -d --name dtk-v4 --restart unless-stopped -p 8080:80 "
-            "evil0ctal/douyin_tiktok_download_api:V4.1.2\n"
+            "该服务需要自己起（用项目里的 compose，见 Media_Agent/deploy/）：\n"
+            "    cd Media_Agent/deploy\n"
+            "    docker compose -f douyin-api.compose.yml up -d\n"
+            "⚠️ 别用镜像默认启动命令：它的 uvicorn 开着 reload，本机实测起不来服务。\n"
             "服务没起来时，请改用页面下方的「📋 手动粘贴作品数据」降级入口 —— "
             "诊断链路完全一样，只是跳过采集节点。"
         )
