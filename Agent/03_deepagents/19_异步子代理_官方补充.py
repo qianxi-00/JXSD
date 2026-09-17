@@ -312,15 +312,16 @@ def demo_2_check_and_list() -> None:
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="ap_server_") as tmp:
         workdir = Path(tmp)
-        print(f"生成最小 Agent Protocol 应用：{workdir}")
+        print(f"生成最小 Agent Protocol 应用（临时目录，跑完即删）：{workdir}")
         process = start_agent_protocol_server(workdir)
         try:
             if process is not None:
                 print(f"启动服务 {BASE_URL}（langgraph dev，PYTHONUTF8=1）…")
             if not wait_for_server():
                 print(
-                    "服务未能在 90 秒内就绪。可以手动复现：\n"
-                    f"  cd {workdir}\n"
+                    "服务未能在 90 秒内就绪。手动复现时**别照抄上面的临时目录**"
+                    "（它在本文件结束时就删了），自己建一个目录放同样的两个文件即可：\n"
+                    "  bg_graph.py（内容见本文件头部的模板）+ langgraph.json\n"
                     "  $env:PYTHONUTF8='1'; langgraph dev --port 2024\n"
                     "然后重跑本文件（它会复用已就绪的服务）。"
                 )

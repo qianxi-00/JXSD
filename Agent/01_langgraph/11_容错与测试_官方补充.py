@@ -334,8 +334,10 @@ if __name__ == "__main__":
     assert second == {"x": 100, "y": 1000}, second
     print(f"  注入 x=100 后继续跑：{second}  ✔ step_b 按注入值算出 y=1000")
     print(
-        "  ↑ 这样就**跳过了 step_a** 直接测 step_b —— 上游很慢/很贵时（比如要调模型）\n"
-        "    这一招能省掉大部分测试成本。放进 pytest 的写法见文件末尾注释。"
+        "  ↑ 本次是「先跑到 step_a 之后停下（step_a 已执行一次），再注入状态从 step_b 继续」，\n"
+        "    所以断言的是**中间那一段**；官方 test.mdx 的更省版本是：先 update_state(as_node=\"step_a\")\n"
+        "    伪造上游输出，再 invoke(None, config, interrupt_after=\"step_b\")，**全程不跑上游** ——\n"
+        "    上游很慢/很贵时（比如要调模型）能把成本压到最低。"
     )
 
     print("\n全部 Demo 执行完毕（0 次模型调用，离线可复现）。")
