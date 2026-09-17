@@ -55,6 +55,9 @@ embeddings = OpenAIEmbeddings(
     api_key=settings.embedding.api_key,
     base_url=settings.embedding.base_url,
     check_embedding_ctx_length=False,   # 第三方端点必须关（见 24_RAG知识库 官方补充篇）
+    # 显式超时：端点慢时快速失败，而不是无限挂住（实测踩过：没设超时时整跑会卡死）
+    request_timeout=60,
+    max_retries=1,
 )
 
 # 带语义索引的 Store：dims 必须与 embedding 维度一致，fields 指明对哪些字段建索引

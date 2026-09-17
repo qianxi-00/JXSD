@@ -148,7 +148,8 @@ class DictBackend(BackendProtocol):
             entries.append({
                 "path": file_path,
                 "is_dir": False,
-                "size": len(file_data_to_string(file_data)),
+                # 官方 FileInfo.size 是**字节数**，不是字符数（中文一字 3 字节）
+                "size": len(file_data_to_string(file_data).encode("utf-8")),
                 "modified_at": file_data.get("modified_at", "") if isinstance(file_data, dict) else "",
             })
         entries.extend({"path": d, "is_dir": True, "size": 0, "modified_at": ""} for d in sorted(subdirs))
@@ -330,6 +331,10 @@ def demo_3_policy_hooks() -> None:
     show_tool_messages(result, limit=80)
     print(f"\n  实际写入成功的文件：{sorted(backend.files)}")
     print(f"  被策略拒绝的记录：{backend.rejected}")
+    # 断言兜住：三次写调用必须在 1 秒滑窗内完成，否则限流那条结论就不成立
+    # （脚本模型下必然成立；万一机器慢到这个阈值失真，这里会直接报出来而不是印错结论）
+    assert len(backend.rejected) == 2, f"预期两类策略各拦一次，实际：{backend.rejected}"
+    print(f"  审计日志（通过策略的那几次）：{backend.audit}")
     print(
         "  ↑ 三次正常写入里，第 3 次被**限流**拦下（1 秒内最多 2 次）；\n"
         "    带密钥的那次被**内容校验**拦下。两类策略都写在后端层 ——\n"

@@ -61,6 +61,9 @@ embeddings = OpenAIEmbeddings(
     api_key=settings.embedding.api_key,
     base_url=settings.embedding.base_url,
     check_embedding_ctx_length=False,   # 兼容第三方端点的必要开关（见文末踩坑）
+    # 显式超时：端点慢时快速失败，而不是无限挂住（实测踩过：没设超时时整跑会卡死）
+    request_timeout=60,
+    max_retries=1,
 )
 
 
