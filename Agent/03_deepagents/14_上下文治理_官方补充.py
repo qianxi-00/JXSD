@@ -192,9 +192,13 @@ def demo_2_permission_deny() -> None:
     )
     result = agent.invoke({"messages": [{"role": "user", "content": "写两个文件"}]})
     show_tool_messages(result, limit=120)
+    # 结论按**实际拿到的工具消息**判断打印，不写死 —— 权限规则一变，这里要能如实反映
+    tool_texts = [str(m.content) for m in result["messages"] if m.type == "tool"]
+    denied = [text for text in tool_texts if "permission denied" in text.lower() or "拒绝" in text]
+    written = [text for text in tool_texts if "Updated file" in text]
     print(
-        "    ↑ 第一次写 /secrets/** 被权限规则拒绝（工具返回一句拒绝说明，**不是抛异常**）；\n"
-        "      第二次写 /work/** 正常成功 —— 规则「先匹配先生效」，没匹配上的默认放行。\n"
+        f"    ↑ 实测：{len(denied)} 条被权限拒绝、{len(written)} 条写入成功 ——\n"
+        "      拒绝的表现是**工具返回一句说明**（不是抛异常）；规则「先匹配先生效」，没匹配上的默认放行。\n"
         "      注意路径是 StateBackend 的虚拟文件系统路径，都以 / 开头。"
     )
 

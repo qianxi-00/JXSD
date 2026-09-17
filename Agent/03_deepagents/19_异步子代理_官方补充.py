@@ -48,6 +48,7 @@ sys.stdout.reconfigure(encoding="utf-8")   # Windows 控制台默认 GBK，防�
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -103,22 +104,37 @@ graph = create_agent(
 '''
 
 
-def wait_for_server(timeout: int = 90) -> bool:
-    """轮询 /ok，确认 Agent Protocol 服务端已就绪。"""
+def server_is_up() -> bool:
+    """单次探测：服务端现在是否已经就绪（不等待）。"""
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(f"{BASE_URL}/ok", timeout=2) as response:
+            return response.status == 200
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+def wait_for_server(timeout: int = 90) -> bool:
+    """轮询 /ok，确认 Agent Protocol 服务端已就绪（最多等 timeout 秒）。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
-            with opener.open(f"{BASE_URL}/ok", timeout=3) as response:
-                if response.status == 200:
-                    return True
-        except (urllib.error.URLError, OSError):
-            time.sleep(1.5)
+        if server_is_up():
+            return True
+        time.sleep(1.5)
     return False
 
 
 def start_agent_protocol_server(workdir: Path):
-    """在临时目录里生成最小应用并起 langgraph dev，返回 Popen 对象。"""
+    """在临时目录里生成最小应用并起 langgraph dev，返回 Popen 对象。
+
+    返回值语义：**进程对象 = 本文件起的（结束时由本文件关）；None = 复用已有服务**
+    （上一次运行留下了孤儿进程时会出现这种情况 —— 复用比重复起一个必然失败的更稳，
+    而且绝不误杀别人的进程）。
+    """
+    if server_is_up():
+        print(f"  检测到 {BASE_URL} 已有服务在运行 → 复用它（本次不新起进程）")
+        return None
+
     (workdir / "bg_graph.py").write_text(BG_GRAPH_SOURCE, encoding="utf-8")
     (workdir / "langgraph.json").write_text(
         json.dumps({"dependencies": ["."], "graphs": {GRAPH_ID: "./bg_graph.py:graph"}}, indent=2),
@@ -132,6 +148,11 @@ def start_agent_protocol_server(workdir: Path):
     env["NO_PROXY"] = "127.0.0.1,localhost"
 
     cli = Path(sys.executable).parent / ("langgraph.exe" if os.name == "nt" else "langgraph")
+    if not cli.exists():
+        raise FileNotFoundError(
+            f"找不到 langgraph CLI：{cli}\n"
+            '请先安装：uv add "langgraph-cli[inmem]"（本文件的服务端由它提供）'
+        )
     process = subprocess.Popen(
         [str(cli), "dev", "--port", str(PORT), "--host", "127.0.0.1", "--no-browser"],
         cwd=str(workdir),
@@ -145,7 +166,13 @@ def start_agent_protocol_server(workdir: Path):
 
 
 def stop_agent_protocol_server(process) -> None:
-    """关掉服务端（Windows 上连同子进程树一起收）。"""
+    """关掉**本文件起的**服务端（Windows 上连同子进程树一起收）。
+
+    process 为 None（复用已有服务）时不动作 —— 别人起的服务不该由我们关掉。
+    """
+    if process is None:
+        print("  （本次复用的是已有服务，不做关闭动作）")
+        return
     if process.poll() is not None:
         return
     if os.name == "nt":
@@ -239,10 +266,16 @@ def demo_2_check_and_list() -> None:
         {"messages": [{"role": "user", "content": "后台算一下 100 的阶乘有多少位数字，拿到任务 ID 即可。"}]},
         config,
     )
+    # 用正则抽 task_id：模型同一轮里可能既调 start 又调 check（后者的返回是 JSON 形状的
+    # "task_id": "..."），用 split("task_id:") 会切出带引号/空串的垃圾值 —— 本文件踩过。
     task_id = ""
     for output in tool_outputs(launched):
-        if "task_id" in output:
-            task_id = output.split("task_id:")[-1].strip().split()[0]
+        match = re.search(r"task_id[\"']?\s*[:：]\s*[\"']?([0-9a-fA-F-]{8,})", output)
+        if match:
+            task_id = match.group(1)
+            break
+    if not task_id:
+        print("  ⚠️ 没能从工具返回里解析出 task_id（返回内容见上），后续 check 会查不到任务。")
     print(f"  已启动任务：{task_id or '（没拿到 ID）'}")
 
     print("  等 8 秒再查状态（给后台一点时间）…")
@@ -282,7 +315,8 @@ if __name__ == "__main__":
         print(f"生成最小 Agent Protocol 应用：{workdir}")
         process = start_agent_protocol_server(workdir)
         try:
-            print(f"启动服务 {BASE_URL}（langgraph dev，PYTHONUTF8=1）…")
+            if process is not None:
+                print(f"启动服务 {BASE_URL}（langgraph dev，PYTHONUTF8=1）…")
             if not wait_for_server():
                 print(
                     "服务未能在 90 秒内就绪。可以手动复现：\n"
@@ -296,7 +330,8 @@ if __name__ == "__main__":
             demo_2_check_and_list()
         finally:
             stop_agent_protocol_server(process)
-            print("\n本地 Agent Protocol 服务已关闭（含子进程树）。")
+            if process is not None:
+                print("\n本地 Agent Protocol 服务已关闭（含子进程树）。")
     print("全部 Demo 执行完毕。")
 
 

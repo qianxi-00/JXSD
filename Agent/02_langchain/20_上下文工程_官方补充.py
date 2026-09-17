@@ -41,6 +41,8 @@ LangChain 官方补充篇：上下文工程总纲（非课案内容，故不带 
 
 ⚠️ 本文件需要真实模型。
 
+缺口表对应：`Agent/官方文档缺口对照.md` 的 **LangChain 第 7 项**（上下文工程总纲）。
+
 运行方式（项目根目录下）：
     uv run Agent/02_langchain/20_上下文工程_官方补充.py
 """
@@ -88,7 +90,8 @@ class CallerInfo(BaseModel):
     """
 
     user_id: str
-    plan: str = "pro"      # "free" / "pro"
+    # 默认给最低权限（fail-closed）：拿不到身份时不该默认拿到高权限
+    plan: str = "free"     # "free" / "pro"
 
 # 记录模型每次调用实际看到的工具名，用来证明裁剪生效
 seen_tools: list[list[str]] = []
@@ -97,7 +100,9 @@ seen_tools: list[list[str]] = []
 @wrap_model_call
 def limit_tools_by_plan(request, handler):
     """按套餐裁剪工具集：免费用户看不到 delete_record。"""
-    plan = getattr(request.runtime.context, "plan", "pro")
+    # 取不到 context（未注入）或没声明 plan 时**按最低权限处理** ——
+    # 安全相关的默认值必须 fail-closed：宁可少给工具，也不能默认放行。
+    plan = getattr(request.runtime.context, "plan", None) or "free"
     allowed = [t for t in request.tools if not (plan == "free" and t.name == "delete_record")]
     seen_tools.append([t.name for t in allowed])
     return handler(request.override(tools=allowed))

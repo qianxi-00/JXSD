@@ -41,13 +41,16 @@ LangGraph 12 大缺口速览（官方文档 vs 课案，按学习价值排序；
 为什么本文件全部离线（0 次模型调用）：
     控制流是**纯 Python 机制**——Send 怎么扇出、Command 怎么跳转、@task 怎么复用结果，
     这些行为的对错与模型无关，用固定数据才能确定性复现（也才好排查）。生产里
-    "产出主题""写笑话"这类节点当然应该换成模型调用，本文件用固定值替代并在注释里标出。
+    "「产出主题」「写笑话」这类节点当然应该换成模型调用，本文件用固定值替代并在注释里标出。
 
-版本差异（本地实测，写代码时要当心）：
-    官方**最新文档**里的两个写法在本地 langgraph 1.2.11 上**不存在**，本文件不用：
-      - `add_edge(START, ["a", "b"])` 多目标静态并行 → 实测 TypeError: unhashable type: 'list'
-      - `StateGraph.add_node_defaults(...)` 批量默认重试/超时 → 实测 hasattr 为 False
-    本文件用 1.2.11 支持的方式实现同样效果（Send 扇出 / 每个 add_node 单独传策略）。
+两个容易搞错的官方写法（本地实测 + 官方文档核对）：
+      - **批量默认策略的正确 API 是 `set_node_defaults(...)`**，本地 1.2.11 就有：
+            StateGraph.set_node_defaults(retry_policy=RetryPolicy(max_attempts=2), timeout=5)
+        它给图里**所有**节点设默认值（单节点 add_node 传的值优先），在 compile() 时生效。
+        写成 `add_node_defaults` 会 hasattr 为 False —— 那是名字记错了，不是版本不支持。
+      - 官方的 **list-form edge 是「多起点」**：`add_edge(["a", "b"], "c")` 表示 a、b 都完成后
+        才走 c（本地同样支持）；而把列表当**终点**的 `add_edge(START, ["a", "b"])` 不支持
+        （实测 TypeError: unhashable type: 'list'）—— 并行扇出请用 Send，或写两条 add_edge。
 
 运行方式（项目根目录下）：
     uv run Agent/01_langgraph/10_控制流与函数式API_官方补充.py
@@ -254,7 +257,9 @@ if __name__ == "__main__":
     print(
         "  ↑ 3 条结果**同时**在 jokes 里 —— 这就是 reducer(operator.add) 的作用；\n"
         "    如果把 MapReduceState 里的 jokes 改成裸 list（没有 Annotated 声明），\n"
-        "    三个 worker 会互相覆盖，最后只剩一条（课案讲过的「覆盖 vs 追加」）。"
+        "    三个 worker 在**同一 super-step** 写同一字段会直接抛 InvalidUpdateError\n"
+        "    （LastValue 通道报 At key 'jokes': Can receive only one value per step），图直接失败。\n"
+        "    注意区分：跨 super-step 的串行写入才是「后写覆盖先写」。"
     )
 
     # ---------- Demo 2 ----------
@@ -309,13 +314,16 @@ if __name__ == "__main__":
 # ================================================================
 # 1. 实测结论（langgraph 1.2.11，本机）：
 #    - Demo 1：三个 worker 的产出都在 jokes 里（reducer 生效），pick_best 能看到全部 3 条；
-#    - Demo 2：decide 无静态出边时 Command(goto=...) 正常跳转；tick 自跳 3 次后 goto=END 收尾；
+#    - Demo 2：decide 无静态出边时 Command(goto=...) 正常跳转；tick 执行 3 次（自跳 2 次）后 goto=END；
 #    - Demo 3：第一次 invoke 返回 {'__interrupt__': [Interrupt(value=..., id=...)]}；
 #      resume 后 expensive_double **只执行过 1 次**（重放不重算）；换 thread 后变成第 2 次。
-# 2. 版本差异（本文件刻意绕开的两个官方新写法，本地 1.2.11 不支持）：
-#    - add_edge(START, ["a", "b"])（多目标静态并行）→ TypeError: unhashable type: 'list'；
-#    - StateGraph.add_node_defaults(...)（批量默认 retry/timeout）→ 属性不存在。
-#    想用这两个写法要先升级 langgraph；本文件用 Send + 逐节点传参实现同样效果。
+# 2. 两个容易搞错的官方写法（本地实测 + 官方文档核对）：
+#    - **批量默认策略的 API 是 `set_node_defaults`（本地 1.2.11 就有）**，不是
+#      add_node_defaults（那是名字记错，不是版本问题）：它在 compile() 时对图内所有节点生效，
+#      单节点 add_node 传的策略优先；
+#    - 官方 list-form edge 的列表是**起点**（add_edge(["a","b"], "c")：多起点都完成才走 c，
+#      本地支持）；把列表当**终点**（add_edge(START, ["a","b"])）不支持 → TypeError:
+#      unhashable type: 'list'。并行扇出请用 Send，或写两条独立 add_edge。
 # 3. 未收录（官方还有、本文件没做的）：
 #    - workflows-agents.mdx 的六种工作流模式：prompt chaining / parallelization / routing /
 #      orchestrator-worker / evaluator-optimizer / agents。前三个本文件已覆盖机制，
@@ -323,12 +331,15 @@ if __name__ == "__main__":
 #      与后续练习；orchestrator-worker 就是 Demo 1。
 #    - 容错（RetryPolicy / 超时 / 错误处理）与测试（三种 pytest 模式）→ 见同目录
 #      11_容错与测试_官方补充.py。
-#    - 记忆工程化（trim/delete/summarize）、长期记忆策略分类、子图持久化三种模式、
-#      中断进阶规则、durability modes、可观测性 → 见 Agent/官方文档缺口对照.md 的表格。
+#    - 记忆工程化（trim/delete/summarize）→ 同目录 12_记忆_持久化与中断进阶_官方补充.py；
+#    - 长期记忆策略分类与 Store 语义搜索 → 同目录 13_长期记忆_官方补充.py；
+#    - 子图持久化三种作用域 → 同目录 14_子图持久化_官方补充.py；
+#    - 可观测性（LangSmith / Studio）→ 见 Agent/官方文档缺口对照.md（本仓库不用 LangSmith）。
 # 4. 踩坑提示：
 #    A. Send 的 worker 收到的是**私有输入**（Send 第二参），不是完整 state；
 #       想在 worker 里读公共字段必须由 fan-out 函数显式塞进去。
-#    B. 并行写同一个字段必须带 reducer，否则结果互相覆盖（Demo 1 注释里的反例）。
+#    B. 并行写同一个字段必须带 reducer：同一 super-step 内写多次会抛 InvalidUpdateError
+#       （不是"互相覆盖"——覆盖只发生在跨 super-step 的串行写入，Demo 1 注释里有反例）。
 #    C. Command 只加动态边：同时存在静态出边时**两条路都会跑**（官方警告，已在 Demo 2 注释标明）。
 #    D. Command 的去向建议用 `Command[Literal[...]]` 注解声明；goto 到 END 时用 END 常量
 #       （它的节点名就是 "__end__"）。

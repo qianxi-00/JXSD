@@ -164,7 +164,9 @@ def demo_2_interrupt_difference() -> None:
         parent = build_interrupt_parent(mode)
         config = {"configurable": {"thread_id": f"sub-interrupt-{mode}"}}
         try:
-            first = parent.invoke({"messages": [], "approved": ""}, config)
+            # 注意：approved 是**子图私有字段**，父图 schema 里没有 → 传了也会被静默丢弃，
+            # 这里传它只是为了让调用形状与子图对齐（真正生效的是 interrupt 的返回值）。
+            first = parent.invoke({"messages": []}, config)
             if "__interrupt__" in first:
                 payload = first["__interrupt__"][0].value
                 print(f"    第一次 invoke 正常暂停，中断负载：{payload}")
@@ -214,7 +216,7 @@ def demo_3_inspect_subgraph_state() -> None:
         print(f"\n  --- 模式：{mode} ---")
         parent = build_interrupt_parent(mode)
         config = {"configurable": {"thread_id": f"sub-inspect-{mode}"}}
-        parent.invoke({"messages": [], "approved": ""}, config)     # 跑到中断处停下
+        parent.invoke({"messages": []}, config)                     # 跑到中断处停下（父图无 approved 字段）
 
         snapshot = parent.get_state(config, subgraphs=True)
         print(f"    父图 values（只有 messages，子图私有字段不冒泡）：{sorted(snapshot.values.keys())}")
@@ -274,8 +276,9 @@ if __name__ == "__main__":
 # 4. 踩坑提示：
 #    A. **实验设计别让父图"帮忙"持久化**：想让子图私有状态可见，就不要把同名字段放进
 #       父图 schema（否则父图 checkpointer 会替你记住，看不出 per-invocation 的"每次全新"）；
-#    B. per-invocation 与 stateless 的差别**不在"记不记得"**，而在**能不能中断/恢复** ——
-#       只看状态计数会把两者当成一样；
+#    B. per-invocation 与 stateless 的差别**不在"记不记得"**（本机实测两者都是每次全新、
+#       也都能在父图带 checkpointer 时暂停恢复），而在**有没有子图自己的检查点** ——
+#       实测：per-invocation 暂停时能下钻到子图快照，stateless 拿不到（`task.state is None`）；
 #    C. per-thread 的子图**必须**与父图用同一个 thread（框架自动处理命名空间），
 #       换 thread 就是新会话；
 #    D. 子图状态不自动冒泡到父图：要用到的数据得自己 return 上去（或让子图写进 messages）。

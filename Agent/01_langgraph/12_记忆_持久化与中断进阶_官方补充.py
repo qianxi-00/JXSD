@@ -70,8 +70,8 @@ def trim_before_model(state: ChatState) -> dict:
         state["messages"],
         strategy="last",          # 从最新往回保留
         token_counter=len,        # 教学用「条数」当 token 计数（真实项目用模型或估算函数）
-        max_tokens=3,             # 最多保留 3 条
-        start_on="human",         # 保证裁剪后第一条是 human（否则模型看到半截对话）
+        max_tokens=3,             # 预算 3 格 —— SystemMessage 也占格，实际留不到 3 条
+        start_on="human",         # 保证第一条**非 system** 消息是 human（否则模型看到半截对话）
         include_system=True,      # 系统提示永远保留
         allow_partial=False,      # 不切半条消息
     )
@@ -82,7 +82,11 @@ def trim_before_model(state: ChatState) -> dict:
 
 
 def summarize_and_delete(state: ChatState) -> dict:
-    """官方 summarize 模式：把早期对话压成摘要写进 state，再把原文删掉。"""
+    """官方 summarize 模式：把早期对话压成摘要写进 state，再把原文删掉。
+
+    注意：本文件为了**离线可复现**，摘要用的是拼好的固定中文（不调模型）；
+    生产里这一步就是一次模型调用（官方 SummarizationMiddleware 会自动做）。
+    """
     old_messages = state["messages"][:2]          # 假设最早的 2 条要被压缩掉
     summary = state.get("summary") or ""
     new_summary = (summary + " / " if summary else "") + "用户之前问过背景问题并得到了答复"
@@ -109,9 +113,10 @@ memory_graph = (
 # 官方 checkpointers.mdx 的 durability 参数有三档（课案没提过）：
 #     "sync"  ：每个 super-step 都**同步**落盘（写完才继续）—— 最稳，最慢；
 #     "async" ：每步**异步**落盘（不阻塞执行）—— 折中，崩溃时可能丢最后一步；
-#     "exit"  ：只在**运行结束时**落一次盘 —— 最快，但中途崩溃等于没跑过、
-#               也无法中断恢复/时间旅行（因为这些都要靠中间检查点）。
-#   默认值 None（等于按 checkpointer 的默认策略走）。
+#     "exit"  ：只在**运行退出时**落一次盘（成功、报错、因 interrupt 退出都算）—— 最快；
+#               代价是没有**中间**检查点，所以别指望时间旅行或崩溃后从中途续跑
+#               （中断恢复本身仍可用，因为退出那一刻会落盘）。
+#   参数默认值是 None，但**运行时不传等价于 "async"**（官方 thinking-in-langgraph 也这么说）。
 class StepState(MessagesState):
     step: int
 
@@ -167,7 +172,7 @@ parallel_graph = (
 # （要多少预算、选哪个方案、确认收货地址…），这时整个运行会暂停，resume 的值
 # **作为 interrupt() 的返回值**回到工具里继续跑。
 #
-# 三条必须记住的规则（官方 Rules of interrupts）：
+# 最常踩的三条规则（官方 Rules of interrupts 共 4 条，另一条是「别用 interrupt 传复杂值」）：
 #     1. **不能用 try/except 包住 interrupt()** —— 暂停是靠抛异常实现的，
 #        被吞掉之后框架再也恢复不了这次运行；
 #     2. 中断点之前的**副作用必须幂等** —— 恢复时节点/工具会从头重放，
@@ -175,7 +180,7 @@ parallel_graph = (
 #     3. 同一个节点里多次 interrupt 时，**顺序和次数必须稳定**（别用随机/时间条件控制），
 #        否则恢复时对不上号。
 class ScriptedModel(ChatOpenAI):
-    """按剧本依次吐消息的假模型（同 11_内置中间件_官方补充.py 的手法）。
+    """按剧本依次吐消息的假模型（同 02_langchain/11_内置中间件_官方补充.py 的手法）。
 
     这里是工具内中断的演示 —— 需要「模型先要求调工具」这一步，用剧本模型最稳。
     """
@@ -217,7 +222,7 @@ def build_budget_agent():
 if __name__ == "__main__":
     # ---------- Demo 1 ----------
     print("=" * 70)
-    print("Demo 1：记忆不爆的三种手法 —— 裁剪 / 删除+摘要")
+    print("Demo 1：记忆不爆的三种手法 —— 裁剪 / 删除 / 摘要")
     print("=" * 70)
     history = [
         SystemMessage(content="你是记账助手", id="s1"),
@@ -308,25 +313,25 @@ if __name__ == "__main__":
 # ================================================================
 # 1. 实测结论（langgraph 1.2.11，本机）：
 #    - Demo 1：trim_messages(strategy="last", token_counter=len, max_tokens=3,
-#      start_on="human", include_system=True) 把 6 条裁到 3 条且保留了 SystemMessage；
+#      start_on="human", include_system=True) 把 6 条裁到 **2 条**：
+#      SystemMessage 会占掉 1 格预算，再从尾部保留到 human 为止 —— 实际是 System + 最后一条 human；
 #      RemoveMessage 按 id 删除成功，自定义 summary 字段正常写入。
 #    - Demo 2：durability="sync"/"async" 各写 5 个检查点，durability="exit" 只写 1 个。
 #    - Demo 3：并行两分支各产生 1 个 Interrupt（共 2 个），用 {id: 值} 字典一次恢复成功。
 #    - Demo 4：工具内 interrupt() 生效 —— 暂停返回 {'question': '「团建」需要多少预算？'}，
 #      Command(resume=5000) 后工具返回「「团建」已批准预算 5000 元」。
-# 2. 未收录（官方还有、本文件没做的）：
-#    - **子图持久化三种作用域**（use-subgraphs.mdx 的 per-invocation / per-thread / stateless）：
-#      实测发现父图自己的 checkpointer 会把子图状态一起存进父检查点，两种模式在
-#      「父图返回值」上看不出差异；要观察差异得下钻子图命名空间（subgraphs=True 的快照），
-#      本机未稳定复现出差异 → 只登记不写成 Demo，避免"注释里写的行为"和实测不一致。
-#    - 长期记忆策略分类（semantic / episodic / procedural）与 Store 语义搜索：需要 embeddings。
-#    - 可观测性（LangSmith / Studio）：需要外部账号。
+# 2. 未收录（官方还有、本文件没做的；同目录已有专篇的不再重复）：
+#    - **子图持久化三种作用域** → 见同目录 14_子图持久化_官方补充.py
+#      （已用子图私有字段复现出三档差异：per-invocation 每次全新、per-thread 跨调用累积）；
+#    - **长期记忆策略分类与 Store 语义搜索** → 见同目录 13_长期记忆_官方补充.py；
+#    - 可观测性（LangSmith / Studio）：需要外部账号（本仓库不接 LangSmith）。
 # 3. 踩坑提示：
 #    A. RemoveMessage 是**唯一**能从 state 删消息的手段（add_messages 只会追加）；
 #       删除后 state 里就真没了，历史消息要用它前先确认这是你要的语义（时间旅行仍可回到旧检查点）。
 #    B. trim_messages 的 token_counter 参数：教学用 len 最直观，生产要换成真实计数
 #       （传模型实例，或用官方的近似计数函数），否则"3 条"在长文本场景下可能已经超窗。
-#    C. durability="exit" 与「中断恢复/时间旅行」互斥：没有中间检查点，就没法从半路恢复。
+#    C. durability="exit" 牺牲的是**中间**检查点：时间旅行与崩溃后中途续跑都没了；
+#       但它仍会在运行退出（含因 interrupt 退出）时落盘，所以中断恢复本身仍可用。
 #    D. 并行多中断的恢复字典必须用 **Interrupt.id** 当键（不是分支名、不是节点名）。
 #    E. interrupt() 不能被 try/except 包住 —— 这一条踩了会表现为「resume 后再也走不动」，
 #       排查时优先检查是不是把 interrupt 吞进了异常处理。
