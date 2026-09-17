@@ -195,6 +195,26 @@ class EvalLLMSettings(BaseSettings):
         return bool(self.model)
 
 
+class UsageSettings(BaseSettings):
+    """token 成本估算的单价（**默认全 0 = 不算成本**）。
+
+    为什么把单价做成配置而不是内置价目表：价格随厂商调整，而本项目走的是网关
+    （模型名未必是官方名），内置一张表迟早变成**错误信息**——评估报告里出现一个
+    看起来精确、实际过期的成本，比没有成本更糟。单价留空时评估只报 token 真数，
+    成本字段直接不出现。
+
+    单位：**货币单位 / 百万 token**（与厂商报价单一致）。
+    """
+
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_prefix="USAGE_", extra="ignore")
+
+    price_input_per_million: float = 0.0
+    price_output_per_million: float = 0.0
+    # 命中提示缓存的输入单价（DeepSeek 等会给 prompt_cache_hit_tokens）。留 0 则按普通输入价算。
+    price_cached_input_per_million: float = 0.0
+    currency: str = "CNY"
+
+
 class EmbeddingSettings(BaseSettings):
     """向量化模型配置"""
 
@@ -285,6 +305,8 @@ class Settings:
         self.llm = LLMSettings()
         # 评估/评判模型（与生成模型分家，见 EvalLLMSettings 的说明）
         self.eval_llm = EvalLLMSettings()
+        # token 成本单价（默认全 0 ⇒ 只报 token 不报成本）
+        self.usage = UsageSettings()
         self.embedding = EmbeddingSettings()
         self.rerank = RerankSettings()
         self.retrieval = RetrievalSettings()

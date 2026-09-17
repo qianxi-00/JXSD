@@ -72,6 +72,9 @@ from pipeline.filters import build_milvus_filter, extract_ticket_filters
 from retrieval.rerank import rerank
 from retrieval.vector_retrieval import vector_search
 
+# token 采集（T5）。与本模块同包，导入不会引入新依赖：它只用到 langchain_core 的回调基类。
+from agentic.usage import TokenUsageCallback, estimate_cost
+
 # 无证据时的固定回答。抽成常量（而不是散在工具里写字面量）有两个原因：
 #   1. 测试用它断言（test_finance_agent 里 `assert result == finance_agent.NO_EVIDENCE_ANSWER`），
 #      改文案时测试跟着走而不是失败；
@@ -710,13 +713,22 @@ def invoke_slow_agent(
     history: list[dict],
     session_id: str | None = None,
     user_id: str | None = None,
+    extra_callbacks: list | None = None,
 ) -> str:
-    """带历史消息调用 Deep Agent 并返回最终答复;配置了 Langfuse 时挂上追踪回调。"""
+    """带历史消息调用 Deep Agent 并返回最终答复;配置了 Langfuse 时挂上追踪回调。
+
+    `extra_callbacks`：额外挂上去的回调（评估侧用它采集 token 用量，见 `agentic/usage.py`）。
+    与 Langfuse 回调**并存**，不是替代 —— 追踪和成本统计要同时可用。
+    """
     # 注意 payload 把 history 与当前问题拼在一起：DeepAgent 是无状态的（没有 checkpointer 时），
     # 多轮上下文**必须**由调用方显式带上，否则第二轮它会忘了第一轮说了什么。
     # `history + [{...}]` 生成新列表，不会改到调用方的 history（那由 update_history 负责）。
     payload = {"messages": history + [{"role": "user", "content": question}]}
     config = tracing_config(session_id=session_id, user_id=user_id)
+    if extra_callbacks:
+        # 合并而不是覆盖：没有 Langfuse 时 config 是空 dict，这里正好把它撑起来，
+        # 于是"只有额外回调"的情况也会走带 config 的分支。
+        config = {**config, "callbacks": [*(config.get("callbacks") or []), *extra_callbacks]}
     # 分两种调用方式（而不是统一传 config={}）：空 config 在某些版本里会被当成
     # "显式指定了空配置"，为了不引入这个不确定性，没追踪时就走不带 config 的分支。
     result = agent.invoke(payload, config=config) if config else agent.invoke(payload)
@@ -970,7 +982,12 @@ def answer_query_agentic(
 
     # 默认 runner 用**空 history**：评估要的是"单轮独立可复现"，
     # 带上历史会让样本之间互相影响（前一个样本的答案变成后一个的上下文）。
-    runner = runner or (lambda q: invoke_slow_agent(q, []))
+    #
+    # token 采集（T5）：默认 runner 挂一个 `TokenUsageCallback`，把**整条链路**（主 Agent +
+    # evidence-analyst 子代理 + 工具里的 LLM 调用）的用量都算进这一轮。注入 runner 的场景
+    # （测试/离线）拿不到用量，`tokens` 会全是 0 —— 这是如实的：那一次没真调模型。
+    usage = TokenUsageCallback()
+    runner = runner or (lambda q: invoke_slow_agent(q, [], extra_callbacks=[usage]))
     error = None
     try:
         answer = runner(query)
@@ -1001,6 +1018,11 @@ def answer_query_agentic(
         # 让评估报告能把"检索基础设施全挂"的样本单独剔出去：这类样本的
         # 低分反映的是环境问题而不是链路能力，混进准确率会误导改进方向。
         "recall_failed": bool(detail.get("recall_failed")),
+        # token 用量与成本（T5：课案要求"质量与成本一起看"）。
+        # `usage` 是 `TokenUsageCallback` 的累加结果；命中缓存那条分支在**上面**返回，
+        # 所以不会到这里 —— 缓存命中本来就不该记成本（没调模型）。
+        "tokens": usage.as_dict(),
+        "cost": estimate_cost(usage.as_dict()) if usage.calls else None,
     }
     # 跑完就清空全局明细：这样下一个样本若**没有走到检索**（例如链路在更早的地方失败），
     # 它读到的就是空明细，而不会误用上一个样本的候选 id。

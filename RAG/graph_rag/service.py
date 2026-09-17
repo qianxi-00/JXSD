@@ -28,7 +28,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # --- 路径引导：保证 `python -m graph_rag.service` 与直接跑脚本都能找到 config / core ---
 # 往上找到**目录名恰好是 "Python_Base"** 的那一层当项目根 —— 即目录名被硬编码了：
@@ -68,7 +68,71 @@ class GraphQueryRequest(BaseModel):
     top_k: int = Field(5, ge=1, description="召回条数（同时决定子图节点上限）")
 
 
-@app.post("/api/graph_rag/query")
+class GraphEntity(BaseModel):
+    """子图里的一个实体节点。
+
+    `name` / `entity_type` 是 Neo4j 侧一定有的两个字段；`description` 可能为空，
+    `community_id` 在"实体级检索（没限定社区）"时可能缺失 —— 所以后者是可选的。
+    用 `extra="allow"` 而不是逐个列出：图谱 schema 将来加字段时，服务端不该因为
+    多了一个键就 500（这类"响应模型比数据严格"的失败最难查）。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str = ""
+    entity_type: str = ""
+    description: str = ""
+    community_id: int | None = None
+
+
+class GraphRelationship(BaseModel):
+    """子图里的一条关系（三元组）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    source: str = ""
+    relation: str = ""
+    target: str = ""
+
+
+class GraphCommunity(BaseModel):
+    """召回到的一个社区摘要（社区级检索时只有它，没有节点/关系）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    community_id: int | None = None
+    summary: str = ""
+    score: float | None = None
+
+
+class GraphSubgraph(BaseModel):
+    """检索到的子图。三种检索方式返回的字段**不完全一样**（见各字段默认值）：
+
+    - `entity`：有 nodes / relationships，communities 为空；
+    - `community`：只有 communities；
+    - `hybrid`：三者都有。
+    所以三个列表都给默认空列表，而不是让缺字段变成 500。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    communities: list[GraphCommunity] = Field(default_factory=list)
+    nodes: list[GraphEntity] = Field(default_factory=list)
+    relationships: list[GraphRelationship] = Field(default_factory=list)
+
+
+class GraphQueryResponse(BaseModel):
+    """GraphRAG 查询响应体（**响应模型的意义**：让 /docs 与 SDK 生成看得到契约）。
+
+    课案（优化篇 2495-2497）要求给这个接口定义 `QueryResponse` —— 之前返回裸 dict，
+    OpenAPI 里响应结构是空的，调用方只能靠猜（或读源码）。
+    """
+
+    answer: str = Field(..., description="基于子图生成的回答")
+    subgraph: GraphSubgraph = Field(..., description="本次检索到的子图（三种方式的字段见 GraphSubgraph）")
+
+
+@app.post("/api/graph_rag/query", response_model=GraphQueryResponse)
 def graph_rag_query(req: GraphQueryRequest) -> dict:
     """GraphRAG 问答接口：检索子图 → 拼提示词 → LLM 生成回答。
 

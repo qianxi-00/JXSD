@@ -72,6 +72,45 @@ class TestItemEvaluator:
         by_name = {e.name: e.value for e in evaluations}
         assert by_name["Recall@K"] == pytest.approx(0.0)
 
+    def test_token_metrics_present(self, script):
+        """T5：条目级要能看到 token 用量（课案要求质量与成本一起看）。"""
+        evaluations = self._evaluate(
+            script,
+            {
+                "question": "q", "response": "a", "retrieved_ids": [], "latency_s": 1.0,
+                "search_queries": 1,
+                "tokens": {"llm_calls": 3, "input_tokens": 1200, "output_tokens": 340, "total_tokens": 1540},
+                "cost": None,
+            },
+        )
+        by_name = {e.name: e.value for e in evaluations}
+        assert by_name["tokens_in"] == pytest.approx(1200)
+        assert by_name["tokens_out"] == pytest.approx(340)
+        assert by_name["tokens_total"] == pytest.approx(1540)
+        assert by_name["llm_calls"] == pytest.approx(3)
+        # 没填单价 ⇒ 不出 cost 这一条（报 0 会被读成"成本为零"）
+        assert "cost" not in by_name
+
+    def test_cost_metric_only_when_known(self, script):
+        """填了单价（cost 非 None）时才出 cost。"""
+        evaluations = self._evaluate(
+            script,
+            {
+                "question": "q", "response": "a", "retrieved_ids": [], "latency_s": 1.0,
+                "search_queries": 1, "tokens": {}, "cost": 0.0123,
+            },
+        )
+        assert {e.name: e.value for e in evaluations}["cost"] == pytest.approx(0.0123)
+
+    def test_missing_tokens_field_is_tolerated(self, script):
+        """老记录/注入 runner 的离线样本没有 tokens 字段 ⇒ 记 0，不能 KeyError。"""
+        evaluations = self._evaluate(
+            script, {"question": "q", "response": "a", "retrieved_ids": [], "latency_s": 1.0, "search_queries": 0}
+        )
+        by_name = {e.name: e.value for e in evaluations}
+        assert by_name["tokens_total"] == pytest.approx(0.0)
+        assert by_name["llm_calls"] == pytest.approx(0.0)
+
 
 class TestBatchRunEvaluator:
     @staticmethod
@@ -101,6 +140,56 @@ class TestBatchRunEvaluator:
         assert by_name["batch_mean_search_queries"] == pytest.approx(2.0)
         assert by_name["batch_agent_error_count"] == pytest.approx(1.0)
         assert by_name["batch_mean_Recall@K"] == pytest.approx(0.5)
+
+    def test_batch_aggregates_tokens_and_cost(self, script):
+        """T5：批次侧的 token/成本来自**条目级指标的自动汇总**（而不是另写一套）。
+
+        所以这条用例的构造要点是：条目级 evaluations 里得有 tokens_* / cost
+        —— 那正是 `item_evaluator` 产出的东西。
+        """
+        class Ev:
+            def __init__(self, name, value):
+                self.name = name
+                self.value = value
+
+        results = [
+            self.item(
+                {"latency_s": 2.0, "search_queries": 1, "agent_error": None},
+                [Ev("tokens_in", 100.0), Ev("tokens_out", 10.0), Ev("tokens_total", 110.0),
+                 Ev("llm_calls", 2.0), Ev("cost", 0.002)],
+            ),
+            self.item(
+                {"latency_s": 4.0, "search_queries": 2, "agent_error": None},
+                [Ev("tokens_in", 300.0), Ev("tokens_out", 30.0), Ev("tokens_total", 330.0),
+                 Ev("llm_calls", 4.0), Ev("cost", 0.006)],
+            ),
+        ]
+        by_name = {e.name: e.value for e in script.batch_run_evaluator(item_results=results)}
+        assert by_name["batch_mean_tokens_in"] == pytest.approx(200.0)
+        assert by_name["batch_mean_tokens_out"] == pytest.approx(20.0)
+        assert by_name["batch_mean_tokens_total"] == pytest.approx(220.0)
+        assert by_name["batch_mean_llm_calls"] == pytest.approx(3.0)
+        assert by_name["batch_mean_cost"] == pytest.approx(0.004)
+
+    def test_batch_omits_cost_when_unpriced(self, script):
+        """没填单价 ⇒ 条目级不出 cost ⇒ 批次侧也就没有成本指标。
+
+        （宁可没有，也不报一个会被读成"零成本"的数。）
+        """
+        class Ev:
+            def __init__(self, name, value):
+                self.name = name
+                self.value = value
+
+        results = [
+            self.item(
+                {"latency_s": 2.0, "search_queries": 1, "agent_error": None},
+                [Ev("tokens_total", 15.0)],
+            ),
+        ]
+        by_name = {e.name: e.value for e in script.batch_run_evaluator(item_results=results)}
+        assert by_name["batch_mean_tokens_total"] == pytest.approx(15.0)
+        assert "batch_mean_cost" not in by_name
 
     def test_skips_runtime_metrics_in_metric_means(self, script):
         class Ev:

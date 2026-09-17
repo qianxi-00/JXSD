@@ -980,7 +980,7 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | 发票票号 / 航司代码抽取覆盖不足 | 只认"发票编号"（真实发票常写"发票号码"）；机票 `counterparty` 仅 17/100 有值 |
 | 导入不幂等 + 无字段白名单 | ✅ **本轮已修**：`tick_extract.py` 的写库调用从 `client.insert` 改成 **`client.upsert`**（字段白名单本来就有：`build_record` 产出的键与 schema 一一对应）。⚠️ 换 upsert 必须**先读回旧向量**（`_carry_over_vectors`）：upsert 是整实体覆盖，而该脚本的 `vec` 是 None，实测会把向量抹成 NULL。真机验收：重跑一次导入 `count(*)` **300 → 300**、有向量 **282 → 282**（一条没丢）—— 旧实现下同一主键 insert 两次是 **2 行**（一次性集合实测） |
 | 端点自检脚本缺失 | 课案 `test_reranker_endpoint.py` 无等价物，换网关要等主链路报错才发现 |
-| token / 成本指标缺失 | Langfuse 批次指标只有延迟与检索次数；课案要求"质量与成本一起看" |
+| token / 成本指标缺失 | ✅ **本轮已修**：新增 `agentic/usage.py`（`TokenUsageCallback` 走 LangChain 回调累加**整条链路**的用量：主 Agent + evidence-analyst 子代理 + 工具内的调用），`answer_query_agentic` 返回 `tokens`/`cost`；评估脚本条目级出 `tokens_in`/`tokens_out`/`tokens_total`/`llm_calls`，运行级出 `batch_mean_*`。真机一串问答实测 **9 次调用 / 48,735 token（34,559 命中提示缓存）**。⚠️ **成本要填单价**（`USAGE_PRICE_*`，默认 0 ⇒ 只报 token、不出 cost —— 刻意不内置价目表，价格会变、模型名还可能只是网关别名） |
 | **③④ 线路暂不读写缓存** | ✅ **本轮已修**：`pipeline/modes.py::_cached_route` 给 ③GraphRAG 与 ④融合都套上了**线路作用域**缓存（③=`graph`、④=`fusion`，与 ①② 的键互不相通）。三条纪律：命中时直接返回且**不返回上次的 `extra` 明细**（那批社区/关系/SQL 是上次链路的产物，只给 `from_cache=True` 标记）；**多轮（history 非空）既不查也不写**（缓存键只有问题文本，只跳"读"会把依赖历史的答案存成"只看问题文本"的答案）；空答案不写。`_answer_cache()` 进程级复用同一个 `AnswerCache`（避免每次请求重载预设矩阵） |
 | **Agentic 的"检索策略选择"不可观测** | 课案流程图有个节点是"选择查询策略（直接/HyDE/子查询/回溯）"。基础①与融合④ 的改写策略在代码里（`llm/chat.py::rewrite_query`），会作为 `rewrite` 字段进事件流与评估记录；而 **② 是主 Agent 在模型内部选**（`agentic/` 对三套改写模板 0 命中），代码里**没有任何字段记录它选了哪种策略** —— 只能从 `detail["queries"]` 反推。这属能力对齐、可观测性缺口：想知道"这题走的是 HyDE 还是回溯"目前只能看它生成的检索文本 | 待定：要么在提示词里要求模型在工具调用时自报策略（要改工具签名，偏离课案冻结的签名），要么从 Langfuse trace 的推理内容里提取（无需改签名）。当前按**不改签名**处理，登记备查 |
 | 若干工程质量项 | `tqdm` 未声明依赖；8 个脚本的模块 docstring 写在 import 之后（`__doc__` 为 None）；`limit=10000` 静默截断等 |
@@ -1018,6 +1018,7 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 |---|---|---|
 | LLM | `LLM_MODEL` `LLM_BASE_URL` `LLM_ENABLE_THINKING` | `deepseek-flash`，走 DeepSeek 官方 `https://api.deepseek.com`；开启思考输出（该模型返回 `reasoning_content`）；`LLM_TIMEOUT=180` |
 | **评估/评判** | `EVAL_LLM_MODEL` `EVAL_LLM_API_KEY` `EVAL_LLM_BASE_URL` `EVAL_LLM_MAX_TOKENS` | **`deepseek-chat`**（与生成的 `deepseek-flash` **分开**，避免自我偏好；课案要求"评估模型与生成模型分开配置"）。密钥与网关**留空即逐项回退** `LLM_API_KEY` / `LLM_BASE_URL`；`EVAL_LLM_MODEL` 也留空时回退生成模型并打 WARNING。解析逻辑只有一处：`config.py::eval_llm_target()` |
+| **token 成本单价** | `USAGE_PRICE_INPUT_PER_MILLION` `USAGE_PRICE_OUTPUT_PER_MILLION` `USAGE_PRICE_CACHED_INPUT_PER_MILLION` `USAGE_CURRENCY` | 默认全 **0 ⇒ 不报成本**（只报 token 真数）。要成本就按厂商报价单填（货币单位/百万 token）；不内置价目表是刻意的，见 .env.example 的说明 |
 | Embedding | `EMBEDDING_MODEL` `EMBEDDING_SIZE` `EMBEDDING_SEND_DIMENSIONS` | `BAAI/bge-m3`，原生 1024 维；`EMBEDDING_SEND_DIMENSIONS=false`（它不接受 `dimensions` 参数） |
 | Rerank | `RERANK_MODEL` `RERANK_TOP_K` `RERANK_RELEVANCE_P` | `BAAI/bge-reranker-v2-m3`；top_k=8、相关度阈值 **0.22**（2026-09-17 换模型后用标注评估集重标，见 8.4） |
 | 检索 | `RETRIEVAL_TOP_N` | 单路召回条数 10 |
@@ -1129,6 +1130,7 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | **③④ 线路接缓存（本轮）** | 同一句问第二遍：GraphRAG **4.67s → 0.03s**（`cache_hit=exact`）、融合线路 **19.41s → 0.02s**；跨线路隔离实测通过（把 ④ 的问题拿去问 ③，`cache_hit=None`） |
 | **评判模型与生成模型分家（本轮）** | `.env` 实测：生成 `deepseek-flash` / 评判 **`deepseek-chat`**（`from_fallback=False`）；`evaluation/llm_judge.py::score_answer()` 真实调用返回 `score=5` 且反馈合理；把 `EVAL_LLM_MODEL` 清空后 `eval_llm_target()` 回退生成模型并置 `from_fallback=True`（调用方据此打 WARNING） |
 | **导入幂等（本轮）** | `tick_extract.py --insert` 重跑一次：`count(*)` **300 → 300**、**有向量 282 → 282**（一条没丢）；同主键 `insert` 两次在一次性集合上实测是 **2 行**（旧实现的问题） |
+| **token 用量采集（本轮）** | 真机一串 Agentic 问答：**9 次 LLM 调用 / 输入 41,092 / 输出 7,643 / 合计 48,735 token，其中 34,559 命中提示缓存**（`cached_input_tokens`，DeepSeek 的 `prompt_cache_hit_tokens`）；未填单价时 `cost=None` ⇒ 评估报告里不出成本指标（不把"没算"报成 0） |
 
 ### 7.2 真机端到端复跑清单（改完链路**必须**跑一遍）
 
