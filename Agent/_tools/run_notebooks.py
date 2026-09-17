@@ -80,6 +80,25 @@ def all_notebooks(chapter: str | None = None) -> list[Path]:
     return out
 
 
+def resolve_targets(target: str | None) -> list[Path]:
+    """解析位置参数：可以是**章节目录名**（跑整章），也可以是**单个 notebook**。
+
+    为什么要支持单个：多个 subagent 会在同一章里并发改造不同的 notebook，
+    如果每人都跑一次 `run_notebooks.py <章>`，就会把同章其它 notebook 也带着跑一遍
+    —— 既浪费模型额度，又会因为抢端口 / 抢 tmp 工作目录而互相干扰。
+    所以每个 subagent 只跑自己那一个。
+    """
+    if not target:
+        return all_notebooks()
+    if target.endswith(".ipynb"):
+        p = Path(target)
+        if not p.is_absolute():
+            p = AGENT / target
+        return [p] if p.exists() else []
+    return all_notebooks(target)
+
+
+
 def classify(path: Path) -> str:
     rel = path.relative_to(AGENT).as_posix()
     chapter = path.relative_to(AGENT).parts[0]
@@ -180,10 +199,12 @@ def main() -> int:
     os.environ["NO_PROXY"] = "127.0.0.1,localhost"
     os.environ["no_proxy"] = "127.0.0.1,localhost"
 
-    files = all_notebooks(args.chapter)
+    files = resolve_targets(args.chapter)
     if not files:
-        print("没有找到 notebook")
+        print(f"没有找到 notebook：{args.chapter!r}")
         return 1
+    if len(files) == 1:
+        print(f"单个 notebook：{files[0].relative_to(AGENT)}")
 
     serial = [f for f in files if classify(f) == "serial"]
     parallel = [f for f in files if classify(f) == "parallel"]
@@ -193,6 +214,15 @@ def main() -> int:
         for f in files:
             print(f"  [{classify(f):8s}] {f.relative_to(AGENT)}")
         return 0
+
+    # 单笔记本模式：日志 / 结果 / 失败落盘都带 notebook 名，
+    # 否则同一章的几个 subagent 并发跑时会互相覆盖对方的现场。
+    global LOG, RESULT_JSON, FAIL_DIR
+    if len(files) == 1:
+        safe = files[0].relative_to(AGENT).as_posix().replace("/", "__")
+        LOG = OUT_DIR / f"run_nb.{safe}.log"
+        RESULT_JSON = OUT_DIR / f"run_nb.{safe}.json"
+        FAIL_DIR = OUT_DIR / "run_nb_failures" / safe
 
     if FAIL_DIR.exists():
         for old in FAIL_DIR.glob("*.txt"):

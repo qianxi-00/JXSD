@@ -1,0 +1,7 @@
+# Jupyter Notebook 是 JSON 文件：让 git **不要**对它做换行转换。
+#
+# 为什么需要：Windows 上 core.autocrlf 生效时，git 会在检出/提交时把 LF 与 CRLF
+# 互相转换，而 notebook 的 JSON 一旦换行被改写，整个文件都会显示成「全部改动」，
+# diff 彻底不可读（仓库里已有的 3 个 .ipynb 实测都是 LF）。
+# 加 -text 之后 git 按二进制原样处理，nbformat 写的 LF 就一直保持 LF。
+*.ipynb -text

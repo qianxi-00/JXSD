@@ -27,8 +27,13 @@
 | 1. 写源文件 | 路径：`F:\ProGramApp\DSH_Temporary\agent_nb\src\<章>\<notebook 名>.py` |
 | 2. 转 notebook | `& .\.venv\Scripts\python.exe Agent\_tools\nbtool.py py2nb F:\ProGramApp\DSH_Temporary\agent_nb\src\<章>\<名>.py Agent\<章>\<名>.ipynb` |
 | 3. 结构检查 | `& .\.venv\Scripts\python.exe Agent\_tools\nbtool.py check Agent\<章>\<名>.ipynb` |
-| 4. 无头执行 | `& .\.venv\Scripts\python.exe Agent\_tools\run_notebooks.py <章>` |
+| 4. 无头执行 | `& .\.venv\Scripts\python.exe Agent\_tools\run_notebooks.py Agent\<章>\<名>.ipynb` |
 | 5. 反向还原（可选） | `& .\.venv\Scripts\python.exe Agent\_tools\nbtool.py nb2py Agent\<章>\<名>.ipynb <还原路径>.py` |
+
+> ⚠️ **第 4 步只跑你自己那一个 notebook（传完整路径）。**
+> 同一章会有多个 subagent 并发改造不同的 notebook，如果每人都跑
+> `run_notebooks.py <章>`，就会把同章其它 notebook 也带着跑一遍 ——
+> 既浪费模型额度，又会因为抢端口 / 抢 `tmp_nb_work` 目录而互相干扰。
 
 percent 格式长这样：
 
@@ -141,6 +146,10 @@ print("临时目录：", WORKDIR)
 **为什么必须有它**：notebook 的 cwd 是它自己所在的目录，而 `config.py` 在仓库根 ——
 少了这一格，后面每个 `from config import settings` 都会 `ModuleNotFoundError`。
 
+> ⚠️ **`WORKDIR` 是同章的共享容器**。你写文件时必须再套一层**本 notebook 专属的子目录**：
+> `WORKDIR / "backend_filesystem"`、`WORKDIR / "hitl_demo"` …… 名字取能唯一标识本课的英文短名。
+> 否则同一章的两个 notebook 并发执行时会互相踩对方的文件。
+
 ---
 
 ## 6. 代码改写规则（只允许这 6 种）
@@ -152,7 +161,8 @@ print("临时目录：", WORKDIR)
    ⚠️ 但作为「库」被别的 notebook 引用的模块（如 `04_function_call/tools.py`、`tool_desc.py`）
    要保留函数/常量定义，只把演示调用顶格。
 3. **`Path(__file__).resolve().parent` → `NB_DIR`**
-   —— notebook 里没有 `__file__`。凡是原来往脚本同级目录写文件的，一律改成 `NB_DIR / "tmp_nb_xxx"`。
+   —— notebook 里没有 `__file__`。凡是原来往脚本同级目录写文件的，一律改成
+   `WORKDIR / "<本课专属子目录>"`（见第 5 节的提醒，务必套一层专属子目录）。
 4. **`input()` → 预设答案函数**
    —— notebook 无头执行时 `input()` 必崩。照抄 `Agent/_py_source/02_langchain/09_人工审核_jxsd.py`
    里 `scripted_input(...)` 的做法：临时替换 `builtins.input`，按顺序吐预设答案，
@@ -228,6 +238,12 @@ cd F:\ProGram\Python_Base
 | `check` 报「还带着执行输出」 | 提交前忘了 strip | `nbtool.py strip --all` |
 | 端口被占 | 两个 notebook 抢同一个端口 | 按第 6 节第 6 条改用高位端口 |
 | 连接被拒 / 502 | 本机 Clash 拦了 127.0.0.1 回环 | 执行器已设 `NO_PROXY`；自己跑时也设 |
+| `check` 报「语法错误」 | code cell 里用了 IPython 魔法命令 | **不要用 `%magic` / `!shell`**（见下） |
+
+> **不要用 IPython 魔法命令与 shell 转义**（`%time`、`%%capture`、`!pip install`）。
+> 原因有两条：① `check` 会对每个 code cell 做 `ast.parse`，魔法命令不是合法 Python；
+> ② 魔法命令只有 IPython 认，用 `nbclient` 执行或把代码复制出去单跑都会失败。
+> 需要计时就用 `time.perf_counter()`，需要装包就写进「运行条件」让人自己装。
 
 ---
 
