@@ -176,10 +176,14 @@ def build_incremental(documents: list[tuple[str, str]]) -> dict:
 def build_batch(documents: list[tuple[str, str]]) -> dict:
     """全量建图：先把所有文档的实体/关系抽完，再一次性 create_graph（内部会清空整图）
 
+    ⚠ 与 `build_incremental` 的关键差别（**这条是 2026-09-17 全量建图时核对的**）：
+    本函数**不自己清图**，清空只发生在最后 `create_graph` 内部那一处。
+    所以抽取阶段（300 篇约 100 分钟）图还是**上一次的旧图**，中途崩了旧图仍在
+    —— 这是好事，排查"图被谁清了"时别按旧注释去找两处删除动作。
+    （旧注释写的是"batch 模式的删图动作有两处"，与代码不符，已更正。）
+
     `{**item, "doc_ids": [doc_id]}` 是给每条抽取结果挂上"来自哪篇票据"的证据链
     （create_graph 的 upsert 会把它并进 doc_ids）。
-    注意 create_graph 内部还会再清一次图 —— 这里是**重复清空**（无害，但要知道），
-    所以 batch 模式的删图动作有两处，排查"图被谁清了"时别只看一处。
     """
     entities: list[dict] = []
     relations: list[dict] = []

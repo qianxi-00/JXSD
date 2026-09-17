@@ -8,6 +8,14 @@
 用法：.venv/Scripts/python.exe RAG/script/acceptance_4routes.py
 （先起服务：`$env:PGGSSENCMODE="disable"; .venv/Scripts/python.exe RAG/app/main.py`）
 产物：`.dsh_tmp/acceptance_4routes.json`（gitignored 的临时目录，只作留证用）
+
+⚠️ **这个脚本的 `[OK]` 只证明"链路跑通了"，不证明"答对了"** —— 这是 2026-09-17 全量实测抓到的教训：
+它只检查「没报错 + 该出的字段出了 + 答案非空」，于是 fusion 那条
+「黄帅今年高铁票一共报销了多少钱？」被判 `[OK]`，而当时答案是 **1691 元（错）**：
+黄帅两张票是 G626（高铁，162.2 元）与 Z766（直达特快，1528.8 元），问"高铁票"的正解是 **162.2 元**，
+错因是 PG `tickets` 表没有车次字段、只能按 `ticket_type='train'` 求和（见 README §8 N23）。
+**要判对错，必须与数据级 ground truth 对照**（或跑 `script/run_stage_eval.py` 用标注评估集），
+别把这里的 `[OK]` 当成质量结论。
 """
 
 import json
