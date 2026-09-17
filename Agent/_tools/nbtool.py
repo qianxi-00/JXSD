@@ -359,6 +359,18 @@ def check_notebook(path: Path) -> list[str]:
     if any(c.get("outputs") for c in nb.cells if c.cell_type == CODE_NB):
         problems.append(f"{rel}: 还带着执行输出（提交前请跑 `nbtool.py strip --all`）")
 
+    # markdown 被「多加一层 #」的静默损坏。
+    # 起因：某个补输出的脚本把 percent 源的 `buf`（**已经是**带 `# ` 的注释行）
+    # 又加了一次 `# `，三轮下来正文从 `# 标题` 变成 `# # # # 标题`。
+    # ast.parse 查不出、关键字检查也查不出，但 notebook 里标题会带着一串字面 `#` 显示。
+    # 单行 `# # xxx` 可能是作者有意（markdown 里 `# # x` 是「内容是 # x 的 H1」），
+    # 所以只在**成规模出现**时才报（≥3 行基本可以断定是系统性损坏）。
+    doubled = [ln for c in nb.cells if c.cell_type == MD_NB
+               for ln in c.source.split("\n") if ln.startswith("# # ")]
+    if len(doubled) >= 3:
+        problems.append(f"{rel}: {len(doubled)} 行 markdown 以 '# # ' 开头，"
+                        f"疑似被多加了一层 '#' 前缀（例：{doubled[0][:50]!r}）")
+
     return problems
 
 
