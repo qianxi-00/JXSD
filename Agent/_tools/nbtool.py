@@ -488,12 +488,20 @@ def cmd_coverage(args: argparse.Namespace) -> int:
             "\n".join(c.source for c in nb.cells if c.cell_type == CODE_NB)
         )
 
-    # 扫描源文件（相对源根；跳过 __pycache__、下划线开头的内部目录、tmp_* 运行产物）
+    # 扫描源文件（相对源根；跳过三类「不是课案文件」的东西）
+    #   1. __pycache__
+    #   2. 下划线开头的内部目录（_tools 之类）
+    #   3. **归档脚本运行时自己重建的资源目录** —— 这是最容易被误报成孤儿的一类：
+    #      `09_aegra_deploy/02_项目骨架_jxsd.py` 会用 `Path(__file__).parent / "aegra_project"`
+    #      在归档区原地重建一套脚手架；而几个 deepagents 后端会重建 `tmp_*`。
+    #      它们都不是课案文件，每次跑回归就会出现，所以既 gitignore、也在这里排除。
+    #      （这是两个 subagent 分别报上来的：`coverage` 全量 exit 1 的元凶就是它。）
     source_files = sorted(
         p for p in src_root.rglob("*.py")
         if "__pycache__" not in p.parts
         and not any(part.startswith("_") for part in p.relative_to(src_root).parts)
         and "tmp_" not in str(p.relative_to(src_root))
+        and "aegra_project" not in p.parts
     )
 
     declared: dict[str, str] = {}
