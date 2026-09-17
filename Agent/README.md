@@ -77,6 +77,7 @@ $env:PYTHONUTF8 = "1"
 | `01_langgraph/11_容错与测试_官方补充.py` | `RetryPolicy`、节点超时、官方测试三模式 | ✅ 0 次模型调用 |
 | `01_langgraph/12_记忆_持久化与中断进阶_官方补充.py` | 记忆裁剪/删除/摘要、durability 三档、多中断并行、工具内中断 | ✅ 0 次模型调用 |
 | `01_langgraph/13_长期记忆_官方补充.py` | 三类记忆分类、Store 语义搜索对照实验、记忆进 agent、TTL 限制 | ⚠️ 需 bge-m3 |
+| `01_langgraph/14_子图持久化_官方补充.py` | 子图持久化三档对照（计数/中断/下钻子图快照） | ✅ 0 次模型调用 |
 | `02_langchain/16_测试与护栏_官方补充.py` | 假模型单测、轨迹断言、确定性护栏、Runtime Context 注入 | ✅ 假模型 |
 | `02_langchain/17_Skills渐进披露_官方补充.py` | Skills 工具化加载 + 引用感知（多 Agent 第 4 种模式） | ⚠️ 需真实模型 |
 | `02_langchain/18_自定义工作流_官方补充.py` | agent 当节点、三节点 RAG 工作流、条件边回炉循环（第 5 种模式） | ⚠️ 需真实模型 |
