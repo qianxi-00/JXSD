@@ -10,7 +10,7 @@ LangChain 官方补充篇：RAG 知识库（非课案内容，故不带 _jxsd �
     加载文档 → 切分 → 向量化 → 存向量库 → 检索 → （可选）重排序 → 交给模型作答。
 
 ⚠️ 本文件与本机配置的对应关系（**这是与前几篇补充篇最大的不同**）：
-    · 向量化模型：`EMBEDDING_MODEL=BAAI/bge-m3`（SiliconFlow，1024 维，实测 0.3 秒/批）
+    · 向量化模型：`EMBEDDING_MODEL=BAAI/bge-m3`（SiliconFlow，1024 维，实测单次 0.12~0.3 秒）
     · 精排模型  ：`RERANK_MODEL=BAAI/bge-reranker-v2-m3`（SiliconFlow，实测 0.2 秒）
     · 作答模型  ：`MODEL_NAME=grok-4.6`（.env 里的 Agent 课案扁平字段）
     三者都在 `.env` 里配置，代码统一走 `from config import settings`（课案约定）。
@@ -31,7 +31,6 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8")   # Windows 控制台默认 GBK，防中文/emoji 报错
 
 import json
-import math
 import tempfile
 import time
 import urllib.request
@@ -124,7 +123,10 @@ def build_knowledge_base(root: Path) -> tuple[InMemoryVectorStore, list[Document
 # 重排序组件：LangChain 没有内置 SiliconFlow 的 rerank，自己包一层
 # ================================================================
 class SiliconFlowReranker:
-    """调用 SiliconFlow `/rerank` 的精排组件（数据不出本机之外，只是换个 HTTP 端点）。
+    """调用 SiliconFlow `/rerank` 的精排组件（**候选文本会发到云端打分**，注意数据合规）。
+
+    对比：本地部署的交叉编码器（如 sentence-transformers + bge-reranker）数据不出机器，
+    但要多一份显存/内存与运维成本；本文件用云端 API，换来零部署。
 
     实测注意（很重要，两次实测对照得出）：
         · 分数是 sigmoid 后的 [0, 1] 值，但**绝对高低取决于"语料里有没有真答案"**：
@@ -176,17 +178,10 @@ reranker = SiliconFlowReranker(
 )
 
 
-def cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    return dot / (na * nb) if na and nb else 0.0
-
-
 # ================================================================
 # Demo 1：知识库构建（加载 → 切分 → 向量化）
 # ================================================================
-def demo_1_build(store: InMemoryVectorStore, chunks: list[Document]) -> None:
+def demo_1_build(chunks: list[Document]) -> None:
     print("=" * 70)
     print("Demo 1：构建知识库 —— 加载 → 切分 → 向量化")
     print("=" * 70)
@@ -260,8 +255,8 @@ def demo_3_rerank(store: InMemoryVectorStore) -> None:
             print("    （本次顺序未变：召回的第一条本身就是最相关的）")
         if len(ranked) >= 2:
             top, second = ranked[0]["score"], ranked[1]["score"]
-            ratio = (top / second) if second > 0 else float("inf")
-            print(f"    ★ 第一名与第二名差距：{top:.4f} vs {second:.6f}（相差 {ratio:.0f} 倍）"
+            gap_desc = f"相差 {top / second:.0f} 倍" if second > 0 else "第二名分数为 0（差距无穷大）"
+            print(f"    ★ 第一名与第二名差距：{top:.4f} vs {second:.6f}（{gap_desc}）"
                   f" → 说明语料里确实有答案，且 top1 明显更相关")
             print("      （反过来：若所有候选分数都在同一量级且很低，说明**语料里没有答案**，"
                   "这时候应该让模型直说不知道，而不是硬塞上下文）")
@@ -303,10 +298,11 @@ def demo_4_answer_with_context(store: InMemoryVectorStore) -> None:
 
 
 # ================================================================
-# Demo 5：把检索做成工具 —— 官方说的 "agentic RAG"
+# Demo 5：把检索做成工具 —— agentic RAG
 # ================================================================
-# 官方 knowledge-base.mdx 的最后一步是把检索包装成**工具**交给 agent，
-# 让它自己决定要不要查、查几次、用什么查询词改写成什么。
+# 出处：**deepagents/retrieval.mdx 的 "Agentic RAG" 一节**（不是 knowledge-base.mdx ——
+# 那篇止于建库与检索，全文没有 agent 环节）。
+# 做法是把检索包装成**工具**交给 agent，让它自己决定要不要查、查几次、查询词怎么写。
 # 本 Demo 把「召回 + 精排」合成一个工具，交给 create_agent。
 def demo_5_agentic_rag(store: InMemoryVectorStore) -> None:
     print("\n" + "=" * 70)
@@ -339,10 +335,11 @@ def demo_5_agentic_rag(store: InMemoryVectorStore) -> None:
     print(f"  提问：{question}")
     print(f"  模型调用的工具：{called}")
     print(f"  回答：{str(result['messages'][-1].content)[:260]}")
+    search_calls = [name for name in called if name == "search_knowledge_base"]
     print(
-        "  ↑ 与 Demo 4 的区别：**查不查、查几次由模型决定**（这里它查了多次，\n"
-        "    因为问题里有两件事）。官方把这种模式叫 agentic RAG —— 检索成了 agent 的能力，\n"
-        "    而不是流水线里固定的一步。"
+        f"  ↑ 与 Demo 4 的区别：**查不查、查几次由模型决定**（本次它调了 {len(search_calls)} 次；\n"
+        "    问题里有两件事时通常会查两次，但这是**模型决策**，不是必然）。\n"
+        "    这就是 agentic RAG：检索成了 agent 的能力，而不是流水线里固定的一步。"
     )
 
 
@@ -351,7 +348,7 @@ if __name__ == "__main__":
         root = Path(tmp)
         print(f"演示知识库目录：{root}\n")
         store, chunks = build_knowledge_base(root)
-        demo_1_build(store, chunks)
+        demo_1_build(chunks)
         demo_2_vector_search(store)
         demo_3_rerank(store)
         demo_4_answer_with_context(store)

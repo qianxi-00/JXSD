@@ -190,7 +190,7 @@ def demo_1_tool_error() -> None:
                                      # 默认 "continue" 会自己吞成错误消息，
                                      # 那样外层 ToolError 就永远没机会出手了 ——
                                      # 组合时必须显式改成 "error"，这是官方文档强调的点。
-                initial_delay=0.0,    # 教学演示不等退避；生产请回到 1.0 / 2.0 / True
+                initial_delay=0.0,    # 教学演示不等退避（生产建议 initial_delay=1.0）
                 backoff_factor=0.0,
                 tools=["query_order"],
             ),
@@ -296,7 +296,8 @@ def demo_3_tool_call_limit() -> None:
 # detector 三种写法：正则字符串 / 编译后的正则 / 函数（返回 PIIMatch 列表，可做校验逻辑）；
 # 作用面三个开关：apply_to_input（默认 True）/ apply_to_output（默认 False）
 #                / apply_to_tool_results（默认 False）—— 想护住输出要自己打开。
-# 实现层：它用 before_model 改 state，所以原文**根本不落 checkpoint**（见 Part A 的对照）。
+# 实现层：输入侧替换的是**这次模型调用看到的那份消息**（输出侧脱敏走 after_model），
+# 所以原文不会落到 checkpoint 里 —— 实测见 Part A 的对照（Demo 只证明"模型没看到 + 返回 state 是占位符"）。
 def demo_4_pii() -> None:
     print("\n" + "=" * 70)
     print("Demo 4：PIIMiddleware —— 邮箱 / 密钥自动脱敏，或直接拦截")
