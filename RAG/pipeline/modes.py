@@ -40,6 +40,8 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from config import settings
+
 from core.logger import logger
 from core.routes import (
     ROUTE_AGENTIC,
@@ -139,7 +141,7 @@ def _run_basic(question: str, history: list[dict]) -> dict:
     # `run_and_collect` 是 async（内部消费异步事件流）；这里用 `_run_coroutine_sync`
     # 而不是裸 `asyncio.run`，因为本函数可能被 async 端点/Chainlit 回调调到
     # ——那种情况下事件循环已经在跑，裸 asyncio.run 会直接抛 RuntimeError（实测踩过）。
-    collected = _run_coroutine_sync(pipeline.run_and_collect(question))
+    collected = _run_coroutine_sync(pipeline.run_and_collect(question, use_cache=cache_enabled()))
     return {
         "answer": collected.get("answer", ""),
         "sources": collected.get("sources") or [],
@@ -173,6 +175,16 @@ def _basic_pipeline():
 _ANSWER_CACHE = None
 
 
+def cache_enabled() -> bool:
+    """全局缓存开关（课案键名 `QA_CACHE_ENABLED`，默认开）。
+
+    为什么要有总开关：评估/排障时想量**真实链路能力**，但四条线路各自的缓存入口不同
+    （① 在 RAGPipeline 内部、② 在 answer_financial_question 内部、③④ 在 `_cached_route`）——
+    逐个传 `use_cache=False` 总会漏掉一条。这里给一个统一判据，四条线路都读它。
+    """
+    return bool(settings.qa_cache.enabled)
+
+
 def _answer_cache():
     """进程内复用的 AnswerCache（③④ 线路读写缓存用）。
 
@@ -203,6 +215,8 @@ def _cached_route(question: str, history: list[dict], route: str, produce):
       含义不同。只跳过"读"是**不够的** —— 那样会把"依赖历史的答案"存成"只看问题文本的答案"，
       之后有人单问同一句就直接命中它（等于把上一轮的语境偷偷复用）。与 ② 的
       `use_cache=not history`（读写一起关）同一口径。
+    - **总开关 `QA_CACHE_ENABLED` 关了就不查不写**（`cache_enabled()`）：评估/排障时
+      想量真实链路能力，一个开关管住四条线路，比逐个传参可靠。
     - **作用域按线路分**：③=graph、④=fusion（`core/routes.py::cache_scope`），
       四线路互不串答案。
     - **命中时不返回 `extra` 明细**：`extra`（图谱社区/关系/SQL 结果）是本次链路的产物，
@@ -210,7 +224,7 @@ def _cached_route(question: str, history: list[dict], route: str, produce):
       比把上次的社区摘要冒充成本次证据要诚实（① 命中缓存时同样不给链路明细）。
     """
     cache = _answer_cache()
-    use_cache = not history
+    use_cache = bool(not history and cache_enabled())
     if use_cache:
         cached = cache.lookup(question, route=route)
         if cached and cached.get("answer"):
@@ -245,7 +259,7 @@ def _run_agentic(question: str, history: list[dict]) -> dict:
         info=info,
         # 多轮时**必须关缓存**：精确缓存键只有问题文本，而"那乐艳的呢？"在不同
         # 上下文里含义不同，缓存会把上一轮语境的答案答给下一轮同样的问题（串答案）。
-        use_cache=not working_history,
+        use_cache=bool(not working_history and cache_enabled()),
     )
     return {
         "answer": answer,

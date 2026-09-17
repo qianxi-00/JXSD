@@ -27,21 +27,79 @@ _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 #   - path="/" 挂的是 Chainlit 页面（见文件末尾的 mount_chainlit），给人用。
 # 两者共用同一个进程、同一份配置与同一个 RAGPipeline 实现。
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
 from chainlit.utils import mount_chainlit  # 把 Chainlit 的 ASGI 应用挂到本 FastAPI 应用上
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse  # SSE 靠它边算边推，不用等全部生成完
 from pydantic import BaseModel  # 请求体校验：字段缺失/类型不对由 FastAPI 直接回 422
 
 from config import settings
+from core.logger import logger
 from core.routes import ROUTE_LABELS
+from core.timeout import call_with_timeout
 from pipeline.modes import answer_events, answer as answer_by_mode, list_modes
 
 # 注意此处**没有** CORSMiddleware：本服务只给同源的 Chainlit 页面与本地脚本用，
 # 不做跨域开放。将来若有独立前端域，需要显式加中间件，否则浏览器端会被 CORS 拦下。
-app = FastAPI(title="财务 RAG 智能问答系统")
+def _warmup() -> None:
+    """启动预热：把 FAQ 预设向量与 BM25 索引先加载好（失败不影响服务可用）。
+
+    为什么值得做（课案把"启动预热"列为生产做法）：不预热时，**第一个未命中缓存的请求**
+    要现算 5 条标准问法的向量（几十毫秒到秒级）并加载 BM25 语料 —— 用户感知就是
+    "服务刚起来时第一问特别慢"。预热把这份成本挪到启动阶段。
+
+    三步各自的失败都**只记日志**：预热是优化，不是可用性前提。某个依赖没起来时，
+    服务仍应能启动并在真正用到时报错（那样错误信息还带着请求上下文，更好排查）。
+    """
+    from core.cache import AnswerCache
+    from retrieval import keyword_retrieval
+
+    try:
+        # `cache.warmup()` 而不是分别 seed：它会**把进程内的预设矩阵也载入**
+        # （只播种 Redis 的话，第一个请求仍要现做归一化 —— 等于没预热）。
+        info = AnswerCache().warmup()
+        logger.info(
+            f"[预热] FAQ 相似度层 {info['faq']} 条（本轮新播 {info['faq_seeded']}）/ "
+            f"明细精确层新播 {info['details']} 条 / 预设矩阵已载入 {info['matrix']} 行"
+        )
+    except Exception as exc:  # noqa: BLE001 预热失败不能拦住启动
+        logger.warning(f"[预热] 缓存层预热失败（不影响服务启动）: {exc}")
+    try:
+        # BM25 语料在 keyword_retrieval 里是 lru_cache 按函数对象缓存的：调一次就预热好了
+        keyword_retrieval._load_index()
+        logger.info("[预热] BM25 语料索引已加载")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[预热] BM25 预热失败（不影响服务启动）: {exc}")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """应用生命周期：启动时预热（可用 APP_WARMUP=false 关掉，测试/CI 更快）。"""
+    if settings.app.warmup:
+        _warmup()
+    yield
+
+
+app = FastAPI(title="财务 RAG 智能问答系统", lifespan=lifespan)
+
+# ── CORS：**只在显式配置了 APP_CORS_ORIGINS 时才挂** ──
+# 本服务默认只给同源的 Chainlit 页面与本地脚本用；无脑放开跨域等于把接口暴露给任意网页
+# （浏览器会带着 cookie 替别的站点发请求）。要接独立前端域时在 .env 里列白名单：
+#   APP_CORS_ORIGINS=http://localhost:5173,https://rag.example.com
+_cors_origins = [item.strip() for item in settings.app.cors_origins.split(",") if item.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    logger.info(f"[CORS] 已按白名单开放跨域: {_cors_origins}")
 
 # 用绝对路径而不是相对路径：uvicorn/Chainlit 的启动工作目录可能是仓库根、RAG 目录或别处，
 # 相对路径会在换启动方式时凭空找不到文件（mount_chainlit 内部会检查文件是否存在）。
@@ -77,6 +135,75 @@ async def modes() -> dict:
     return {"modes": list_modes(), "default": "basic"}
 
 
+def _health_probe(name: str, fn, timeout: float = 3.0) -> dict:
+    """跑一个依赖探针，把结果收敛成 `{ok, detail}`（**绝不让探针把接口挂住**）。
+
+    为什么必须有界：本机沙箱里 libpq 的 GSS 协商会永久卡住，`connect_timeout` 无效 ——
+    健康检查如果直接 `psycopg.connect`，/api/health 自己就会挂死，
+    那比返回 unhealthy 更糟（监控探针也会跟着超时，分不清"服务挂了"还是"检查卡了"）。
+    """
+    ok, payload = call_with_timeout(fn, timeout)
+    if ok and payload is not None:
+        return {"ok": True, "detail": str(payload)}
+    if not ok and payload is None:
+        return {"ok": False, "detail": f"超时（>{timeout}s）"}
+    return {"ok": False, "detail": f"{type(payload).__name__}: {payload}"}
+
+
+@app.get("/api/health")
+def health() -> dict:
+    """健康检查：四个依赖各探一次，**任一失败也只把整体标成 degraded**（不抛 500）。
+
+    设计取舍：
+    - 默认**不返回 5xx**：负载均衡/监控靠 body 里的 `status` 判定即可，而 5xx 会让
+      "服务进程还活着、只是某个依赖没起"这种状态看起来像"服务死了"。
+    - 每个探针都带 3 秒上限（见 `_health_probe`），整体最坏 ~12 秒。
+    - 同步 `def`：探针都是阻塞调用，FastAPI 会丢线程池（与 /api/chat 同一取舍）。
+    """
+
+    def _redis():
+        from core.redis_client import get_redis_client
+
+        return get_redis_client().ping()
+
+    def _milvus():
+        from core.database import get_milvus_client
+
+        client = get_milvus_client()
+        names = client.list_collections()
+        return f"collections={len(names)}"
+
+    def _postgres():
+        import sqlalchemy as sa
+
+        from agentic.text_to_sql import get_engine
+
+        with get_engine().connect() as conn:
+            return f"tickets={conn.execute(sa.text('SELECT COUNT(*) FROM tickets')).scalar_one()}"
+
+    def _neo4j():
+        from graph_rag.models import connect
+
+        connect()
+        return "connected"
+
+    checks = {
+        "redis": _health_probe("redis", _redis),
+        "milvus": _health_probe("milvus", _milvus),
+        "postgres": _health_probe("postgres", _postgres),
+        "neo4j": _health_probe("neo4j", _neo4j),
+    }
+    failed = [name for name, item in checks.items() if not item["ok"]]
+    return {
+        # ok=全通 / degraded=部分不可用（服务还能应答，但某些线路会失败）
+        "status": "ok" if not failed else "degraded",
+        "failed": failed,
+        "checks": checks,
+        "qa_cache_enabled": settings.qa_cache.enabled,
+        "warmup": settings.app.warmup,
+    }
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest) -> dict:
     """问答接口:调用指定线路的 RAG 流水线生成回答(非流式)
@@ -95,29 +222,85 @@ def chat(req: ChatRequest) -> dict:
     return result
 
 
+def _classify_query_type(event: dict, current: str) -> str:
+    """把事件流翻译成课案约定的 `query_type` ∈ cache / faq / rag / rag_rejected / llm。
+
+    课案（基础篇「接口职责」）要求 SSE 每条消息带上它 —— 前端据此判断"这条回答来自缓存、
+    还是检索、还是直答"，不必自己解析内部事件。映射规则（单向、可测）：
+
+        cache_hit(exact)   → cache
+        cache_hit(preset)  → faq
+        route(direct)      → llm（直答，没有检索）
+        route(rag)         → rag
+        no_evidence        → rag_rejected（检索了但全低于阈值 ⇒ 保守回复）
+
+    用"见到哪个事件就更新状态"的**状态机**：事件顺序是 start → (cache_hit) → route →
+    … → (no_evidence) → token，到 token 时状态已定型，不必每条 token 重算。
+    """
+    if event.get("type") == "cache_hit":
+        return "cache" if event.get("mode") == "exact" else "faq"
+    if event.get("type") == "route":
+        return "llm" if (event.get("route") or "rag") == "direct" else "rag"
+    if event.get("type") == "no_evidence":
+        return "rag_rejected"
+    return current
+
+
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatRequest) -> StreamingResponse:
     """问答接口:SSE 流式返回回答内容（四条线路统一走事件流）
 
-    事件类型与基础线路既有的 7 种一致（start/route/rewrite/retrieve/rerank/token/done），
-    另外多一个 `mode` 字段标明线路。**仍然只转发 token 与 error**：
-    其余事件被丢弃是这个接口既有的约定（要完整链路可视化请走 Chainlit 页面）。
+    载荷形状（**向后兼容**：老字段 `delta` 保留，新字段叠加）：
+
+        data: {"delta": "...", "mode": "basic", "query_type": "cache|faq|rag|rag_rejected|llm"}
+        ...
+        data: {"done": true, "answer": "...", "sources": [...], "query_type": "...",
+               "processing_time": 1.23, "cache_hit": null, "mode": "..."}
+        data: [DONE]
+
+    `query_type` 与 `processing_time` 是课案基础篇「接口职责」点名要求的：以前只发 delta，
+    前端既看不出"这答来自缓存/FAQ/检索/保守回复/直答"，也拿不到服务端总耗时。
+    中间事件（retrieve/rerank 明细）**仍然不透传** —— 那是本接口既有约定，
+    链路可视化走 Chainlit 页面。
     """
 
     async def event_gen():
+        import time as _time
+
+        started = _time.perf_counter()
+        query_type = "rag"
+        mode = req.mode
+        final: dict = {}
         # stream=True 是恒定的：这个接口的存在意义就是流式（页面上的"流式输出"
         # 开关只影响 Chainlit 侧的基础线路，不走这里）。
         async for ev in answer_events(req.question, req.mode, req.history, stream=True):
+            query_type = _classify_query_type(ev, query_type)
+            if ev.get("mode"):
+                mode = ev["mode"]
             if ev["type"] == "token":
                 # SSE 协议：每条消息形如 `data: <payload>\n\n`，空行才是消息结束符。
                 # ensure_ascii=False 让中文原样输出（否则会被转成 \uXXXX 逃逸）。
-                yield f"data: {json.dumps({'delta': ev['text'], 'mode': ev.get('mode')}, ensure_ascii=False)}\n\n"
+                payload = {"delta": ev["text"], "mode": mode, "query_type": query_type}
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             elif ev["type"] == "error":
                 # 出错也走同一条通道（拼成一个 delta 推给客户端），而不是换 HTTP 状态码：
                 # StreamingResponse 在**响应开始**时就把状态行（200）与响应头发了出去，
                 # 那时链路还没跑完，事后无法再改 —— 所以错误只能作为正文推出去。
-                yield f"data: {json.dumps({'delta': ev['message'], 'mode': ev.get('mode')}, ensure_ascii=False)}\n\n"
-        # 结束哨兵，照 OpenAI 流式的习惯给客户端一个明确收尾信号（客户端据此关闭连接）。
+                payload = {"delta": ev["message"], "mode": mode, "query_type": query_type}
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            elif ev["type"] == "done":
+                final = ev
+        # 收尾事件：把整条链路的产出一次给全（前端不必自己拼 token，也能拿到总耗时）。
+        summary = {
+            "done": True,
+            "answer": final.get("answer", ""),
+            "sources": final.get("sources") or [],
+            "cache_hit": final.get("cache_hit"),
+            "mode": mode,
+            "query_type": query_type,
+            "processing_time": round(_time.perf_counter() - started, 3),
+        }
+        yield f"data: {json.dumps(summary, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
 
     # text/event-stream 是 SSE 的标准 MIME 类型。
@@ -126,6 +309,80 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     # 也没有设置 Cache-Control / X-Accel-Buffering 之类的头 —— 本机直连（无反向代理）
     # 不需要；将来若放到 nginx 后面，代理缓冲会让"流式"退化成一次性返回。
     return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+@app.websocket("/api/ws")
+async def ws_chat(websocket: WebSocket) -> None:
+    """WebSocket 问答口（课案基础篇「接口职责」里的 `WS /api/ws`）。
+
+    与 SSE 的关系：**同一套事件流，两种传输**。SSE 适合"一次提问、单向推流"；
+    WebSocket 适合长连接对话（客户端可以连续发问，不必每次重建连接）。
+
+    协议（刻意做成"发一收多"，而不是自定义复杂帧）：
+        → {"question": "...", "mode": "basic", "history": []}
+        ← {"type": "token", "delta": "...", "mode": "...", "query_type": "..."} × N
+        ← {"type": "done", "answer": "...", "sources": [...], "processing_time": 1.23}
+    用户再发下一条消息即可继续问；连接断开就结束。
+
+    ⚠ 与 HTTP 侧同源的取舍：`answer_events` 是**同步阻塞**的异步生成器（内部跑检索/LLM），
+    而 WebSocket 的 `send_json` 是异步的 —— 所以这里逐事件 await 发送，
+    一条连接的问答期间会占住一个事件循环任务，但不会阻塞别的连接（每次 await 都让出）。
+    """
+    from starlette.websockets import WebSocketState
+
+    await websocket.accept()
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                # 协议错误**回一条错误帧**而不是直接断开：客户端能看到原因自己修
+                await websocket.send_json({"type": "error", "message": "请求体必须是 JSON"})
+                continue
+            question = (payload.get("question") or "").strip()
+            if not question:
+                await websocket.send_json({"type": "error", "message": "缺少 question 字段"})
+                continue
+
+            import time as _time
+
+            started = _time.perf_counter()
+            query_type = "rag"
+            mode = payload.get("mode") or "basic"
+            final: dict = {}
+            async for ev in answer_events(question, mode, payload.get("history") or [], stream=True):
+                query_type = _classify_query_type(ev, query_type)
+                if ev.get("mode"):
+                    mode = ev["mode"]
+                if ev["type"] == "token":
+                    await websocket.send_json(
+                        {"type": "token", "delta": ev["text"], "mode": mode, "query_type": query_type}
+                    )
+                elif ev["type"] == "error":
+                    await websocket.send_json(
+                        {"type": "error", "message": ev["message"], "mode": mode, "query_type": query_type}
+                    )
+                elif ev["type"] == "done":
+                    final = ev
+            await websocket.send_json({
+                "type": "done",
+                "answer": final.get("answer", ""),
+                "sources": final.get("sources") or [],
+                "cache_hit": final.get("cache_hit"),
+                "mode": mode,
+                "query_type": query_type,
+                "processing_time": round(_time.perf_counter() - started, 3),
+            })
+    except WebSocketDisconnect:
+        # 客户端正常断开（关页面/关连接）：不是错误，静默结束
+        logger.info("[WS] 客户端已断开")
+    except Exception as exc:  # noqa: BLE001 单连接异常不该影响服务
+        logger.warning(f"[WS] 连接异常结束: {exc}")
+    finally:
+        # 只在还连着的时候关：对端已断开时再 close 会抛 RuntimeError（Starlette 的行为）
+        if websocket.client_state is WebSocketState.CONNECTED:
+            await websocket.close()
 
 
 # ★ 挂载必须放在最后：mount_chainlit 内部执行 app.mount("/", chainlit_app)，

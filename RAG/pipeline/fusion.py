@@ -76,31 +76,12 @@ SQL_EVIDENCE_TIMEOUT_S = 20.0
 def _call_with_timeout(fn, seconds: float):
     """在**有界时间**内跑 fn；超时返回 (False, None)，异常返回 (False, exc)，成功 (True, 值)。
 
-    实现是线程 + `join(timeout)`：`fn` 卡在系统调用里时无法被安全中断，
-    所以超时后那个线程会继续挂着（daemon=True，不阻止进程退出）——
-    这是刻意的取舍：要的是"这次请求还能返回"，而不是"杀掉那个卡住的调用"。
-
-    为什么不用 signal.alarm / asyncio.wait_for：前者在 Windows 上不可用，
-    后者要求被等待的是协程，而 psycopg 的阻塞连接是纯同步的。
+    实现已提升到 `core/timeout.py`（`app/main.py` 的 /api/health 探针也要用同一份，
+    抄两份必然漂移）。这里保留同名薄封装：本模块与它的测试一直按这个名字用。
     """
-    import threading
+    from core.timeout import call_with_timeout
 
-    box: dict = {}
-
-    def _worker():
-        try:
-            box["value"] = fn()
-        except BaseException as exc:  # noqa: BLE001 原样带回给调用方判断
-            box["error"] = exc
-
-    thread = threading.Thread(target=_worker, daemon=True)
-    thread.start()
-    thread.join(timeout=seconds)
-    if thread.is_alive():
-        return False, None
-    if "error" in box:
-        return False, box["error"]
-    return True, box.get("value")
+    return call_with_timeout(fn, seconds)
 
 
 @dataclass

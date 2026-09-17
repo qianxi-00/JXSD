@@ -820,7 +820,7 @@ flowchart TB
 | 缓存与 FAQ | `core/cache.py` | 精确缓存键纳入模型/集合/双阈值作用域并做空白归一化；FAQ 用 Redis+向量余弦（课案用 Milvus faq 集合） |
 | **系统评估** | `evaluation/stage_metrics.py` + `script/run_stage_eval.py` | 对齐分层测试集、逐阶段记录与指标、EVALUATION_PROMPT；RAGAS 部分与优化篇共用 |
 | query 改写 | `llm/chat.py` + `core/prompts.py` | 四种策略语义对齐（**措辞做了票据域适配，非逐字**；课案的 `STRATEGY_PROMPT` 本身是坏 f-string，导入即 NameError，本项目改成 JSON 路由提示词属必要修正）；召回口径是"原问题 + 改写 query 的并集"，不是课案的"按策略替换" |
-| 部署 | `app/main.py` | **部分对齐** FastAPI + Chainlit：无 `/api/health`、无 `WS /api/ws`、无 CORS、SSE 只发 `delta`（不带 query_type/sources 事件）、无多轮 history；Chainlit 为进程内 mount；未做 Dockerfile（本机直连 Docker 服务栈） |
+| 部署 | `app/main.py` | **接口层已补齐**（本轮）：`GET /api/health`（探针**有界**，任一依赖挂只标 degraded）、`WS /api/ws`（同一套事件流的另一种传输）、`GET /api/modes`、`ChatRequest.history`（四线路统一入口）、`QA_CACHE_ENABLED` 总开关、SSE 带 `query_type`/`processing_time`、CORS（配 `APP_CORS_ORIGINS` 才开放）、启动预热（`APP_WARMUP`）。仍未做：Dockerfile（本机直连 Docker 服务栈）、Chainlit 为进程内 mount |
 
 ### 5.2 优化篇
 
@@ -996,7 +996,7 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | T5 | 中 | 优化篇 791 / 1178（成本要和质量一起看） | 实验脚本全文 **0 处** `usage`/`total_tokens`/`cost` | 回答不了"Top-K 调大后成本是否可接受" |
 | T6 | 中 | 优化篇 2238-2239（图谱健康度三指标 + 补全与人工审核闭环） | grep `孤立节点率/重复节点率/链接准确率/链接补全/人工审核` **全部 0 命中** | 抽取/消歧退化会**静默污染图谱且没有可观测量**（现在孤点 0 ≠ 有监控） |
 | T7 | 中 | 优化篇 2495-2497（`QueryResponse` + `response_model`） | `graph_rag/service.py` 返回裸 dict；grep `QueryResponse` 0 命中 | OpenAPI 没有响应结构，接口契约退化 |
-| T8 | 中 | 基础篇「接口职责」（`GET /api/health`、`WS /api/ws`、`QueryRequest.history`、`QA_CACHE_ENABLED`） | 四个都 **0 命中**；SSE 只发 `{"delta"}`（内部五分类事件不透出）；无 CORS、无 startup 预热 | 接口层比课案薄：无健康检查、无 WebSocket、HTTP 不支持多轮、无法一键关缓存 |
+| T8 | 中 | 基础篇「接口职责」（`GET /api/health`、`WS /api/ws`、`QueryRequest.history`、`QA_CACHE_ENABLED`） | ✅ **本轮已修**：① `GET /api/health`（四依赖各探一次，**每个探针 3 秒上限**，任一失败只标 `degraded` 不返 5xx）；② `WS /api/ws`（与 SSE 同一套事件流，一条连接可连续多轮）；③ `ChatRequest.history`（四线路统一入口，①③ 单轮线路会忽略）；④ **`QA_CACHE_ENABLED` 总开关**（`config.py::QaCacheSettings`，一个开关管住四条线路：①透传 `run_and_collect(use_cache=)`、②叠加 `not history and cache_enabled()`、③④进 `_cached_route`）；⑤ SSE 每条载荷加 `query_type`（cache/faq/rag/rag_rejected/llm）与收尾帧 `processing_time`；⑥ CORS（**仅在配了 `APP_CORS_ORIGINS` 时挂**，默认不开放跨域）；⑦ 启动预热（`APP_WARMUP`，用 `AnswerCache.warmup()` 把**进程内预设矩阵**也载入，只播种 Redis 不算预热）。真机：`/api/health` 1.01s 四依赖全 ok；SSE 20 帧 token 全带 `query_type`、收尾 `processing_time=2.655s`；WS 一条连接连问两轮（第 2 轮 0.001s 命中缓存） |
 | T9 | 中 | 基础篇 1812-2274（12 字段口径） | `semantic_text` = 清洗后 OCR 全文，未采用课案三套摘要模板 | 召回语义依赖 OCR 原文措辞；若改模板，必须先保证证据文本取 `ocr_text`（已改） |
 | T10 | 低 | 基础篇 3819-3911（FAQ 索引后端取舍） | FAQ 相似度层把向量全量载入进程内、每进程一份 | 当前 5 条标准问法无影响；问法涨到几百条要重评（`cache.py` 已写明该阈值） |
 
@@ -1023,6 +1023,8 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | Rerank | `RERANK_MODEL` `RERANK_TOP_K` `RERANK_RELEVANCE_P` | `BAAI/bge-reranker-v2-m3`；top_k=8、相关度阈值 **0.22**（2026-09-17 换模型后用标注评估集重标，见 8.4） |
 | 检索 | `RETRIEVAL_TOP_N` | 单路召回条数 10 |
 | 缓存 | `REDIS_EXACT_TTL` `REDIS_SIM_THRESHOLD` | 精确缓存 600 秒；FAQ 相似度阈值 **0.79**（bge-m3 空间重标，见 8.4） |
+| **缓存总开关** | `QA_CACHE_ENABLED` | 默认 **true**。置 false ⇒ **四条线路都不读不写缓存**（评估/排障时量真实链路能力，比逐个传 `use_cache=False` 可靠） |
+| **接口层** | `APP_CORS_ORIGINS` `APP_WARMUP` | CORS 白名单逗号分隔，**默认空 = 不开放跨域**；`APP_WARMUP=true` 启动时预热 FAQ 预设矩阵 + BM25 语料（失败只记日志，不拦启动） |
 | Milvus | `MILVUS_URI` `MILVUS_DB_NAME` `MILVUS_COLLECTION` | `finance_rag` 库、`tick` 集合（向量维度 1024） |
 | PostgreSQL | `POSTGRES_*` `FINANCE_DB` | Text-to-SQL 的票据库（默认 `finance`） |
 | Neo4j | `NEO4J_URI` `NEO4J_USER` `NEO4J_PASSWORD` | GraphRAG 图数据库 |
@@ -1131,6 +1133,7 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | **评判模型与生成模型分家（本轮）** | `.env` 实测：生成 `deepseek-flash` / 评判 **`deepseek-chat`**（`from_fallback=False`）；`evaluation/llm_judge.py::score_answer()` 真实调用返回 `score=5` 且反馈合理；把 `EVAL_LLM_MODEL` 清空后 `eval_llm_target()` 回退生成模型并置 `from_fallback=True`（调用方据此打 WARNING） |
 | **导入幂等（本轮）** | `tick_extract.py --insert` 重跑一次：`count(*)` **300 → 300**、**有向量 282 → 282**（一条没丢）；同主键 `insert` 两次在一次性集合上实测是 **2 行**（旧实现的问题） |
 | **token 用量采集（本轮）** | 真机一串 Agentic 问答：**9 次 LLM 调用 / 输入 41,092 / 输出 7,643 / 合计 48,735 token，其中 34,559 命中提示缓存**（`cached_input_tokens`，DeepSeek 的 `prompt_cache_hit_tokens`）；未填单价时 `cost=None` ⇒ 评估报告里不出成本指标（不把"没算"报成 0） |
+| **接口层补齐（本轮，T8）** | `/api/health` 真机 **1.01s** 返回四依赖全 ok（redis/milvus/postgres/neo4j）；SSE 20 帧 token **每帧带 `query_type`**、收尾帧 `processing_time=2.655s`；`WS /api/ws` 一条连接连问两轮（第 2 轮 **0.001s** 命中缓存）；启动日志 `[预热] FAQ 相似度层 5 条 / 预设矩阵已载入 5 行` + `BM25 语料索引已加载` |
 
 ### 7.2 真机端到端复跑清单（改完链路**必须**跑一遍）
 
