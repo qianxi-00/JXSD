@@ -1,0 +1,4785 @@
+
+# 自媒体 Agent
+
+## 项目架构
+
+### 系统架构
+
+[DIAGRAM] 工具 -> 视频下载videodl -> 语音处理FunASR -> 热点抓取TrendRadar -> TTS 配音Edge-TTS -> 数字人生成HeyGem -> 抖音数据采集erma0/douyin -> LangGraph 工作流引擎 -> 定位工作流 -> 热点工作流 -> 复刻工作流 -> 视频工作流 -> 剪辑工作流 -> 复盘工作流 -> Streamlit 前端 -> 账号定位 -> 热点监控 -> 内容复刻 -> 口播视频 -> 视频剪辑 -> 数据复盘
+
+### 搭建环境
+
+第一步：安装 Python 依赖
+
+```
+uv python pin 3.11
+
+uv add streamlit langgraph langchain langchain-openai pydantic pydantic-settings python-dotenv videofetch requests funasr openai edge-tts Pillow httpx niquests 
+```
+
+第二步：项目结构
+
+```
+self_media_agent/
+├── main.py                       # Streamlit 入口 + 路由
+├── .env                          # API 密钥
+├── pyproject.toml                # uv 依赖声明（uv add 自动生成）
+├── uv.lock                       # uv 依赖锁定文件
+├── config.py                     # 统一配置 (Pydantic Settings)
+├── .cache/                       # 运行时输出（视频/图片/下载）
+├── .skills/                      # deepagents 技能包
+│   └── video-use/                # 视频剪辑技能
+├── views/                        # 6 个 Streamlit 页面
+│   ├── home.py                   # 首页
+│   ├── positioning.py            # 账号定位
+│   ├── hot_topic.py              # 热点监控
+│   ├── replicate.py              # 内容复刻
+│   ├── video.py                  # 口播视频（提词器 / 数字人）
+│   ├── mashup.py                 # 视频剪辑（素材 + BGM）
+│   └── review.py                 # 数据复盘（抖音真实数据）
+├── workflows/                    # 6 个 LangGraph 工作流
+│   ├── __init__.py               # LLM 调用统一入口
+│   ├── base.py                   # 工作流基类
+│   ├── positioning.py            # 账号定位 StateGraph
+│   ├── hot_topic.py              # 热点监控 StateGraph（并行）
+│   ├── replicate.py              # 内容复刻 StateGraph
+│   ├── video.py                  # 口播视频 StateGraph（HeyGem）
+│   ├── mashup.py                 # 视频剪辑 StateGraph（7步管线）
+│   └── review.py                 # 数据复盘 StateGraph（抖音采集）
+└── tools/
+    ├── media_tools.py            # 视频下载/语音处理/TTS/文章抓取
+    ├── heygem_client.py          # HeyGem 数字人 API（声音克隆+视频合成）
+    └── trend_radar_client.py     # TrendRadar 热点抓取
+```
+
+第三步：基础代码
+
+```
+# 文件: config.py
+"""中央配置 — Pydantic Settings + .env"""
+import os
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    #  LLM 配置 
+    api_key: str = "your-api-key"
+    base_url: str = "https://api.deepseek.com/v1"
+    model_name: str = "deepseek-v4-flash"
+ 
+    #  DeepAgents 编排层 
+    deepagent_model: str = ""       # 默认复用 model_name
+
+    #  缓存目录 
+    video_output_dir: str = "./.cache/videos"
+
+    #  TTS 语音合成 
+    tts_enabled: bool = True
+    tts_voice: str = "zh-CN-XiaoxiaoNeural"
+
+    #  TrendRadar 热点监控 
+    trendradar_api_url: str = "https://newsnow.busiyi.world/api/s"
+
+    #  HeyGem / Duix Avatar 数字人 
+    heygem_host: str = "http://localhost:8383"
+    heygem_data_dir: str = "c:/duix_avatar_data/face2face"
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+    def get_deepagent_model(self) -> str:
+        """DeepAgent 模型名，默认复用 LLM 模型"""
+        return self.deepagent_model or self.model_name
+
+settings = Settings()
+
+# 确保输出目录存在
+os.makedirs(settings.video_output_dir, exist_ok=True)
+```
+
+创建 workflows/base.py（与 __init__.py 功能一致，提供别名兼容）：
+
+```
+# 文件: workflows/base.py
+"""工作流基类 — 提取公共逻辑（与 workflows/__init__.py 功能一致，别名兼容）"""
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
+from config import settings
+
+def get_model(temperature: float = 0.5) -> ChatOpenAI:
+    """获取模型实例（统一配置，含超时避免挂死）"""
+    return ChatOpenAI(
+        api_key=settings.api_key,
+        base_url=settings.base_url,
+        model=settings.model_name,
+        temperature=temperature,
+        request_timeout=90,    # 90秒超时（长prompt+复杂推理需要更久）
+        max_retries=1,         # 失败重试1次
+    )
+
+def safe_llm_call(model: ChatOpenAI, prompt: str, fallback: str = "") -> str:
+    """安全调用LLM，带错误处理。失败时返回错误信息，绝不抛异常。"""
+    try:
+        response = model.invoke([HumanMessage(content=prompt)])
+        return response.content
+    except Exception as e:
+        return f"[LLM调用失败: {e}]" if not fallback else fallback
+
+# 别名兼容（供 workflows/__init__.py 的使用者）
+llm_call = safe_llm_call
+```
+
+---
+
+## 账号定位
+
+> 章节概述：账号定位是自媒体运营的第一步，也是最关键的一步。本模块通过 LangGraph 串行工作流，将用户输入的背景信息（职业、技能、兴趣、目标平台）依次经过 画像分析 → 对标账号搜索 → 定位方案生成 三个节点，最终输出包含一句话定位、目标受众、内容版图、人设打造、变现路径和 30 天起号计划的完整策划方案。前端使用 Streamlit 的分栏布局收集用户信息，结果以 Tab 页切换展示，并通过 session_state 缓存防止页面刷新丢失数据。目标：用户输入背景信息，AI输出完整定位方案。
+
+### 工作流
+
+[DIAGRAM] 分析用户画像 -> 搜索对标账号 -> 生成定位方案
+
+### LangGraph 实现
+
+```
+# 文件: workflows/positioning.py
+"""账号定位工作流 — 3步：画像分析 → 对标搜索 → 方案生成"""
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+from workflows import llm_call
+
+class PositioningState(TypedDict):
+    user_info: str
+    profile: str
+    competitors: str
+    plan: str
+
+#   节点  
+def node_analyze(state: PositioningState) -> dict:
+    prompt = f"""你是自媒体定位分析师。分析以下用户的画像：
+
+【用户信息】
+{state["user_info"]}
+
+从4个维度分析：
+1. 专业优势（核心竞争力）
+2. 内容风格匹配（性格适合什么风格）
+3. 3个推荐赛道（按优先级，说明理由）
+4. 差异化切入点（与同类账号的区别）
+"""
+    return {"profile": llm_call(prompt, temperature=0.7)}
+
+def node_competitors(state: PositioningState) -> dict:
+    prompt = f"""基于以下用户画像，推荐5个对标账号：
+
+{state["profile"]}
+
+要求：
+- 2个头部大号（天花板参考），3个腰部账号（可追赶目标）
+- 每个账号说明：账号名、粉丝量级、内容特色、可借鉴点
+"""
+    return {"competitors": llm_call(prompt, temperature=0.7)}
+
+def node_plan(state: PositioningState) -> dict:
+    prompt = f"""基于以下信息，生成完整的账号定位策划方案：
+
+【用户画像】
+{state["profile"]}
+
+【对标账号】
+{state["competitors"]}
+
+输出结构化方案：
+1. **一句话定位**（你是谁，提供什么价值）
+2. **目标受众**（3类核心粉丝画像）
+3. **内容版图**（5个内容系列，每个说明主题+形式+频率）
+4. **人设打造**（语言风格、视觉风格、记忆点）
+5. **变现路径**（3条商业模式，从近到远排列）
+6. **30天起号计划**（每周运营重点和内容数量）
+"""
+    return {"plan": llm_call(prompt, temperature=0.7)}
+
+#   构建图  
+builder = StateGraph(PositioningState)
+builder.add_node("analyze", node_analyze)
+builder.add_node("competitors", node_competitors)
+builder.add_node("plan", node_plan)
+
+builder.add_edge(START, "analyze")
+builder.add_edge("analyze", "competitors")
+builder.add_edge("competitors", "plan")
+builder.add_edge("plan", END)
+
+positioning_graph = builder.compile()
+
+#   对外接口  
+def run_positioning(user_info: str) -> dict:
+    """运行定位工作流并保存结果"""
+    result = positioning_graph.invoke({"user_info": user_info})
+
+    # 保存到数据库
+    try:
+        with get_session() as session:
+            record = PositioningRecord(
+                user_name=user_info[:50],
+                user_input=user_info,
+                profile_analysis=result.get("profile", ""),
+                positioning_plan=result.get("plan", ""),
+            )
+            session.add(record)
+            session.commit()
+    except Exception as e:
+        print(f"[DB] 保存失败: {e}")
+
+    return result
+```
+
+### Streamlit 页面
+
+```
+# 文件: views/positioning.py
+"""show_positioning页面"""
+import streamlit as st
+
+def _add_history(action: str, summary: str):
+    """记录操作历史"""
+    from datetime import datetime
+    import streamlit as st
+    st.session_state.history.append({
+        "time": datetime.now().strftime("%H:%M"),
+        "action": action,
+        "summary": summary[:200],
+    })
+
+def show_positioning():
+    """账号定位"""
+    st.title("🎯 账号定位智能体")
+    st.markdown("输入你的背景信息，AI帮你制定专属的账号定位策划方案")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        job = st.text_input("你的职业", placeholder="程序员 / 设计师 / 运营 / 学生...")
+        skills = st.text_area("核心技能", placeholder="Python开发、视频剪辑、公开演讲...",
+                               height=100)
+    with col2:
+        interests = st.text_area("兴趣领域", placeholder="科技测评、美食探店、知识分享...",
+                                  height=100)
+        platform = st.selectbox("目标平台", ["抖音", "小红书", "B站", "视频号", "全平台"])
+
+    if st.button("🚀 生成定位方案", type="primary", use_container_width=True):
+        if not job and not skills:
+            st.warning("请至少填写职业或技能再生成")
+            return
+
+        user_input = f"职业：{job}\n技能：{skills}\n兴趣：{interests}\n目标平台：{platform}"
+
+        with st.spinner("AI 正在分析你的画像..."):
+            from workflows.positioning import run_positioning
+            result = run_positioning(user_input)
+
+        # 存入 session_state 防止下载按钮触发 rerun 后丢失
+        st.session_state["pos_result"] = result
+        st.session_state["pos_input"] = user_input
+
+    #   从 session_state 恢复结果  
+    result = st.session_state.get("pos_result")
+    if result:
+        st.success("✅ 方案生成完成！")
+
+        tab1, tab2, tab3 = st.tabs(["📊 画像分析", "🔍 对标账号", "📝 完整方案"])
+        with tab1:
+            st.markdown(result.get("profile", "分析中..."))
+        with tab2:
+            st.markdown(result.get("competitors", "搜索中..."))
+        with tab3:
+            plan = result.get("plan", "")
+            st.markdown(plan)
+            st.download_button("📥 下载方案", plan,
+                               file_name="账号定位方案.md",
+                               mime="text/markdown")
+
+        _add_history("账号定位", st.session_state.get("pos_input", ""))
+
+> **关键设计**：结果存入 `session_state`，下载按钮触发 Streamlit rerun 时从缓存恢复，页面不会变空白。
+```
+
+---
+
+## 热点监控
+
+> 章节概述：热点监控模块实现对抖音、B站等主流平台热点榜单的实时抓取与智能筛选。技术实现上分为三层：底层使用基于 TrendRadar 架构的 NewsNow API 封装热点抓取客户端（tools/trend_radar_client.py），支持多平台的热点数据获取；中层通过 LangGraph 的 Send 机制实现多平台并行抓取，抓取结果经 Annotated[list, operator.add] 自动合并去重后送入 LLM 进行赛道相关性筛选和选题建议生成；上层 Streamlit 页面提供平台选择、赛道输入和结果展示，支持数据表格预览和完整报告下载。热点数据按热度降序排列，LLM 为每条相关热点给出相关度评分、切入角度和创作难度评估。目标：抓取热点 → AI筛选 → 生成选题建议。
+
+### 工作流
+
+[DIAGRAM] 并行抓取热点 -> 抖音热榜 -> 小红书热榜 -> 微博热搜 -> 合并去重 -> LLM筛选 -> 生成选题
+
+### TrendRadar 热点抓取客户端
+
+在编写工作流之前，需要先封装热点抓取工具。创建 tools/trend_radar_client.py：
+
+```
+# 文件: tools/trend_radar_client.py
+"""
+热点抓取客户端 — 基于 TrendRadar (sansan0/TrendRadar) 架构
+
+使用 NewsNow API 抓取 35+ 平台热点数据：
+抖音、微博、知乎、B站、今日头条、百度、小红书等。
+
+TrendRadar GitHub: https://github.com/sansan0/TrendRadar
+NewsNow API: https://newsnow.busiyi.world/api/s
+"""
+
+import json
+import time
+import random
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+
+import requests
+
+#  平台 ID 映射 — 来自 TrendRadar config.yaml
+PLATFORM_IDS = {
+    # 主流平台
+    "douyin": "抖音",
+    "weibo": "微博",
+    "zhihu": "知乎",
+    "bilibili-hot-search": "B站热搜",
+    "toutiao": "今日头条",
+    "baidu": "百度热搜",
+    # 更多平台
+    "xiaohongshu": "小红书",
+    "kuaishou": "快手",
+    "wallstreetcn-hot": "华尔街见闻",
+    "cls-hot": "财联社",
+    "thepaper": "澎湃新闻",
+    "tencent-news": "腾讯新闻",
+    "neteasenews": "网易新闻",
+    "sogou": "搜狗热搜",
+    "guancha": "观察者网",
+    "ithome": "IT之家",
+    "36kr": "36氪",
+    "sspai": "少数派",
+    "hupu": "虎扑",
+    "tieba": "百度贴吧",
+    "acfun": "AcFun",
+    "juejin": "掘金",
+    "csdn": "CSDN",
+    "github-trending": "GitHub趋势",
+}
+
+# 默认 API（可自部署 newsnow）
+DEFAULT_API_URL = "https://newsnow.busiyi.world/api/s"
+
+# 默认请求头
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/91.0.4472.124 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
+
+class TrendRadarClient:
+    """
+    热点抓取客户端 — 基于 TrendRadar 的 DataFetcher 架构。
+
+    使用 NewsNow 聚合 API 获取多平台热点榜单，
+    支持自定义 API 地址（可自部署 newsnow）。
+
+    使用方式:
+        client = TrendRadarClient()
+        topics = client.fetch_hot_topics(["douyin", "weibo", "zhihu"])
+        # topics: [{"title": "...", "url": "...", "platform": "抖音", "rank": 1}, ...]
+    """
+
+    def __init__(self, api_url: str = None, proxy_url: str = None):
+        """
+        Args:
+            api_url: NewsNow API 地址，默认使用公共 API
+            proxy_url: 代理地址（可选）
+        """
+        self.api_url = api_url or DEFAULT_API_URL
+        self.proxy_url = proxy_url
+
+    #  单平台抓取
+    def fetch_platform(
+        self,
+        platform_id: str,
+        max_retries: int = 2,
+    ) -> List[Dict]:
+        """
+        抓取单个平台的热点数据。
+
+        Args:
+            platform_id: 平台 ID（如 "douyin", "weibo"）
+            max_retries: 最大重试次数
+
+        Returns:
+            热点列表 [{"title": str, "url": str, "rank": int}, ...]
+        """
+        url = f"{self.api_url}?id={platform_id}&latest"
+        proxies = {"http": self.proxy_url, "https": self.proxy_url} if self.proxy_url else None
+        platform_name = PLATFORM_IDS.get(platform_id, platform_id)
+
+        for attempt in range(max_retries + 1):
+            try:
+                resp = requests.get(
+                    url, proxies=proxies, headers=DEFAULT_HEADERS, timeout=10
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                status = data.get("status", "")
+                if status not in ("success", "cache"):
+                    raise ValueError(f"API 状态异常: {status}")
+
+                items = data.get("items", [])
+                topics = []
+                for i, item in enumerate(items, 1):
+                    title = item.get("title")
+                    if not title or not str(title).strip():
+                        continue
+                    topics.append({
+                        "title": str(title).strip(),
+                        "url": item.get("url", ""),
+                        "mobile_url": item.get("mobileUrl", ""),
+                        "platform": platform_name,
+                        "platform_id": platform_id,
+                        "rank": i,
+                        "heat": self._estimate_heat(i, len(items)),
+                    })
+
+                status_info = "最新" if status == "success" else "缓存"
+                print(f"[TrendRadar] {platform_name} 获取成功（{status_info}，{len(topics)} 条）")
+                return topics
+
+            except Exception as e:
+                if attempt < max_retries:
+                    wait = random.uniform(2, 5)
+                    print(f"[TrendRadar] {platform_name} 失败，{wait:.1f}s 后重试: {e}")
+                    time.sleep(wait)
+                else:
+                    print(f"[TrendRadar] {platform_name} 最终失败: {e}")
+                    return []
+
+        return []
+
+    #  多平台批量抓取
+    def fetch_hot_topics(
+        self,
+        platform_ids: List[str] = None,
+        request_interval: float = 0.3,
+    ) -> Dict[str, List[Dict]]:
+        """
+        批量抓取多个平台的热点。
+
+        Args:
+            platform_ids: 平台 ID 列表，默认抓取主流 6 个平台
+            request_interval: 请求间隔（秒）
+
+        Returns:
+            {平台ID: [热点列表], ...}
+        """
+        if platform_ids is None:
+            platform_ids = ["douyin", "weibo", "zhihu",
+                           "bilibili-hot-search", "toutiao", "baidu"]
+
+        results = {}
+        for i, pid in enumerate(platform_ids):
+            topics = self.fetch_platform(pid)
+            if topics:
+                results[pid] = topics
+
+            # 请求间隔（最后一个不需要等待）
+            if i < len(platform_ids) - 1:
+                jitter = request_interval + random.uniform(-0.1, 0.2)
+                time.sleep(max(0.1, jitter))
+
+        total = sum(len(v) for v in results.values())
+        print(f"[TrendRadar] 批量抓取完成: {len(results)}/{len(platform_ids)} 平台，共 {total} 条")
+        return results
+
+    #  适配 self_media_agent 工作流格式
+    def fetch_for_workflow(
+        self,
+        platform: str = "全部",
+        platform_ids: List[str] = None,
+    ) -> List[Dict]:
+        """
+        抓取热点并转换为工作流所需格式。
+
+        Args:
+            platform: 中文平台名筛选（"抖音"/"小红书"/"全部"）
+            platform_ids: 直接指定平台 ID 列表
+
+        Returns:
+            [{"source": "抖音", "title": "...", "heat": 980000, "url": "..."}, ...]
+        """
+        # 平台名 → ID 映射
+        name_to_ids = {
+            "抖音": ["douyin"],
+            "小红书": ["xiaohongshu"],
+            "微博": ["weibo"],
+            "知乎": ["zhihu"],
+            "B站": ["bilibili-hot-search"],
+            "今日头条": ["toutiao"],
+            "百度": ["baidu"],
+            "全部": ["douyin", "weibo", "zhihu", "bilibili-hot-search",
+                    "toutiao", "baidu", "xiaohongshu"],
+        }
+
+        if platform_ids is None:
+            platform_ids = name_to_ids.get(platform, ["douyin", "weibo", "zhihu"])
+
+        all_topics = []
+        for pid in platform_ids:
+            topics = self.fetch_platform(pid)
+            for t in topics:
+                all_topics.append({
+                    "source": t["platform"],
+                    "title": t["title"],
+                    "heat": t["heat"],
+                    "url": t["url"],
+                    "platform_id": t["platform_id"],
+                    "rank": t["rank"],
+                })
+
+        # 按热度降序排列
+        all_topics.sort(key=lambda x: x["heat"], reverse=True)
+        return all_topics
+
+    #  辅助方法
+    @staticmethod
+    def _estimate_heat(rank: int, total: int) -> int:
+        """根据排名估算热度值（排名越前热度越高）"""
+        base = 1000000
+        ratio = 1.0 - (rank - 1) / max(total, 1)
+        return int(base * ratio)
+
+    @staticmethod
+    def get_available_platforms() -> Dict[str, str]:
+        """获取所有可用平台"""
+        return dict(PLATFORM_IDS)
+
+#  便捷函数（直接调用，无需实例化）
+_default_client = None
+
+def _get_client() -> TrendRadarClient:
+    """获取默认客户端（懒加载单例）"""
+    global _default_client
+    if _default_client is None:
+        _default_client = TrendRadarClient()
+    return _default_client
+
+def fetch_hot_topics(platform: str = "全部") -> List[Dict]:
+    """
+    便捷函数：抓取热点并返回工作流格式。
+
+    使用方式:
+        from tools.trend_radar_client import fetch_hot_topics
+        topics = fetch_hot_topics("抖音")
+        # [{"source": "抖音", "title": "...", "heat": 980000, ...}, ...]
+    """
+    return _get_client().fetch_for_workflow(platform=platform)
+
+def fetch_platform_hot(platform_id: str) -> List[Dict]:
+    """
+    便捷函数：抓取单个平台热点。
+
+    使用方式:
+        from tools.trend_radar_client import fetch_platform_hot
+        topics = fetch_platform_hot("douyin")
+    """
+    return _get_client().fetch_platform(platform_id)
+```
+
+### LangGraph 实现
+
+```
+# 文件: workflows/hot_topic.py
+"""热点监控工作流 — TrendRadar 真实抓取 + LLM筛选 + 选题建议
+
+基于 sansan0/TrendRadar 架构，使用 NewsNow API 抓取 35+ 平台热点。
+GitHub: https://github.com/sansan0/TrendRadar
+"""
+from typing import TypedDict, Annotated
+import operator
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send
+from workflows import llm_call
+from tools.trend_radar_client import fetch_hot_topics, fetch_platform_hot, PLATFORM_IDS
+import json
+
+class HotTopicState(TypedDict):
+    platform: str
+    account_field: str
+    raw_topics: Annotated[list, operator.add]  # 并行结果合并
+    filtered: str
+    suggestions: str
+ 
+
+#  节点：并行抓取各平台热点（真实 API）
+def fetch_douyin(state: HotTopicState) -> dict:
+    """抓取抖音热榜 — TrendRadar NewsNow API"""
+    try:
+        topics = fetch_platform_hot("douyin")
+        return {"raw_topics": [{"source": "抖音", **t} for t in topics]}
+    except Exception as e:
+        print(f"[热点] 抖音抓取失败: {e}")
+        return {"raw_topics": []}
+
+def fetch_weibo(state: HotTopicState) -> dict:
+    """抓取微博热搜 — TrendRadar NewsNow API"""
+    try:
+        topics = fetch_platform_hot("weibo")
+        return {"raw_topics": [{"source": "微博", **t} for t in topics]}
+    except Exception as e:
+        print(f"[热点] 微博抓取失败: {e}")
+        return {"raw_topics": []}
+
+def fetch_zhihu(state: HotTopicState) -> dict:
+    """抓取知乎热榜 — TrendRadar NewsNow API"""
+    try:
+        topics = fetch_platform_hot("zhihu")
+        return {"raw_topics": [{"source": "知乎", **t} for t in topics]}
+    except Exception as e:
+        print(f"[热点] 知乎抓取失败: {e}")
+        return {"raw_topics": []}
+
+def fetch_xiaohongshu(state: HotTopicState) -> dict:
+    """抓取小红书热榜 — TrendRadar NewsNow API"""
+    try:
+        topics = fetch_platform_hot("xiaohongshu")
+        return {"raw_topics": [{"source": "小红书", **t} for t in topics]}
+    except Exception as e:
+        print(f"[热点] 小红书抓取失败: {e}")
+        return {"raw_topics": []}
+
+def fetch_bilibili(state: HotTopicState) -> dict:
+    """抓取B站热搜 — TrendRadar NewsNow API"""
+    try:
+        topics = fetch_platform_hot("bilibili-hot-search")
+        return {"raw_topics": [{"source": "B站", **t} for t in topics]}
+    except Exception as e:
+        print(f"[热点] B站抓取失败: {e}")
+        return {"raw_topics": []}
+
+#  路由：根据平台选择并行抓取源
+PLATFORM_SENDS = {
+    "抖音":   [Send("fetch_douyin", {})],
+    "小红书": [Send("fetch_xiaohongshu", {})],
+    "微博":   [Send("fetch_weibo", {})],
+    "知乎":   [Send("fetch_zhihu", {})],
+    "B站":    [Send("fetch_bilibili", {})],
+}
+
+def route_fetch(state: HotTopicState):
+    """根据平台决定并行抓取哪些源"""
+    platform = state.get("platform", "全部")
+    if platform == "全部":
+        return [
+            Send("fetch_douyin", state),
+            Send("fetch_weibo", state),
+            Send("fetch_zhihu", state),
+            Send("fetch_xiaohongshu", state),
+            Send("fetch_bilibili", state),
+        ]
+    sends = PLATFORM_SENDS.get(platform, [Send("fetch_douyin", state)])
+    return [Send(s.node, state) for s in sends]
+
+#  节点：LLM 筛选 + 选题建议
+def node_filter(state: HotTopicState) -> dict:
+    """LLM 筛选与赛道相关的热点"""
+    topics = state.get("raw_topics", [])
+    if not topics:
+        return {"filtered": "暂无热点数据，请检查网络连接或稍后重试。"}
+
+    topics_json = json.dumps(topics, ensure_ascii=False)
+    prompt = f"""你是「{state["account_field"]}」赛道的内容策划。
+
+当前热点（{len(topics)}条）：
+{topics_json}
+
+筛选出与你赛道相关度高的热点，按相关度排序。对每个热点给出：
+- 相关度评分(1-10)
+- 推荐切入角度（50字以内）
+- 创作难度（简单/中等/困难）
+"""
+    return {"filtered": llm_call(prompt, temperature=0.4)}
+
+def node_suggest(state: HotTopicState) -> dict:
+    """生成具体选题建议"""
+    filtered = state.get("filtered", "")
+    if "暂无热点数据" in filtered:
+        return {"suggestions": "暂无选题建议，请先确保热点数据获取成功。"}
+
+    prompt = f"""基于筛选出的热点：
+{filtered}
+
+为每个热点生成2个具体选题，每个选题包含：
+1. 标题模板（可直接套用）
+2. 内容框架（开头钩子-核心内容-结尾引导）
+3. 预估播放量区间
+"""
+    return {"suggestions": llm_call(prompt, temperature=0.6)}
+
+#  构建并行工作流图
+builder = StateGraph(HotTopicState)
+builder.add_node("fetch_douyin", fetch_douyin)
+builder.add_node("fetch_weibo", fetch_weibo)
+builder.add_node("fetch_zhihu", fetch_zhihu)
+builder.add_node("fetch_xiaohongshu", fetch_xiaohongshu)
+builder.add_node("fetch_bilibili", fetch_bilibili)
+builder.add_node("filter", node_filter)
+builder.add_node("suggest", node_suggest)
+
+builder.add_conditional_edges(START, route_fetch,
+    ["fetch_douyin", "fetch_weibo", "fetch_zhihu",
+     "fetch_xiaohongshu", "fetch_bilibili"])
+builder.add_edge("fetch_douyin", "filter")
+builder.add_edge("fetch_weibo", "filter")
+builder.add_edge("fetch_zhihu", "filter")
+builder.add_edge("fetch_xiaohongshu", "filter")
+builder.add_edge("fetch_bilibili", "filter")
+builder.add_edge("filter", "suggest")
+builder.add_edge("suggest", END)
+
+hot_topic_graph = builder.compile()
+
+#  对外接口
+def run_hot_topic(platform: str, account_field: str) -> dict:
+    """运行热点监控工作流
+
+    Args:
+        platform: 平台名（"抖音"/"小红书"/"微博"/"知乎"/"B站"/"全部"）
+        account_field: 赛道描述（如 "科技测评 / AI工具分享"）
+
+    Returns:
+        {"raw_topics": [...], "filtered": "...", "suggestions": "..."}
+    """
+    return hot_topic_graph.invoke({
+        "platform": platform,
+        "account_field": account_field,
+    })
+
+graph = hot_topic_graph.get_graph()
+graph.draw_png("positioning_workflow.png")
+```
+
+### Streamlit 页面
+
+```
+# 文件:views/hot_topic.py
+"""show_hot_topic页面"""
+import streamlit as st
+import json, pandas as pd
+
+def _add_history(action: str, summary: str):
+    from datetime import datetime
+    st.session_state.history.append({
+        "time": datetime.now().strftime("%H:%M"),
+        "action": action,
+        "summary": summary[:200],
+    })
+
+def show_hot_topic():
+    """热点监控"""
+    st.title("🔥 热点监控智能体")
+    st.markdown("实时追踪平台热点，AI筛选与你的赛道相关的选题机会")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        platform = st.selectbox("选择平台", ["抖音", "小红书", "全部"])
+    with col2:
+        field = st.text_input("你的赛道/领域",
+                              placeholder="科技测评 / 职场成长 / 美妆护肤...")
+
+    if st.button("🔍 获取热点选题", type="primary", use_container_width=True):
+        if not field:
+            st.warning("请输入你的赛道")
+            return
+
+        with st.spinner(f"正在抓取{platform}热点并分析..."):
+            from workflows.hot_topic import run_hot_topic
+            result = run_hot_topic(platform, field)
+
+        # 存入 session_state 防止刷新丢失
+        st.session_state["ht_result"] = result
+        st.session_state["ht_platform"] = platform
+        st.session_state["ht_field"] = field
+
+    #   从 session_state 恢复结果  
+    result = st.session_state.get("ht_result")
+    if result:
+        raw_topics = result.get("raw_topics", [])
+
+        #   原始采集数据  
+        if raw_topics:
+            with st.expander(f"📡 采集到的原始数据（{len(raw_topics)} 条）", expanded=True):
+                rows = [{"排名": t.get("rank",""), "标题": t.get("title",""),
+                         "平台": t.get("platform",""), "热度": t.get("heat","")}
+                        for t in raw_topics]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+        #   AI 筛选结果  
+        st.markdown("### 📋 赛道相关热点筛选")
+        st.markdown(result.get("filtered", ""))
+
+        #   选题建议  
+        st.markdown("### 💡 选题创作建议")
+        st.markdown(result.get("suggestions", ""))
+
+        #   下载完整报告  
+        from datetime import datetime
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        report = f"""# 🔥 热点监控报告
+> 生成时间：{now}  平台：{platform}  赛道：{field}
+
+## 📡 原始数据（{len(raw_topics)} 条）
+{"| 排名 | 标题 | 平台 | 热度 |" if raw_topics else ""}
+""" + "\n".join(
+    f"| {t.get('rank','')} | {t.get('title','')} | {t.get('platform','')} | {t.get('heat','')} |"
+    for t in raw_topics
+) + f"""
+
+## 📋 赛道相关热点筛选
+{result.get('filtered', '')}
+
+## 💡 选题创作建议
+{result.get('suggestions', '')}
+"""
+        st.download_button("📥 下载完整热点报告", report,
+                          file_name=f"热点监控报告_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+                          mime="text/markdown", use_container_width=True)
+
+        _add_history("热点监控", f"{platform} - {field}")
+```
+
+---
+
+## 内容复刻
+
+> 章节概述：内容复刻模块帮助创作者学习爆款内容的底层逻辑并快速仿写新文案。工作流串联了 下载视频 → 提取文案 → 爆款拆解 → 仿写 → 标题生成 五个环节，每个环节由 LLM 驱动的专用节点完成。技术亮点在于：① 视频下载采用 videodl ；② 语音转文字使用阿里达摩院 FunASR，完全本地运行无需联网；③ extract_url() 函数自动从抖音的混合分享文本中提取纯 URL，提升用户体验。LLM 分析链路从钩子类型、结构模板、情绪节奏、金句亮点、互动引导五个维度拆解爆款公式，仿写时保持同结构不同主题，最终生成 5 种类型（数字型/疑问型/痛点型/悬念型/命令型）的标题方案。目标：输入爆款视频链接 → 下载视频 → 提取字幕 → 分析爆点 → 仿写新文案 + 生成标题。
+
+### 工作流
+
+[DIAGRAM] 下载视频/抓取文章 -> 提取文案 -> 分析爆款要素 -> 仿写新文案 -> 生成标题
+
+### 工具函数
+
+内容复刻依赖 tools/media_tools.py 中的两个核心函数：
+
+```
+# 文件: tools/media_tools.py
+# uv add funasr
+"""
+媒体处理工具 — 视频下载 / 字幕提取 / 文章抓取 / 图片生成 / TTS 语音
+
+所有函数均支持自动降级：真实依赖不可用时回退到 stub 实现。
+"""
+
+import os
+import re
+import shutil
+from config import settings
+
+def extract_url(text: str) -> str:
+    """从混合文本中提取 URL（处理小红书/抖音等分享文本）
+
+    小红书分享格式示例:
+        "57 【标题】 emoji ID emoji https://www.xiaohongshu.com/..."
+
+    Returns:
+        提取到的第一个 HTTP(S) URL，未找到则返回原文本
+    """
+    if not text:
+        return text
+
+    # 如果本身就是纯 URL，直接返回
+    text = text.strip()
+    if text.startswith("http://") or text.startswith("https://"):
+        return text
+
+    # 匹配 HTTP(S) URL
+    url_pattern = r'https?://[^\s一-鿿　-〿＀-￯]+'
+    matches = re.findall(url_pattern, text)
+    if matches:
+        url = matches[0].rstrip(".,;:!?）)】』\"'")
+        return url
+
+    return text
+
+#  图片生成
+def _check_openai_available() -> bool:
+    """检查 openai 库是否可用"""
+    try:
+        import openai
+        return True
+    except ImportError:
+        return False
+
+def generate_image(prompt: str, output_path: str = None,
+                   size: str = "1024x1024") -> str:
+    """
+    调用 OpenAI DALL-E / 兼容 API 生成图片并保存到本地。
+
+    支持任何兼容 OpenAI 的 API（如 SiliconFlow、本地 Stable Diffusion 等）。
+
+    Args:
+        prompt: 图片提示词
+        output_path: 输出路径，为空则自动生成
+        size: 图片尺寸
+
+    Returns:
+        保存后的图片路径，失败返回空字符串
+    """
+    if not _check_openai_available():
+        print("[图片生成] openai 未安装，跳过")
+        return _stub_generate_image(prompt, output_path)
+
+    api_key = settings.get_image_api_key()
+    if not api_key or api_key == "your-api-key":
+        print("[图片生成] 未配置 API Key，跳过")
+        return _stub_generate_image(prompt, output_path)
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(
+            api_key=api_key,
+            base_url=settings.image_gen_base_url,
+        )
+
+        print(f"[图片生成] 调用 {settings.image_gen_model}: {prompt[:80]}...")
+        response = client.images.generate(
+            model=settings.image_gen_model,
+            prompt=prompt,
+            n=1,
+            size=size,
+        )
+
+        image_url = response.data[0].url
+        if not image_url:
+            print("[图片生成] 返回 URL 为空")
+            return _stub_generate_image(prompt, output_path)
+
+        # 下载图片
+        import httpx
+        img_data = httpx.get(image_url, timeout=60).content
+
+        if output_path is None:
+            output_path = os.path.join(
+                settings.image_output_dir,
+                f"img_{hash(prompt) % 100000:05d}.png"
+            )
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(img_data)
+
+        print(f"[图片生成] [OK] 已保存: {output_path}")
+        return output_path
+
+    except Exception as e:
+        print(f"[图片生成] 失败: {e}")
+        return _stub_generate_image(prompt, output_path)
+
+def _stub_generate_image(prompt: str, output_path: str = None) -> str:
+    """图片生成的 stub 降级 — 生成纯色占位图"""
+    if output_path is None:
+        output_path = os.path.join(
+            settings.image_output_dir,
+            f"placeholder_{hash(prompt) % 100000:05d}.png"
+        )
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new("RGB", (1080, 1920), color=(20, 20, 30))
+        draw = ImageDraw.Draw(img)
+        # 绘制渐变色带模拟氛围
+        for y in range(1920):
+            r = int(20 + (y / 1920) * 30)
+            g = int(20 + (y / 1920) * 25)
+            b = int(30 + (y / 1920) * 50)
+            draw.line([(0, y), (1080, y)], fill=(r, g, b))
+        # 居中绘制提示文字
+        text = prompt[:40] + "..." if len(prompt) > 40 else prompt
+        try:
+            font = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 36)
+        except Exception:
+            font = ImageFont.load_default()
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text(((1080 - tw) / 2, (1920 - th) / 2), text, fill=(200, 200, 220), font=font)
+        img.save(output_path)
+        print(f"[图片生成-stub] 占位图: {output_path}")
+        return output_path
+    except Exception as e:
+        print(f"[图片生成-stub] [FAIL] 失败: {e}")
+        return ""
+
+#  TTS 语音合成
+def _check_edge_tts_available() -> bool:
+    """检查 edge-tts 是否可用"""
+    try:
+        import edge_tts
+        return True
+    except ImportError:
+        return False
+
+async def _generate_tts_async(text: str, output_path: str) -> bool:
+    """Edge TTS 异步生成（内部实现）"""
+    import edge_tts
+
+    # 截断过长文本
+    if len(text) > 3000:
+        text = text[:3000]
+
+    communicate = edge_tts.Communicate(
+        text=text,
+        voice=settings.tts_voice,
+    )
+    await communicate.save(output_path)
+    return os.path.exists(output_path)
+
+def generate_tts(text: str, output_path: str = None) -> str:
+    """
+    使用 Edge TTS 生成语音配音。
+
+    Args:
+        text: 要合成语音的文本
+        output_path: 输出 mp3 路径
+
+    Returns:
+        音频文件路径，失败返回空字符串
+    """
+    if not settings.tts_enabled:
+        print("[TTS] 已禁用")
+        return ""
+
+    if not _check_edge_tts_available():
+        print("[TTS] edge-tts 未安装，跳过")
+        return ""
+
+    if output_path is None:
+        output_path = os.path.join(
+            settings.video_output_dir,
+            f"tts_{hash(text) % 100000:05d}.mp3"
+        )
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    try:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        success = loop.run_until_complete(_generate_tts_async(text, output_path))
+        loop.close()
+
+        if success:
+            print(f"[TTS] [OK] 已生成: {output_path}")
+            return output_path
+        else:
+            print("[TTS] [FAIL] 生成失败")
+            return ""
+    except Exception as e:
+        print(f"[TTS] [FAIL] 异常: {e}")
+        return ""
+
+#  视频下载 — 三级降级：videodl → yt-dlp → stub
+def _check_videodl_available() -> bool:
+    """检查 videodl (videofetch) 库是否可用"""
+    try:
+        from videodl import videodl
+        return True
+    except ImportError:
+        return False
+
+def _check_ytdlp_available() -> bool:
+    """检查 yt-dlp 是否可用"""
+    return shutil.which("yt-dlp") is not None
+
+def download_video_videodl(url: str, output_dir: str = None) -> str:
+    """
+    使用 videodl (CharlesPikachu/videodl) 下载视频。
+
+    支持 100+ 平台：抖音、快手、小红书、B站、YouTube、TikTok、
+    优酷、腾讯、爱奇艺、微博、知乎等。
+
+    Args:
+        url: 视频 URL
+        output_dir: 输出目录（默认 videodl_outputs）
+
+    Returns:
+        下载后的视频路径，失败返回空字符串
+    """
+    if not _check_videodl_available():
+        return ""
+
+    from videodl import videodl
+
+    if output_dir is None:
+        output_dir = os.path.join(settings.video_output_dir, "downloads")
+    os.makedirs(output_dir, exist_ok=True)
+
+    try:
+        # 创建 VideoClient，自动识别平台
+        client = videodl.VideoClient(
+            allowed_video_sources=[],
+            init_video_clients_cfg={
+                "BilibiliVideoClient": {"work_dir": output_dir},
+                "DouyinVideoClient": {"work_dir": output_dir},
+                # 更多平台会自动使用默认 work_dir
+            },
+            apply_common_video_clients_only=False,
+        )
+
+        # 1. 解析视频 URL → 获取下载链接
+        print(f"[videodl] 解析: {url[:80]}...")
+        video_infos = client.parsefromurl(url)
+
+        if not video_infos:
+            print("[videodl] 未找到可下载视频")
+            return ""
+
+        # 2. 下载视频（download 方法不返回值，文件路径存在 save_path 属性中）
+        print(f"[videodl] 找到 {len(video_infos)} 个视频，开始下载...")
+        client.download(video_infos)
+
+        # 3. 从 VideoInfo.save_path 获取下载文件路径
+        for info in video_infos:
+            save_path = info.save_path if hasattr(info, 'save_path') else ""
+            if save_path and os.path.isfile(save_path) and os.path.getsize(save_path) > 1024:
+                print(f"[videodl] [OK] 下载完成: {save_path}")
+                return save_path
+
+        print("[videodl] 下载完成但未找到输出文件")
+        return ""
+
+    except Exception as e:
+        print(f"[videodl] 失败: {e}")
+        return ""
+
+def download_video(url: str, output_dir: str = None) -> str:
+    """
+    下载视频到本地（三级降级：videodl → yt-dlp → stub）。
+
+    Args:
+        url: 视频 URL（支持混合文本，自动提取 URL）
+        output_dir: 输出目录
+
+    Returns:
+        下载后的文件路径
+    """
+    # 从混合文本中提取纯 URL（兼容小红书/抖音分享格式）
+    url = extract_url(url)
+
+    if output_dir is None:
+        output_dir = os.path.join(settings.video_output_dir, "downloads")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 第一级：videodl（100+ 平台，优先高清无水印）
+    result = download_video_videodl(url, output_dir)
+    if result:
+        return result
+
+    # 第二级：yt-dlp
+    if _check_ytdlp_available():
+        import subprocess
+        filename = f"video_{hash(url) % 100000:05d}.mp4"
+        output_path = os.path.join(output_dir, filename)
+        try:
+            subprocess.run(
+                ["yt-dlp", "-o", output_path, "--no-playlist", url],
+                check=True, capture_output=True, timeout=120,
+            )
+            if os.path.exists(output_path):
+                print(f"[下载] [OK] yt-dlp: {output_path}")
+                return output_path
+        except Exception as e:
+            print(f"[下载] yt-dlp 失败: {e}")
+
+    # 第三级：stub 降级
+    return _stub_download_video(url, output_dir)
+
+def _stub_download_video(url: str, output_dir: str) -> str:
+    """模拟下载（无可用下载器时降级）— 不创建空文件避免 ffmpeg 连环失败"""
+    filename = f"video_{hash(url) % 10000}.mp4"
+    output_path = os.path.join(output_dir, filename)
+    # 清理之前的空文件
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    print(f"[工具] 模拟下载(无可用下载器): {url[:60]}...")
+    return ""  # 返回空表示下载失败，不再创建空文件
+
+#  视频转音频 + 语音转文字 (ASR)
+def _check_ffmpeg_available() -> bool:
+    """检查 FFmpeg 是否可用"""
+    return shutil.which("ffmpeg") is not None
+
+def _check_funasr_available() -> bool:
+    """检查 FunASR 是否可用"""
+    try:
+        from funasr import AutoModel  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+def video_to_audio(
+    input_video: str,
+    output_audio: str = None,
+    bitrate: str = "192k",
+    fps: int = 44100,
+) -> str:
+    """
+    从视频中提取音频（使用 FFmpeg）。
+
+    Args:
+        input_video: 输入视频文件路径
+        output_audio: 输出音频路径（默认与视频同目录，.mp3 后缀）
+        bitrate: 音频码率（默认 192k）
+        fps: 采样率（默认 44100 Hz）
+
+    Returns:
+        音频文件路径，失败返回空字符串
+    """
+    if not _check_ffmpeg_available():
+        print("[video_to_audio] FFmpeg 未安装，跳过")
+        return ""
+
+    if output_audio is None:
+        base = os.path.splitext(input_video)[0]
+        output_audio = f"{base}_audio.mp3"
+
+    try:
+        import subprocess
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_video,
+            "-vn",                    # 不要视频流
+            "-b:a", bitrate,          # 音频码率
+            "-ar", str(fps),           # 采样率
+            "-ac", "1",               # 单声道（ASR 不需要立体声）
+            output_audio,
+        ]
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+
+        if os.path.exists(output_audio) and os.path.getsize(output_audio) > 0:
+            print(f"[video_to_audio] [OK] {output_audio}")
+            return output_audio
+        else:
+            print("[video_to_audio] 输出文件为空")
+            return ""
+    except Exception as e:
+        print(f"[video_to_audio] 失败: {e}")
+        return ""
+
+# FunASR 模型（懒加载单例）
+_funasr_model = None
+
+def _get_funasr_model():
+    """获取 FunASR 模型实例（懒加载，复用）"""
+    global _funasr_model
+    if _funasr_model is None:
+        from funasr import AutoModel
+        print("[FunASR] 加载模型 Fun-ASR-Nano-2512 + fsmn-vad ...")
+        _funasr_model = AutoModel(
+            model="FunAudioLLM/Fun-ASR-Nano-2512",
+            vad_model="fsmn-vad",
+            device="cuda",  # 有 GPU 用 "cuda"，无 GPU 改为 "cpu"
+        )
+    return _funasr_model
+
+def audio_to_text(audio_path: str) -> str:
+    """
+    音频转文字 — 使用阿里达摩院 FunASR（Fun-ASR-Nano + VAD）。
+
+    特性：
+    - 内置 VAD 人声检测，自动跳过静音段
+    - Nano 模型轻量高效，CPU 可运行
+    - 支持本地文件和 URL
+    - 无需联网，数据不出本地
+
+    Args:
+        audio_path: 音频文件路径或 URL
+
+    Returns:
+        转录文本，失败返回空字符串
+    """
+    if not _check_funasr_available():
+        print("[FunASR] 未安装 funasr，跳过")
+        return ""
+
+    try:
+        model = _get_funasr_model()
+        result = model.generate(input=audio_path)
+
+        # FunASR 返回格式：[{"text": "识别结果", "timestamp": [...]}, ...]
+        if result and isinstance(result, list) and len(result) > 0:
+            text = result[0].get("text", "").strip()
+            if text:
+                print(f"[FunASR] [OK] 识别 {len(text)} 字")
+                return text
+
+        print("[FunASR] 未识别到语音内容")
+        return ""
+    except Exception as e:
+        print(f"[FunASR] 失败: {e}")
+        return ""
+
+def extract_audio_text(video_path: str) -> str:
+    """
+    视频 → 音频 → 文本（完整流水线）。
+
+    流程：
+    1. FFmpeg 提取音频 (video_to_audio)
+    2. FunASR 转为文字 (audio_to_text)
+    失败时降级为 FunASR 直接处理视频，再失败返回演示文案。
+
+    Args:
+        video_path: 视频文件路径或 URL
+
+    Returns:
+        提取的文字
+    """
+    # 如果是 URL，直接传给 FunASR（FunASR 支持 URL 输入）
+    if video_path.startswith("http://") or video_path.startswith("https://"):
+        text = audio_to_text(video_path)
+        if text:
+            return text
+
+    # 如果视频路径为空（下载失败），直接返回空
+    if not video_path:
+        print("[extract_audio_text] 视频路径为空，下载可能失败")
+        return ""
+
+    # 如果是 URL，直接传给 FunASR（FunASR 支持 URL 输入）
+    if video_path.startswith("http://") or video_path.startswith("https://"):
+        text = audio_to_text(video_path)
+        if text:
+            return text
+        return ""
+
+    # 本地文件不存在
+    if not os.path.exists(video_path):
+        print(f"[extract_audio_text] 视频文件不存在: {video_path}")
+        return ""
+
+    # Step 1: 视频 → 音频
+    audio_path = video_to_audio(video_path)
+    if audio_path:
+        # Step 2: 音频 → 文本
+        text = audio_to_text(audio_path)
+        if text:
+            return text
+
+    # 降级：FunASR 直接处理本地视频
+    if _check_funasr_available():
+        text = audio_to_text(video_path)
+        if text:
+            return text
+
+    return ""
+
+#  文章抓取
+def _check_trafilatura_available() -> bool:
+    """检查 trafilatura 是否可用"""
+    try:
+        import trafilatura
+        return True
+    except ImportError:
+        return False
+
+def fetch_article(url: str) -> str:
+    """
+    抓取网页文章内容（优先 trafilatura，否则返回演示文案）。
+
+    Args:
+        url: 文章 URL
+
+    Returns:
+        提取的文章内容
+    """
+    if _check_trafilatura_available():
+        try:
+            import trafilatura
+            downloaded = trafilatura.fetch_url(url)
+            text = trafilatura.extract(downloaded)
+            if text and len(text) > 50:
+                print(f"[Trafilatura] [OK] 抓取 {len(text)} 字")
+                return text
+        except Exception as e:
+            print(f"[Trafilatura] 失败: {e}")
+
+    print(f"[工具] 模拟抓取: {url[:60]}...")
+    return _demo_script()
+
+#  演示文案
+def _demo_script() -> str:
+    """演示用示例文案"""
+    return """你有没有发现，那些月入十万的人都有一个共同点？
+他们从来不把时间浪费在重复劳动上。
+我之前也是什么事都亲力亲为，忙了一天发现什么也没做成。
+后来我学会了用AI工具，效率直接翻了5倍。
+今天就把我最常用的3个AI工具分享给你。
+第一个，用AI写周报，5分钟搞定以前2小时的工作...
+第二个，用AI做数据分析，不用学Python也能做可视化...
+第三个，用AI生成PPT，老板以为你加班了一整晚...
+这三个工具搭配使用，每天至少帮你省3个小时。
+关注我，下期分享更多效率提升技巧。"""
+```
+
+> 关键升级：视频下载：从 yt-dlp 单一方案升级为 videodl + yt-dlp + stub 三级降级，支持 100+ 平台语音识别：从 DashScope 云 API 替换为 阿里达摩院 FunASR（Fun-ASR-Nano + fsmn-vad），内置人声检测，支持 URL 直传，无需联网、完全本地可用
+| 函数 | 作用 | 技术栈 |
+| download_video(url) | 下载视频到本地 | videodl |
+| extract_audio_text(path) | 视频 → 音频 → 文本 | FFmpeg + FunASR |
+
+#### FunASR 部署
+
+构建一个 FunASR WebSocket 服务端 Python 文件来和本地文件进行通信
+
+##### 激活 conda 环境并安装依赖
+
+```
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate base
+
+pip install funasr websockets torchaudio
+```
+
+验证安装：
+
+```
+python -c "import funasr, websockets, torchaudio; \
+  print('funasr', funasr.__version__, '| websockets', websockets.__version__)"
+```
+
+##### 上传服务端脚本
+
+服务端脚本已归档到本仓库 deploy/funasr_ws_server.py，
+部署目标路径为服务器 /root/funasr_ws_server.py，内容如下：
+
+```
+"""FunASR WebSocket 服务器：接收音频字节流，返回转写文本（可选句级时间戳）。
+
+协议（与本地 tools/audio_transcriber.py 的远程客户端对应）：
+    1. 客户端连接后发送 JSON 配置帧（mode=offline，is_speaking=True）；
+       - 可选字段 "return_timestamps": true，请求句级时间戳（供剪辑生成 SRT）；
+    2. 随后分片发送音频二进制数据；
+    3. 客户端发送 {"is_speaking": false} 表示音频结束；
+    4. 服务端调用 FunASR 转写，返回 {"text": ..., "is_final": true}；
+       请求时间戳时额外返回 "sentences": [{"text", "start", "end"}, ...]
+       （start/end 单位：毫秒）。
+
+模型：
+    - 默认（纯文本）：Fun-ASR-Nano-2512 + fsmn-vad（快，保持原有行为）；
+    - 时间戳请求：seaco-paraformer-large + fsmn-vad + ct-punc（懒加载，
+      输出带标点文本 + 词级 timestamp，服务端按标点聚合为句级 segments）。
+
+部署：python funasr_ws_server.py --port 6006
+"""
+
+import argparse
+import asyncio
+import json
+import logging
+import tempfile
+from pathlib import Path
+
+import websockets
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(message)s",
+)
+logger = logging.getLogger("funasr_ws_server")
+
+# 纯文本转写模型（默认通道，与本地工具保持一致）
+ASR_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
+VAD_MODEL = "fsmn-vad"
+
+# 时间戳转写模型（剪辑字幕通道，懒加载）
+TS_ASR_MODEL = (
+    "iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
+)
+TS_PUNC_MODEL = "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
+
+# 句级切分使用的标点（命中即结束当前句）
+_SENT_END_CHARS = "，。！？；,.!?;…"
+
+model = None
+ts_model = None
+
+def load_model() -> None:
+    """加载默认 FunASR 模型（进程启动时加载一次，全局复用）。
+
+    Raises:
+        RuntimeError: 模型加载失败时抛出，阻止服务启动。
+    """
+    global model
+    from funasr import AutoModel
+
+    logger.info("加载模型 %s + %s（首次需下载权重）...", ASR_MODEL, VAD_MODEL)
+    model = AutoModel(model=ASR_MODEL, vad_model=VAD_MODEL, device="cuda")
+    logger.info("模型加载完成")
+
+def _get_ts_model():
+    """懒加载时间戳转写模型（seaco-paraformer + vad + punc）。
+
+    Returns:
+        funasr AutoModel 实例（带标点与时间戳输出）。
+    """
+    global ts_model
+    if ts_model is None:
+        from funasr import AutoModel
+
+        logger.info("加载时间戳模型 %s + punc ...", TS_ASR_MODEL)
+        ts_model = AutoModel(
+            model=TS_ASR_MODEL,
+            vad_model=VAD_MODEL,
+            punc_model=TS_PUNC_MODEL,
+            device="cuda",
+        )
+        logger.info("时间戳模型加载完成")
+    return ts_model
+
+def _split_sentences(text: str, timestamp: list) -> list:
+    """按标点把带时间戳的转写结果聚合为句级 segments。
+
+    词级 timestamp 与文本中的非标点字符一一对应（中文逐字、英文按 token）；
+    遍历文本，标点依附当前句并触发切句，非标点字符消耗一个 timestamp。
+    若消耗数量与 timestamp 长度不一致（英文子词等边界情况），
+    降级为整段返回。
+
+    Args:
+        text: 带标点的转写文本。
+        timestamp: 词级时间戳 [[start_ms, end_ms], ...]。
+
+    Returns:
+        [{"text": str, "start": int, "end": int}, ...]，毫秒单位。
+    """
+    sentences = []
+    cur_chars: list[str] = []
+    cur_start: int | None = None
+    cur_end: int | None = None
+    tok_idx = 0
+
+    def flush() -> None:
+        """结束当前句并追加到结果列表。"""
+        nonlocal cur_chars, cur_start, cur_end
+        seg_text = "".join(cur_chars).strip()
+        if seg_text and cur_start is not None:
+            sentences.append(
+                {"text": seg_text, "start": int(cur_start), "end": int(cur_end)}
+            )
+        cur_chars, cur_start, cur_end = [], None, None
+
+    for ch in text:
+        if ch in _SENT_END_CHARS:
+            cur_chars.append(ch)
+            flush()
+            continue
+        if ch.isspace():
+            continue
+        if tok_idx >= len(timestamp):
+            # 文本比时间戳长（异常），放弃对齐
+            logger.warning("文本与 timestamp 数量不匹配，降级为整段返回")
+            return [{"text": text.strip(), "start": timestamp[0][0],
+                     "end": timestamp[-1][-1]}] if timestamp else []
+        start, end = timestamp[tok_idx]
+        tok_idx += 1
+        if cur_start is None:
+            cur_start = start
+        cur_end = end
+        cur_chars.append(ch)
+    flush()
+
+    if tok_idx != len(timestamp):
+        logger.warning(
+            "消耗 token %d 与 timestamp %d 不一致，降级为整段返回",
+            tok_idx, len(timestamp),
+        )
+        if timestamp:
+            return [{"text": text.strip(), "start": timestamp[0][0],
+                     "end": timestamp[-1][-1]}]
+        return []
+    return sentences
+
+def _normalize_sentences(item: dict) -> list:
+    """将 FunASR 原生 sentence_info 转为对外句段格式。
+
+    Args:
+        item: FunASR 单条识别结果，包含 sentence_info 或 timestamp。
+
+    Returns:
+        [{"text": str, "start": int, "end": int}, ...]；原生句段不可用时
+        回退到词级时间戳切分。
+    """
+    sentences = []
+    for sentence in item.get("sentence_info") or []:
+        text = str(sentence.get("text") or "").strip()
+        start = sentence.get("start")
+        end = sentence.get("end")
+        if text and start is not None and end is not None and start < end:
+            sentences.append({
+                "text": text,
+                "start": int(start),
+                "end": int(end),
+            })
+    if sentences:
+        return sentences
+    return _split_sentences(
+        str(item.get("text") or "").strip(), item.get("timestamp") or []
+    )
+
+async def handle_connection(ws) -> None:
+    """处理一条 WebSocket 连接：收音频 -> 转写 -> 回文本（可选句级时间戳）。
+
+    Args:
+        ws: websockets 连接对象。
+    """
+    peer = ws.remote_address
+    logger.info("客户端连接: %s", peer)
+    audio = bytearray()
+    wav_format = "wav"
+    want_ts = False
+    try:
+        async for message in ws:
+            if isinstance(message, bytes):
+                audio.extend(message)
+                continue
+            data = json.loads(message)
+            wav_format = data.get("wav_format", wav_format)
+            if data.get("return_timestamps"):
+                want_ts = True
+            if data.get("is_speaking") is False:
+                break  # 音频结束，开始转写
+    except websockets.ConnectionClosed:
+        logger.warning("客户端 %s 连接中断", peer)
+        return
+
+    logger.info("收到音频 %.1f KB（时间戳=%s），开始转写", len(audio) / 1024, want_ts)
+    payload = await transcribe(bytes(audio), wav_format, want_ts)
+    await ws.send(json.dumps(payload, ensure_ascii=False))
+    logger.info(
+        "转写完成（%d 字，%d 句），已返回客户端 %s",
+        len(payload.get("text", "")), len(payload.get("sentences", [])), peer,
+    )
+    await ws.close()
+
+async def transcribe(audio_bytes: bytes, wav_format: str,
+                     want_ts: bool = False) -> dict:
+    """调用 FunASR 模型转写音频字节流。
+
+    Args:
+        audio_bytes: 音频文件完整字节。
+        wav_format: 音频格式后缀（wav/mp3 等）。
+        want_ts: 是否返回句级时间戳（走 seaco-paraformer 通道）。
+
+    Returns:
+        {"mode": "offline", "text": str, "is_final": True,
+         "sentences": [...]?}；失败时 text 为空字符串。
+    """
+    suffix = f".{wav_format or 'wav'}"
+    payload = {"mode": "offline", "text": "", "is_final": True}
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        if want_ts:
+            m = _get_ts_model()
+            result = await asyncio.to_thread(
+                m.generate,
+                input=tmp_path,
+                batch_size_s=300,
+                sentence_timestamp=True,
+            )
+            if isinstance(result, list) and result:
+                item = result[0]
+                payload["text"] = str(item.get("text") or "").strip()
+                sentences = _normalize_sentences(item)
+                if sentences:
+                    payload["sentences"] = sentences
+            return payload
+
+        result = await asyncio.to_thread(model.generate, input=tmp_path)
+        if isinstance(result, list) and result:
+            payload["text"] = (result[0].get("text") or "").strip()
+    except Exception as exc:  # noqa: BLE001 - 单请求失败不影响服务
+        logger.exception("转写失败: %s", exc)
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+    return payload
+
+async def main(port: int) -> None:
+    """启动 WebSocket 服务。
+
+    Args:
+        port: 监听端口。
+    """
+    load_model()
+    async with websockets.serve(handle_connection, "0.0.0.0", port, max_size=None):
+        logger.info("FunASR WebSocket 服务已启动: 0.0.0.0:%d", port)
+        await asyncio.Future()  # 永久运行
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=6006)
+    args = parser.parse_args()
+    asyncio.run(main(args.port))
+```
+
+##### 启动服务（常驻后台）
+
+```
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate base
+cd /root
+
+setsid nohup python funasr_ws_server.py --port 6006 \
+  < /dev/null >> /root/funasr_server.log 2>&1 &
+```
+
+> 首次启动会从 ModelScope 下载模型权重（约 1GB，几分钟）；
+之后启动只需加载模型，约 10 秒。
+
+##### 验证服务状态
+
+```
+
+# 查看日志（看到 "server listening on 0.0.0.0:6006" 即成功）
+tail -f /root/funasr_server.log
+```
+
+---
+
+##### 本地配置
+
+项目 .env 追加：
+
+```
+# 语音转写：remote=远程 FunASR 服务（GPU 服务器），local=本地模型兜底
+ASR_MODE=remote
+FUNASR_WS_URL="wss://u823409-b9f9-692ec1a5.westb.seetacloud.com:8443"
+```
+
+> 注意协议是 wss://（AutoDL 代理带 TLS），不是 ws://。
+本地端到端验证：
+
+```
+curl -X POST http://127.0.0.1:8000/api/replicate/extract-text \
+  -H "Content-Type: application/json" \
+  -d '{"text": "https://www.bilibili.com/video/BV1GJ411x7h7/"}'
+```
+
+返回 original_text 字段即为转写文本。
+
+### LangGraph 实现
+
+```
+# 文件: workflows/replicate.py
+"""内容复刻工作流 — 提取 → 分析 → 仿写 → 标题"""
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+from workflows import llm_call
+from tools.media_tools import download_video, extract_audio_text
+
+class ReplicateState(TypedDict):
+    source_url: str
+    original_text: str
+    viral_analysis: str
+    rewritten: str
+    titles: str
+
+#   节点  
+def node_extract(state: ReplicateState) -> dict:
+    """提取视频文案"""
+    url = state["source_url"]
+    path = download_video(url)
+    text = extract_audio_text(path)
+    return {"original_text": text}
+
+def node_analyze(state: ReplicateState) -> dict:
+    """分析爆款要素"""
+    prompt = f"""拆解以下爆款文案的结构：
+
+{state["original_text"]}
+
+从以下维度分析：
+1. **钩子类型**（前3句用了什么技巧：悬念/反差/痛点/利益）
+2. **结构模板**（可复用的文案框架）
+3. **情绪节奏**（每段的情绪高低点）
+4. **金句亮点**（最容易引发共鸣的句子）
+5. **互动引导**（点赞/评论/关注的引导方式）
+"""
+    return {"viral_analysis": llm_call(prompt, temperature=0.6)}
+
+def node_rewrite(state: ReplicateState) -> dict:
+    """仿写新文案"""
+    prompt = f"""根据以下爆款分析，仿写一篇新文案：
+
+【爆款要素分析】
+{state["viral_analysis"]}
+
+【参考原文】
+{state["original_text"]}
+
+要求：
+- 保持相同结构模板和节奏
+- 换成新主题（同类不同题）
+- 保留钩子、转折、金句、互动引导
+- 字数控制在原文的80%-120%
+"""
+    return {"rewritten": llm_call(prompt, temperature=0.8)}
+
+def node_titles(state: ReplicateState) -> dict:
+    """生成标题"""
+    prompt = f"""为以下文案生成5个爆款标题：
+
+{state["rewritten"]}
+
+5种类型各一个：
+1. 数字型（"3个方法..."）
+2. 疑问型（"为什么..."）
+3. 痛点型（"别再..."）
+4. 悬念型（"原来..."）
+5. 命令型（"一定要..."）
+每个标题不超过25字。
+"""
+    return {"titles": llm_call(prompt, temperature=0.8)}
+
+#   构建图  
+builder = StateGraph(ReplicateState)
+builder.add_node("extract", node_extract)
+builder.add_node("analyze", node_analyze)
+builder.add_node("rewrite", node_rewrite)
+builder.add_node("titles", node_titles)
+
+builder.add_edge(START, "extract")
+builder.add_edge("extract", "analyze")
+builder.add_edge("analyze", "rewrite")
+builder.add_edge("rewrite", "titles")
+builder.add_edge("titles", END)
+
+replicate_graph = builder.compile()
+
+def run_replicate(url: str) -> dict:
+    """运行内容复刻工作流"""
+    return replicate_graph.invoke({"source_url": url})
+```
+
+### Streamlit 页面
+
+```
+# 文件: views/replicate.py
+"""show_replicate页面"""
+import streamlit as st
+
+def _add_history(action: str, summary: str):
+    from datetime import datetime
+    st.session_state.history.append({
+        "time": datetime.now().strftime("%H:%M"),
+        "action": action,
+        "summary": summary[:200],
+    })
+
+def show_replicate():
+    """内容复刻"""
+    st.title("📝 内容复刻智能体")
+    st.markdown("粘贴爆款视频/文章链接 → 提取文案 → 拆解爆款公式 → 仿写新文案")
+
+    url = st.text_input("📎 视频链接",
+                        placeholder="粘贴抖音/B站链接...")
+
+    if st.button("🔄 分析 & 仿写", type="primary", use_container_width=True):
+        if not url:
+            st.warning("请输入链接")
+            return
+
+        with st.spinner("提取文案并分析中..."):
+            from workflows.replicate import run_replicate
+            result = run_replicate(url)
+
+        # 存入 session_state 防止下载按钮触发 rerun 后丢失
+        st.session_state["rep_result"] = result
+        st.session_state["rep_url"] = url
+
+    # ========== 从 session_state 恢复结果 ==========
+    result = st.session_state.get("rep_result")
+    if result:
+        original = result.get("original_text", "")
+        analysis = result.get("viral_analysis", "")
+        rewritten = result.get("rewritten", "")
+        titles = result.get("titles", "")
+
+        tabs = st.tabs(["📄 原文案", "🔍 爆款拆解", "✍️ 仿写文案", "🏷️ 标题"])
+        with tabs[0]:
+            st.text_area("原文", original, height=200, key="orig_text")
+        with tabs[1]:
+            st.markdown(analysis)
+        with tabs[2]:
+            st.text_area("仿写结果", rewritten, height=200, key="new_text")
+            st.download_button("📥 下载仿写文案", rewritten,
+                               file_name="仿写文案.txt")
+        with tabs[3]:
+            st.markdown(titles)
+
+        # === 完整报告下载 ===
+        st.markdown("---")
+        from datetime import datetime
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        report = f"""# 📝 内容复刻报告
+
+> 生成时间：{now}
+> 来源链接：{st.session_state.get("rep_url", "")}
+
+---
+
+## 📄 原文案
+
+{original}
+
+---
+
+## 🔍 爆款拆解
+
+{analysis}
+
+---
+
+## ✍️ 仿写文案
+
+{rewritten}
+
+---
+
+## 🏷️ 标题方案
+
+{titles}
+"""
+        st.download_button("📥 下载完整复刻报告", report,
+                          file_name=f"内容复刻报告_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+                          mime="text/markdown", use_container_width=True)
+
+        _add_history("内容复刻", st.session_state.get("rep_url", "")[:60])
+```
+
+---
+
+## 口播视频
+
+> 提词器模式：用户输入台词原样展示，通过 HTML/CSS/JS 实现大字滚动提词器，支持调速（1-15秒/行），每次显示 3 行自动推进，适合实拍时读稿使用。数字人模式：基于硅基智能开源的 HeyGem 数字人引擎，用户上传一段 10-30 秒的正面说话模特视频，系统自动进行声音克隆 + TTS 配音 + 口型驱动，最终生成 数字人口播视频。HeyGem 采用 Docker 三容器架构（gen-video:8383 / tts:18180 / asr:10095），通过 tools/heygem_client.py 封装了完整的 Python API（声音克隆、克隆声音 TTS、视频任务提交/轮询）。Streamlit 页面提供模特网格选择器，支持预览、上传、删除模特，Cookie 持久化选中状态。TTS 配音优先使用克隆声音，失败自动降级为 Edge-TTS。目标：用户输入台词 → 原样使用（不做改写）→ 提词器滚动读稿 / 数字人出镜 → 视频下载。
+
+### HeyGem
+
+HeyGem 是硅基智能开源的数字人克隆引擎，一段视频 → 4K 口播视频，全本地运行。
+
+#### 架构
+
+[DIAGRAM] 🐳 Docker 三服务 -> 📷 照片/视频 -> 🔧 克隆服务heygem.ai -> 🎭 数字人模型 -> ✍️ 文案 -> 🤖 LLM优化 -> 🔊 TTSfish-speech -> 🎵 音频 -> 🎥 口型驱动 -> 📺 4K MP4
+
+[DIAGRAM] FFmpeg -> FunASR · 10095 -> Fish-Speech · /v1/tts -> FFmpeg -an -> PCM 16-bit · 16 kHz · 单声道 -> H.264 / MP4 -> HeyGem API · 8383 -> FFmpeg 音画封装 -> 真人参考视频 -> FFmpeg 提取声音 -> 声音预处理与语音识别 -> 使用克隆声音朗读新文案 -> 移除原视频音轨 -> 新的 WAV 音频 -> 静音参考视频 -> HeyGem 合成口型 -> 数字人视频
+
+#### 部署
+
+```
+#安装docker
+bash <(wget -qO- https://xuanyuan.cloud/docker.sh)
+
+# 拉取镜像
+docker pull guiji2025/heygem.ai
+
+# 启动
+git clone https://github.com/GuijiAI/HeyGem.ai
+cd HeyGem.ai/deploy
+docker compose up -d
+```
+
+> 硬件门槛：NVIDIA GPU + 32GB RAM（推荐 RTX 4070）。
+API 端口：视频生成 8383，TTS 18180，ASR 10095。
+
+#### Auto-dl服务器启动
+
+本地无法运行，选择Auto-dl，镜像：
+[IMG] https://dya123.oss-cn-beijing.aliyuncs.com/image-20260813084519010.png
+当前服务器安装的是 Linux Python 版 HeyGem，项目目录为 /root/HeyGem-Linux-Python-Hack，无需启动 Docker。SSH 登录服务器后执行：
+
+```
+cd /root/HeyGem-Linux-Python-Hack
+nohup /root/miniconda3/bin/python app.py > /root/heygem.log 2>&1 &
+
+# 查看启动日志，出现 Gradio 的访问地址即表示启动成功
+tail -f /root/heygem.log
+```
+
+WebUI 监听服务器的 6006 端口。若云平台没有直接提供该端口的访问链接，可在本地新开一个终端建立 SSH 隧道：
+然后打开 http://127.0.0.1:6006，分别上传 WAV 音频和正面人物视频，点击 Submit 生成数字人口播视频。生成文件保存在服务器的 /root/outputs 目录。
+
+#### AutoDL Fish-Speech TTS 启动
+
+当前采用两台 AutoDL 实例：原实例运行 HeyGem，新实例运行 Fish-Speech TTS。TTS 实例使用社区镜像 fishaudio/fish-speech/fish-speech:v6.2、RTX 3080 Ti 12GB，项目目录为 /root/workdir/fish-speech。
+
+```
+
+cd /root/workdir/fish-speech
+
+# 该镜像实际预装了 funasr 0.8.8，而项目要求 1.1.5；首次启动前修复一次
+/root/miniconda3/bin/python -m pip install --no-cache-dir "funasr==1.1.5"
+
+# 在 AutoDL 的 6006 公网映射端口启动 TTS API
+mkdir -p /root/autodl-tmp/logs
+nohup /root/miniconda3/bin/python -m tools.api_server \
+  --mode tts \
+  --listen 0.0.0.0:6006 \
+  --llama-checkpoint-path checkpoints/fish-speech-1.5 \
+  --decoder-checkpoint-path checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth \
+  --decoder-config-name firefly_gan_vq \
+  > /root/autodl-tmp/logs/fish-speech-api.log 2>&1 < /dev/null &
+
+# 记录服务进程号，便于停止服务
+pgrep -f '^/root/miniconda3/bin/python -m tools.api_server' \
+  | head -1 > /root/autodl-tmp/fish-speech-api.pid
+
+# 查看启动日志；出现 Uvicorn running on http://0.0.0.0:6006 表示成功
+tail -f /root/autodl-tmp/logs/fish-speech-api.log
+```
+
+当前实例的公网 API 为 https://u823409-852e-737a266a.westb.seetacloud.com:8443，重新创建实例后地址会变化。已从 HeyGem 实例验证该地址的 /v1/health 可以访问。停止服务时执行：
+
+```
+kill "$(cat /root/autodl-tmp/fish-speech-api.pid)"
+```
+
+#### FunASR
+
+```
+apt-get update
+apt-get install -y ffmpeg
+
+ffmpeg -version
+ffprobe -version
+which ffmpeg
+```
+
+#### Python 封装
+
+```
+# 文件: tools/heygem_client.py（关键接口）
+"""
+Duix Avatar (HeyGem) 数字人 API 客户端
+实现模特视频声音提取与克隆、克隆声音 TTS、静音视频生成、Docker 路径转换，以及数字人任务的提交和进度查询
+
+API 端点:
+  8383: POST /easy/submit  — 提交视频生成任务
+  8383: GET  /easy/query   — 查询任务进度
+  18180: POST /v1/preprocess_and_tran — 声音克隆预处理
+  18180: POST /v1/invoke              — 克隆声音 TTS 合成
+
+Docker 部署:
+  docker pull guiji2025/heygem.ai
+  # 三个容器: gen-video(8383) / tts(18180) / asr(10095)
+
+配置在 config.py → .env:
+  HEYGEM_HOST=http://localhost:8383
+  HEYGEM_TTS_HOST=http://localhost:18180
+  HEYGEM_DATA_DIR=c:/duix_avatar_data/face2face
+"""
+import os
+import time
+import uuid
+import shutil
+import subprocess
+import httpx
+from config import settings
+
+# 从统一配置读取（全部来自 .env / config.py，不再用 os.getenv ——
+# 因为 os.getenv 读不到 .env 文件，.env 只被 pydantic-settings 加载进 Settings）
+HEYGEM_HOST = settings.heygem_host
+HEYGEM_TTS_HOST = settings.heygem_tts_host
+HEYGEM_DATA_DIR = settings.heygem_data_dir
+# TTS 服务有独立的挂载目录（与 gen-video 不同！）
+HEYGEM_TTS_DATA_DIR = settings.get_heygem_tts_data_dir()
+
+#  声音克隆 + 克隆声音 TTS
+def heygem_voice_clone(source_video: str, lang: str = "zh") -> dict:
+    """
+    从模特视频中提取声音并克隆。
+
+    流程：
+    1. FFmpeg 提取视频音轨 → wav
+    2. 复制到 TTS 服务数据目录
+    3. 调用 /v1/preprocess_and_tran 进行声音预处理
+
+    Args:
+        source_video: 模特视频路径
+        lang: 语言（zh/en/ja/ko）
+
+    Returns:
+        {"success": bool, "asr_format_audio_url": str,
+         "reference_audio_text": str, "message": str}
+    """
+    if not os.path.exists(source_video):
+        return {"success": False, "message": "视频文件不存在"}
+
+    # 1. 提取音频为 wav → 必须放到 TTS 服务的挂载目录！
+    audio_name = f"voice_{uuid.uuid4().hex[:8]}.wav"
+    os.makedirs(HEYGEM_TTS_DATA_DIR, exist_ok=True)
+    audio_path = os.path.join(HEYGEM_TTS_DATA_DIR, audio_name)
+
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-i", source_video,
+            "-vn", "-acodec", "pcm_s16le",
+            "-ar", "16000", "-ac", "1",
+            audio_path,
+        ], check=True, capture_output=True, timeout=30)
+
+        if not os.path.exists(audio_path) or os.path.getsize(audio_path) < 1024:
+            return {"success": False, "message": "音频提取失败或文件过小"}
+    except Exception as e:
+        return {"success": False, "message": f"音频提取异常: {e}"}
+
+    # 2. TTS API 需要相对路径（相对于 /code/data/ 即 voice/data 目录）
+    container_audio = audio_name
+
+    # 3. 调用声音预处理 API
+    try:
+        print(f"[HeyGem-Voice] 声音克隆预处理: {container_audio}")
+        resp = httpx.post(
+            f"{HEYGEM_TTS_HOST}/v1/preprocess_and_tran",
+            json={
+                "format": "wav",
+                "reference_audio": container_audio,
+                "lang": lang,
+            },
+            timeout=60,
+        )
+        data = resp.json()
+        # 处理可能返回 list（验证错误）的情况
+        if isinstance(data, list):
+            error_msg = data[0].get("msg", str(data)) if data else "未知错误"
+            return {"success": False, "message": f"API 返回错误: {error_msg}"}
+
+        asr_url = data.get("asr_format_audio_url", "")
+        ref_text = data.get("reference_audio_text", "")
+
+        if asr_url and ref_text:
+            print(f"[HeyGem-Voice] 声音克隆成功: text={ref_text[:50]}...")
+            return {
+                "success": True,
+                "asr_format_audio_url": asr_url,
+                "reference_audio_text": ref_text,
+                "message": "声音克隆成功",
+            }
+
+        # 常见错误处理
+        msg = data.get("msg", "")
+        if "asr failed" in str(msg).lower():
+            return {"success": False,
+                    "message": "ASR 识别失败。请确保模特视频中有人声且语音清晰、无背景音乐。"}
+        if "file not exists" in str(msg).lower():
+            return {"success": False,
+                    "message": f"音频文件未找到。请检查 TTS 数据目录: {HEYGEM_TTS_DATA_DIR}"}
+        return {"success": False, "message": f"预处理失败: {msg}"}
+
+    except httpx.ConnectError:
+        return {"success": False, "message": f"TTS 服务 ({HEYGEM_TTS_HOST}) 不可达"}
+    except Exception as e:
+        return {"success": False, "message": f"声音克隆异常: {e}"}
+
+def heygem_tts_with_cloned_voice(
+    text: str,
+    asr_format_audio_url: str,
+    reference_audio_text: str,
+    output_path: str = None,
+) -> str:
+    """
+    使用克隆的声音合成 TTS 音频。
+
+    Args:
+        text: 要合成语音的文本
+        asr_format_audio_url: 声音克隆返回的预处理音频路径
+        reference_audio_text: 声音克隆返回的参考文本
+        output_path: 输出音频路径
+
+    Returns:
+        wav 音频文件路径，失败返回空字符串
+    """
+    if output_path is None:
+        # TTS 输出放到 gen-video 的共享目录，方便后续视频合成
+        output_path = os.path.join(HEYGEM_DATA_DIR,
+                                   f"tts_cloned_{uuid.uuid4().hex[:8]}.wav")
+
+    try:
+        speaker_id = str(uuid.uuid4())
+        print(f"[HeyGem-TTS] 合成: {text[:50]}...")
+
+        resp = httpx.post(
+            f"{HEYGEM_TTS_HOST}/v1/invoke",
+            json={
+                "speaker": speaker_id,
+                "text": text,
+                "format": "wav",
+                "topP": 0.7,
+                "max_new_tokens": 1024,
+                "chunk_length": 100,
+                "repetition_penalty": 1.2,
+                "temperature": 0.7,
+                "need_asr": False,
+                "streaming": False,
+                "is_fixed_seed": 0,
+                "is_norm": 0,
+                "reference_audio": asr_format_audio_url,
+                "reference_text": reference_audio_text,
+            },
+            timeout=120,
+        )
+
+        if resp.status_code == 200:
+            # 响应是音频二进制数据
+            content_type = resp.headers.get("content-type", "")
+            if "audio" in content_type or "octet-stream" in content_type:
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                with open(output_path, "wb") as f:
+                    f.write(resp.content)
+                if os.path.getsize(output_path) > 1024:
+                    print(f"[HeyGem-TTS] [OK] 克隆声音 TTS: {output_path}")
+                    return output_path
+
+            # 也可能是 JSON 包含音频路径
+            try:
+                data = resp.json()
+                audio_url = data.get("audio_url", data.get("result", ""))
+                if audio_url:
+                    return audio_url
+            except Exception:
+                pass
+
+        print(f"[HeyGem-TTS] 合成失败: HTTP {resp.status_code}")
+        return ""
+
+    except httpx.ConnectError:
+        print(f"[HeyGem-TTS] TTS 服务 ({HEYGEM_TTS_HOST}) 不可达")
+        return ""
+    except Exception as e:
+        print(f"[HeyGem-TTS] 异常: {e}")
+        return ""
+
+#  视频合成
+def heygem_health_check() -> bool:
+    """检查 HeyGem 视频生成服务是否可达"""
+    try:
+        resp = httpx.get(f"{HEYGEM_HOST}/easy/query?code=health_check", timeout=5)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+def prepare_model_video(source_video: str) -> str:
+    """
+    从模特视频中提取静音版本（用于 HeyGem video_url）。
+
+    HeyGem 需要一段不含音频的模特视频来提取面部运动特征。
+    用 FFmpeg 去除音轨，保留视频流。
+
+    Args:
+        source_video: 原始模特视频路径（10-30秒正面说话）
+
+    Returns:
+        静音视频路径，失败返回空字符串
+    """
+    import subprocess
+    if not os.path.exists(source_video):
+        return ""
+    muted = os.path.splitext(source_video)[0] + "_muted.mp4"
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-i", source_video,
+            "-c:v", "copy", "-an",  # 复制视频流，去除音频
+            muted,
+        ], check=True, capture_output=True, timeout=30)
+        if os.path.exists(muted) and os.path.getsize(muted) > 1024:
+            print(f"[HeyGem] 静音视频已准备: {muted}")
+            return muted
+    except Exception as e:
+        print(f"[HeyGem] 静音视频提取失败: {e}")
+    return ""
+
+def _to_container_path(host_path: str) -> str:
+    """
+    将宿主机路径转换为容器内路径。
+
+    容器挂载: /code/data → 宿主机 HEYGEM_DATA_DIR
+    如果文件不在挂载目录下，复制过去。
+    """
+    # 如果已经是容器路径格式，直接返回
+    if host_path.startswith("/code/"):
+        return host_path
+
+    abs_path = os.path.abspath(host_path)
+    data_dir = os.path.abspath(HEYGEM_DATA_DIR)
+
+    # 在挂载目录下 → 转换为容器路径
+    if abs_path.startswith(data_dir):
+        rel = os.path.relpath(abs_path, data_dir)
+        return f"/code/data/{rel.replace(os.sep, '/')}"
+
+    # 不在挂载目录 → 复制到挂载目录
+    os.makedirs(data_dir, exist_ok=True)
+    basename = os.path.basename(abs_path)
+    dst = os.path.join(data_dir, basename)
+    if abs_path != dst:
+        import shutil
+        shutil.copy2(abs_path, dst)
+        print(f"[HeyGem] 文件已复制到共享目录: {dst}")
+    return f"/code/data/{basename}"
+
+def heygem_submit_task(
+    audio_path: str = None,
+    video_path: str = None,
+    chaofen: int = 0,
+    watermark: int = 0,
+) -> dict:
+    """
+    仅提交任务，不等待。返回 task_code 用于后续查询。
+
+    Returns:
+        {"success": bool, "task_code": str, "message": str}
+    """
+    if not audio_path or not os.path.exists(audio_path):
+        return {"success": False, "task_code": "", "message": "音频文件不存在"}
+
+    # HeyGem 必须有模特视频（不是照片！），用于提取面部运动特征
+    if not video_path or not os.path.exists(video_path):
+        return {"success": False, "task_code": "",
+                "message": "请先上传一段模特视频（10-30秒正面说话视频）。HeyGem 需要从视频中提取面部运动特征来驱动口型，照片只能生成静态画面。"}
+
+    task_code = f"task_{uuid.uuid4().hex[:12]}"
+    container_audio = _to_container_path(audio_path)
+    container_video = _to_container_path(video_path)
+
+    try:
+        print(f"[HeyGem] 提交任务: {task_code}")
+        print(f"[HeyGem]   形象: {container_video}")
+        print(f"[HeyGem]   音频: {container_audio}")
+        resp = httpx.post(
+            f"{HEYGEM_HOST}/easy/submit",
+            json={
+                "audio_url": container_audio,
+                "video_url": container_video,
+                "code": task_code,
+                "chaofen": chaofen,
+                "watermark_switch": watermark,
+                "pn": 1,
+            },
+            timeout=30,
+        )
+        data = resp.json()
+        api_code = data.get("code", 0)
+        api_msg = data.get("msg", "")
+
+        # code=10000 → 任务创建成功
+        if api_code == 10000:
+            print(f"[HeyGem] 任务已创建: {task_code}")
+            return {"success": True, "task_code": task_code,
+                    "message": "任务已提交，正在生成数字人视频..."}
+
+        # code=10001 → 忙碌中（已有任务在处理）
+        if api_code == 10001:
+            print(f"[HeyGem] 服务忙碌: {api_msg}")
+            return {"success": False, "task_code": "",
+                    "message": "HeyGem 正在处理其他任务，请等待当前任务完成后重试（约3-5分钟）。"}
+
+        # 其他错误
+        return {"success": False, "task_code": "",
+                "message": f"提交失败 (code={api_code}): {api_msg}"}
+    except httpx.ConnectError:
+        return {"success": False, "task_code": "",
+                "message": "无法连接 HeyGem (8383)。请检查: docker ps | grep avatar"}
+    except Exception as e:
+        return {"success": False, "task_code": "", "message": f"异常: {e}"}
+
+def heygem_query_task(task_code: str) -> dict:
+    """
+    查询任务进度 + 如果完成则返回视频路径。
+
+    Returns:
+        {"status": int, "progress": int, "msg": str,
+         "video_path": str, "finished": bool}
+    """
+    try:
+        resp = httpx.get(f"{HEYGEM_HOST}/easy/query?code={task_code}", timeout=10)
+        qdata = resp.json()
+        api_code = qdata.get("code", 0)
+
+        # code=10004 → 任务不存在（可能被清除或未成功创建）
+        if api_code == 10004:
+            return {"status": -1, "progress": 0, "msg": "任务不存在或已被清除",
+                    "video_path": "", "finished": False}
+
+        status_data = qdata.get("data", {})
+        status_code = status_data.get("status", 1)
+        progress = status_data.get("progress", 0)
+        msg = status_data.get("msg", "")
+        result = status_data.get("result", "")
+
+        video_path = ""
+        finished = (status_code == 2 or any(w in str(msg) for w in ["完成","success","合成"]))
+
+        if finished:
+            temp_dir = os.path.join(HEYGEM_DATA_DIR, "temp")
+            # 1. 搜 temp/{task_code}/ 子目录
+            task_subdir = os.path.join(temp_dir, task_code)
+            if os.path.isdir(task_subdir):
+                for root, dirs, files in os.walk(task_subdir):
+                    for f in files:
+                        if f.endswith(('.avi', '.mp4', '.mov')):
+                            fpath = os.path.join(root, f)
+                            if os.path.getsize(fpath) > 100 * 1024:
+                                video_path = fpath
+                                break
+                    if video_path: break
+            # 2. 搜 temp/ 下以 task_code 开头的文件（如 task_xxx-r.mp4）
+            if not video_path and os.path.isdir(temp_dir):
+                for f in sorted(os.listdir(temp_dir),
+                                key=lambda x: os.path.getmtime(os.path.join(temp_dir, x)),
+                                reverse=True):
+                    if f.startswith(task_code) and f.endswith(('.avi','.mp4','.mov')):
+                        fpath = os.path.join(temp_dir, f)
+                        if os.path.getsize(fpath) > 100 * 1024:
+                            video_path = fpath
+                            break
+            # 3. 搜 result/ 目录
+            if not video_path:
+                result_dir = os.path.join(HEYGEM_DATA_DIR, "result")
+                if os.path.isdir(result_dir):
+                    for root, dirs, files in os.walk(result_dir):
+                        for f in files:
+                            if f.endswith(('.avi', '.mp4', '.mov')):
+                                fpath = os.path.join(root, f)
+                                if os.path.getsize(fpath) > 100 * 1024:
+                                    video_path = fpath
+                                    break
+                        if video_path: break
+
+        return {
+            "status": status_code, "progress": progress, "msg": msg,
+            "video_path": video_path, "finished": finished,
+        }
+    except Exception as e:
+        return {"status": -1, "progress": 0, "msg": str(e),
+                "video_path": "", "finished": False}
+
+def heygem_generate_video(
+    avatar_id: str = None,
+    audio_path: str = None,
+    video_path: str = None,
+    output_dir: str = None,
+    chaofen: int = 0,
+    watermark: int = 0,
+) -> dict:
+    """
+    提交数字人视频生成任务，轮询直到完成。
+
+    Args:
+        avatar_id: 数字人形象 ID（用于生成唯一任务 code）
+        audio_path: 音频文件路径（TTS 输出）
+        video_path: 参考视频/图片路径（数字人形象源）
+        output_dir: 输出目录（保存生成的视频）
+        chaofen: 超分辨率增强 (0=关, 1=开)
+        watermark: 水印 (0=关, 1=开)
+
+    Returns:
+        {"success": bool, "video_path": str, "message": str}
+    """
+    if not audio_path or not os.path.exists(audio_path):
+        return {"success": False, "video_path": "", "message": "音频文件不存在"}
+
+    # 生成唯一任务 code
+    task_code = f"task_{uuid.uuid4().hex[:12]}"
+
+    # 转换路径为容器可访问路径
+    container_audio = _to_container_path(audio_path)
+    container_video = ""
+    if video_path and os.path.exists(video_path):
+        container_video = _to_container_path(video_path)
+
+    # 如果没有指定参考视频，使用默认
+    if not container_video:
+        container_video = "/code/data/default_avatar.mp4"
+
+    try:
+        # Step 1: 提交任务
+        print(f"[HeyGem] 提交任务: code={task_code}")
+        print(f"[HeyGem]   音频: {container_audio}")
+        print(f"[HeyGem]   视频: {container_video}")
+
+        resp = httpx.post(
+            f"{HEYGEM_HOST}/easy/submit",
+            json={
+                "audio_url": container_audio,
+                "video_url": container_video,
+                "code": task_code,
+                "chaofen": chaofen,
+                "watermark_switch": watermark,
+                "pn": 1,
+            },
+            timeout=30,
+        )
+        data = resp.json()
+        if not data.get("success"):
+            return {"success": False, "video_path": "",
+                    "message": f"任务提交失败: {data.get('msg', '未知错误')}"}
+
+        print(f"[HeyGem] 任务已提交，等待生成...")
+
+        # Step 2: 轮询查询进度（HeyGem 状态码: 1=进行中, 2=完成, 3=失败）
+        last_progress = -1
+        for attempt in range(180):  # 最多等 6 分钟
+            time.sleep(2)
+            try:
+                qr = httpx.get(
+                    f"{HEYGEM_HOST}/easy/query?code={task_code}", timeout=10
+                )
+                qdata = qr.json()
+            except Exception:
+                continue
+
+            if not qdata.get("success"):
+                continue
+
+            status_data = qdata.get("data", {})
+            status_code = status_data.get("status", 1)
+            progress = status_data.get("progress", 0)
+            msg = status_data.get("msg", "")
+
+            # 打印进度（只在变化时）
+            if progress != last_progress:
+                print(f"[HeyGem] 进度: {progress}% - {msg}")
+                last_progress = progress
+
+            # 状态码 2 = 完成
+            if status_code == 2 or "完成" in msg or "success" in msg.lower():
+                result_val = status_data.get("result", "")
+                print(f"[HeyGem] [OK] 生成完成! result={result_val}")
+
+                # 输出文件在 temp/{task_code}/result.avi 或 result.mp4
+                search_paths = [
+                    os.path.join(HEYGEM_DATA_DIR, "temp", task_code, "result.avi"),
+                    os.path.join(HEYGEM_DATA_DIR, "temp", task_code, "result.mp4"),
+                    os.path.join(HEYGEM_DATA_DIR, "result", f"{task_code}.mp4"),
+                ]
+
+                # 也尝试从 result 字段解析路径
+                if result_val and isinstance(result_val, str) and result_val:
+                    result_val = result_val.replace("/code/data/", "")
+                    search_paths.insert(0, os.path.join(HEYGEM_DATA_DIR, result_val))
+
+                for sp in search_paths:
+                    if os.path.exists(sp) and os.path.getsize(sp) > 1024:
+                        print(f"[HeyGem] 视频文件: {sp}")
+                        return {"success": True, "video_path": sp,
+                                "message": "视频生成成功"}
+
+                # 兜底：扫描 temp 目录下最新的大文件
+                temp_dir = os.path.join(HEYGEM_DATA_DIR, "temp")
+                if os.path.isdir(temp_dir):
+                    for root, dirs, files in os.walk(temp_dir):
+                        for f in files:
+                            if f.endswith(('.avi', '.mp4', '.mov')):
+                                fpath = os.path.join(root, f)
+                                if os.path.getsize(fpath) > 1024:
+                                    print(f"[HeyGem] 找到: {fpath}")
+                                    return {"success": True, "video_path": fpath,
+                                            "message": "视频生成成功"}
+
+                return {"success": True, "video_path": "",
+                        "message": f"生成完成，请在 {HEYGEM_DATA_DIR}/temp/{task_code}/ 查看输出文件。"}
+
+            # 状态码 3 = 失败
+            if status_code == 3 or "fail" in msg.lower() or "error" in msg.lower():
+                return {"success": False, "video_path": "",
+                        "message": f"生成失败: {msg}"}
+
+        # 超时
+        return {"success": False, "video_path": "",
+                "message": f"视频生成超时（6分钟），当前进度: {last_progress}%。请稍后在 {HEYGEM_DATA_DIR}/temp/{task_code}/ 查看。"}
+
+    except httpx.ConnectError:
+        return {"success": False, "video_path": "",
+                "message": "无法连接 HeyGem (8383)。请检查 Docker: docker ps | grep avatar"}
+    except Exception as e:
+        return {"success": False, "video_path": "",
+                "message": f"生成异常: {e}"}
+```
+
+### 工作流
+
+```
+# workflows/video.py
+"""口播视频工作流 — 提词器 / 数字人视频生成
+
+双模式：
+- 📺 提词器模式：用户原文 → 提词器滚动显示（不做改写）
+- 🔒 数字人模式：用户原文 → TTS 配音 → HeyGem 数字人出镜
+
+用户台词原样使用，不做任何 LLM 改写。
+"""
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+from config import settings
+import os
+
+class VideoState(TypedDict):
+    raw_script: str
+    mode: str           # "teleprompter" | "heygem"
+    avatar_path: str    # 数字人形象照片/视频路径
+    teleprompter: str   # 提词器内容 = 用户原文
+    audio_path: str
+    video_path: str
+    task_code: str
+    heygem_msg: str
+
+#  节点：提词器（原样保留用户台词）
+def node_teleprompter(state: VideoState) -> dict:
+    """用户输入即提词器内容，不做任何 LLM 改写"""
+    return {"teleprompter": state["raw_script"]}
+
+#   节点：生成视频（TTS + HeyGem）  
+def node_generate_video(state: VideoState) -> dict:
+    """
+    数字人模式：TTS 配音 → HeyGem 数字人出镜 → 输出 MP4
+    提词器模式：跳过
+    """
+    mode = state.get("mode", "teleprompter")
+
+    if mode == "teleprompter":
+        return {"video_path": "", "audio_path": "", "task_code": "", "heygem_msg": ""}
+
+    # Step 1: TTS 配音 — 优先声音克隆，降级 Edge TTS
+    audio_path = ""
+    voice_cloned = False
+    avatar_video = state.get("avatar_path", "")
+
+    # 1a: 尝试声音克隆（需模特视频 + TTS 服务）
+    if avatar_video and os.path.exists(avatar_video):
+        try:
+            from tools.heygem_client import heygem_voice_clone, heygem_tts_with_cloned_voice
+            clone_result = heygem_voice_clone(avatar_video)
+            if clone_result["success"]:
+                audio_name = f"voice_cloned_{hash(state['optimized']) % 100000:05d}.wav"
+                audio_path = os.path.join(settings.video_output_dir, audio_name)
+                audio_path = heygem_tts_with_cloned_voice(
+                    state["optimized"],
+                    clone_result["asr_format_audio_url"],
+                    clone_result["reference_audio_text"],
+                    audio_path,
+                )
+                if audio_path:
+                    voice_cloned = True
+                    print(f"[Video] 克隆声音 TTS 完成: {audio_path}")
+                else:
+                    print("[Video] 克隆声音 TTS 失败，降级 Edge TTS")
+            else:
+                print(f"[Video] 声音克隆失败: {clone_result['message']}，降级 Edge TTS")
+        except Exception as e:
+            print(f"[Video] 声音克隆异常: {e}，降级 Edge TTS")
+
+    # 1b: 降级 Edge TTS
+    if not audio_path:
+        try:
+            from tools.media_tools import generate_tts
+            audio_name = f"voiceover_{hash(state['optimized']) % 100000:05d}.mp3"
+            audio_path = os.path.join(settings.video_output_dir, audio_name)
+            os.makedirs(os.path.dirname(audio_path), exist_ok=True)
+            audio_path = generate_tts(state["optimized"], audio_path)
+            if audio_path:
+                print(f"[Video] Edge TTS 配音完成: {audio_path}")
+        except Exception as e:
+            print(f"[Video] Edge TTS 失败: {e}")
+
+    video_path = ""
+    heygem_msg = ""
+
+    # Step 2: 按模式生成视频
+    task_code = ""
+    if mode == "heygem" and audio_path:
+        from tools.heygem_client import heygem_health_check, heygem_submit_task
+
+        if not heygem_health_check():
+            heygem_msg = (
+                "HeyGem 服务未启动。检查: `docker ps | grep avatar`\n"
+                "部署: docker pull guiji2025/duix.avatar\n"
+                "端口: gen-video(8383) / tts(18180) / asr(10095)"
+            )
+        else:
+            avatar_video = state.get("avatar_path", "")
+            if not avatar_video or not os.path.exists(avatar_video):
+                heygem_msg = (
+                    "请先上传一段模特视频！\n\n"
+                    "HeyGem 需要一段 10-30 秒的正面说话视频（mp4），\n"
+                    "用于提取面部运动特征来驱动口型。\n"
+                    "照片只能生成静态画面，必须使用视频！\n\n"
+                    "在左侧「📷 上传模特视频」处上传后重新点击生成。"
+                )
+            else:
+                # 准备静音模特视频（HeyGem 需要不含音频的视频文件）
+                from tools.heygem_client import prepare_model_video
+                muted_video = prepare_model_video(avatar_video)
+                if not muted_video:
+                    # 如果 ffmpeg 不可用，直接用原视频
+                    muted_video = avatar_video
+
+                print(f"[Video] 模特视频: {muted_video}")
+                submit = heygem_submit_task(
+                    audio_path=os.path.abspath(audio_path),
+                    video_path=os.path.abspath(muted_video),
+                )
+                if submit["success"]:
+                    task_code = submit["task_code"]
+                    heygem_msg = f"任务已提交 (code: {task_code})，约 2-3 分钟后点击刷新查看"
+                else:
+                    heygem_msg = submit["message"]
+
+    return {
+        "audio_path": audio_path,
+        "video_path": video_path,
+        "task_code": task_code,
+        "heygem_msg": heygem_msg,
+    }
+
+# 构建图
+builder = StateGraph(VideoState)
+builder.add_node("teleprompter", node_teleprompter)
+builder.add_node("generate", node_generate_video)
+
+builder.add_edge(START, "teleprompter")
+builder.add_edge("teleprompter", "generate")
+builder.add_edge("generate", END)
+
+video_graph = builder.compile()
+
+def run_video(raw_script: str, mode: str = "teleprompter",
+              avatar_path: str = "") -> dict:
+    """运行口播视频工作流
+
+    Args:
+        raw_script: 用户原始台词（原样使用，不做改写）
+        mode: "teleprompter" | "heygem"
+        avatar_path: 数字人形象照片/视频路径
+
+    Returns:
+        {"teleprompter": str, "audio_path": str, "video_path": str,
+         "task_code": str, "heygem_msg": str}
+    """
+    return video_graph.invoke({
+        "raw_script": raw_script,
+        "mode": mode,
+        "avatar_path": avatar_path,
+    })
+```
+
+### Streamlit 页面
+
+```
+# views/video.py
+"""show_video页面"""
+import streamlit as st
+import os, json, glob
+
+HEYGEM_STATE_FILE = ".cache/heygem_state.json"
+
+# 从统一配置读取（os.getenv 读不到 .env 文件，必须走 config.settings）
+from config import settings
+HEYGEM_DATA_DIR = settings.heygem_data_dir
+
+# 允许的媒体格式
+VIDEO_EXTS = {".mp4", ".mov", ".avi", ".webm"}
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+
+def _list_avatars() -> list[dict]:
+    """扫描 HeyGem 数据目录，列出所有数字人模特文件
+
+    Returns:
+        [{"path": str, "name": str, "type": "video"|"image", "size_mb": float}, ...]
+    """
+    avatars = []
+    if not os.path.isdir(HEYGEM_DATA_DIR):
+        return avatars
+
+    seen = set()
+    for f in sorted(os.listdir(HEYGEM_DATA_DIR), key=lambda x: os.path.getmtime(
+            os.path.join(HEYGEM_DATA_DIR, x)), reverse=True):
+        full = os.path.join(HEYGEM_DATA_DIR, f)
+        if not os.path.isfile(full):
+            continue
+        name, ext = os.path.splitext(f)
+        ext = ext.lower()
+
+        # 跳过非媒体文件
+        if ext not in VIDEO_EXTS and ext not in IMAGE_EXTS:
+            continue
+        # 跳过 muted 版本（静音视频是衍生物）
+        if name.endswith("_muted"):
+            continue
+        # 跳过临时/中间文件
+        if any(p in full.lower() for p in ["/temp/", "/log/", "/result/",
+                                             "voice_", "voiceover_", "voice_cloned",
+                                             "test_", "tts_", "long_tts"]):
+            continue
+
+        base = name  # 去掉 _muted 后的名字，用于去重
+        if base in seen:
+            continue
+        seen.add(base)
+
+        size_mb = os.path.getsize(full) / (1024 * 1024)
+        avatars.append({
+            "path": full,
+            "name": f,
+            "type": "video" if ext in VIDEO_EXTS else "image",
+            "size_mb": size_mb,
+        })
+
+    return avatars
+
+def _load_selected_avatar() -> str:
+    """读取上次选中的模特路径"""
+    try:
+        if os.path.exists(HEYGEM_STATE_FILE):
+            with open(HEYGEM_STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            path = data.get("avatar_path", "")
+            if path and os.path.exists(path):
+                return path
+    except Exception:
+        pass
+    return ""
+
+def _save_selected_avatar(path):
+    """保存选中的模特路径"""
+    os.makedirs(os.path.dirname(HEYGEM_STATE_FILE), exist_ok=True)
+    with open(HEYGEM_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"avatar_path": path}, f)
+
+def _add_history(action: str, summary: str):
+    from datetime import datetime
+    st.session_state.history.append({
+        "time": datetime.now().strftime("%H:%M"),
+        "action": action,
+        "summary": summary[:200],
+    })
+
+def show_video():
+    """口播视频 — 提词器 / HeyGem 数字人出镜"""
+    st.title("🎥 口播视频智能体")
+    st.markdown("输入台词 → 提词器滚动 / 数字人出镜 → 视频下载")
+
+    for key in ["hg_video_path", "hg_audio_path", "hg_task_code", "hg_msg"]:
+        if key not in st.session_state:
+            st.session_state[key] = ""
+
+    mode = st.radio("📌 生成模式", [
+        "📺 提词器模式（只看稿）",
+        "🔒 数字人生成（HeyGem → MP4）",
+    ], horizontal=True)
+
+    raw = st.text_area("✍️ 输入你的文案", height=180,
+                       placeholder="直接输入你要说的台词，原样使用不做改写...")
+
+    # 数字人模式：选择 / 上传模特
+    avatar_path = ""
+    if "数字人" in mode:
+        st.markdown("#### 🎭 选择数字人模特")
+
+        avatars = _list_avatars()
+        saved = _load_selected_avatar()
+
+        # 确定当前选中的索引
+        selected_idx = 0
+        for i, a in enumerate(avatars):
+            if a["path"] == saved:
+                selected_idx = i
+                break
+
+        if avatars:
+            #   网格展示所有模特  
+            cols_per_row = 4
+            for row_start in range(0, len(avatars), cols_per_row):
+                row_avatars = avatars[row_start:row_start + cols_per_row]
+                cols = st.columns(cols_per_row)
+                for ci, a in enumerate(row_avatars):
+                    idx = row_start + ci
+                    with cols[ci]:
+                        # 读取并显示缩略图/预览
+                        try:
+                            with open(a["path"], "rb") as vf:
+                                media_bytes = vf.read()
+                            if a["type"] == "image":
+                                st.image(media_bytes, use_container_width=True)
+                            else:
+                                st.video(media_bytes)
+                        except Exception:
+                            st.warning(f"无法加载")
+
+                        # 信息行
+                        type_icon = "🎬" if a["type"] == "video" else "🖼️"
+                        size_str = f"{a['size_mb']:.1f}MB" if a['size_mb'] < 1000 else f"{a['size_mb']/1024:.1f}GB"
+                        selected = (idx == selected_idx)
+                        star = "⭐ " if selected else ""
+                        st.caption(f"{star}{type_icon} {a['name'][:25]}\n{size_str}")
+
+                        # 选择 + 删除按钮
+                        c_sel, c_del = st.columns([3, 1])
+                        with c_sel:
+                            btn_label = "✅ 已选中" if selected else "🔘 选择此模特"
+                            if st.button(btn_label, key=f"sel_avatar_{idx}",
+                                         use_container_width=True,
+                                         type="primary" if not selected else "secondary",
+                                         disabled=selected):
+                                _save_selected_avatar(a["path"])
+                                st.rerun()
+                        with c_del:
+                            # 删除确认弹窗
+                            if st.button("🗑️", key=f"del_avatar_{idx}",
+                                         help="删除此模特"):
+                                st.session_state[f"confirm_del_{idx}"] = True
+
+                        # 二次确认
+                        if st.session_state.get(f"confirm_del_{idx}"):
+                            st.warning(f"确认删除 `{a['name']}`？")
+                            cc1, cc2 = st.columns(2)
+                            with cc1:
+                                if st.button("✅ 确认", key=f"confirm_yes_{idx}",
+                                             type="primary"):
+                                    try:
+                                        os.remove(a["path"])
+                                        # 如果删除的是当前选中，清除选择
+                                        if selected:
+                                            _save_selected_avatar("")
+                                        st.success(f"已删除: {a['name']}")
+                                        st.session_state.pop(f"confirm_del_{idx}", None)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"删除失败: {e}")
+                            with cc2:
+                                if st.button("❌ 取消", key=f"confirm_no_{idx}"):
+                                    st.session_state.pop(f"confirm_del_{idx}", None)
+                                    st.rerun()
+
+            # 当前选中的设置 avatar_path
+            if saved and os.path.exists(saved):
+                avatar_path = saved
+
+            st.markdown("---")
+
+        #   上传新模特  
+        with st.expander("📤 上传新模特", expanded=(len(avatars) == 0)):
+            st.caption("上传后会保存到 HeyGem 数据目录，自动出现在上方列表")
+            new_file = st.file_uploader(
+                "选择照片或视频",
+                type=["mp4", "mov", "avi", "png", "jpg", "jpeg"],
+                help="上传一张正面照片或 10-30 秒正面说话视频",
+                key="new_avatar_upload",
+            )
+            if new_file:
+                os.makedirs(HEYGEM_DATA_DIR, exist_ok=True)
+                suffix = os.path.splitext(new_file.name)[1]
+                save_path = os.path.join(
+                    HEYGEM_DATA_DIR,
+                    f"avatar_{hash(new_file.name) % 100000:05d}{suffix}")
+                with open(save_path, "wb") as f:
+                    f.write(new_file.getvalue())
+                _save_selected_avatar(save_path)
+                st.success(f"✅ 已上传: {os.path.basename(save_path)}")
+                st.rerun()
+
+    # 开始生成
+    if st.button("🎬 开始生成", type="primary", use_container_width=True):
+        if not raw:
+            st.warning("请输入台词")
+            return
+
+        mode_key = "heygem" if "数字人" in mode else "teleprompter"
+
+        with st.spinner("处理中..."):
+            from workflows.video import run_video
+            result = run_video(raw, mode=mode_key, avatar_path=avatar_path)
+
+            st.session_state["hg_script"] = raw
+            st.session_state["hg_audio_path"] = result.get("audio_path", "")
+            st.session_state["hg_video_path"] = result.get("video_path", "")
+            st.session_state["hg_task_code"] = result.get("task_code", "")
+            st.session_state["hg_msg"] = result.get("heygem_msg", "")
+            st.session_state["hg_mode"] = mode_key
+            st.session_state["hg_has_result"] = True
+            st.rerun()
+
+    # 渲染结果
+    if st.session_state.get("hg_has_result"):
+        mode_key = st.session_state.get("hg_mode", "teleprompter")
+        script = st.session_state.get("hg_script", "")
+
+        if mode_key == "teleprompter":
+            # === 提词器：大字 + 每次 3 行 + JS 逐行推进 ===
+            st.markdown("### 📺 提词器")
+
+            speed = st.slider("⏱ 换行速度（秒/行）", min_value=1, max_value=15, value=5,
+                             help="数值越小换行越快")
+
+            lines = [l.strip() for l in script.split("\n") if l.strip()]
+            if not lines:
+                lines = [script]
+            total = len(lines)
+
+            import streamlit.components.v1 as components
+            html = f"""<!DOCTYPE html>
+            <html><head><meta charset="utf-8"><style>
+            * {{ margin:0; padding:0; }}
+            body {{ background:#000; font-family:'Microsoft YaHei','PingFang SC',sans-serif; }}
+            .tp-line {{
+                height: 106px; display: flex; align-items: center; justify-content: center;
+                text-align: center; color: #fff; font-size: 50px; font-weight: bold;
+                letter-spacing: 3px; padding: 0 12px;
+            }}
+            .tp-box {{ padding: 5px 0; height: 318px; overflow: hidden; }}
+            </style></head><body><div class="tp-box">
+            <div id="l1" class="tp-line"></div>
+            <div id="l2" class="tp-line"></div>
+            <div id="l3" class="tp-line"></div>
+            </div><script>
+            var lines = {json.dumps(lines)};
+            var total = lines.length;
+            var pos = 0;
+            function show() {{
+                document.getElementById('l1').textContent = lines[pos] || '';
+                document.getElementById('l2').textContent = lines[pos+1] || '';
+                document.getElementById('l3').textContent = lines[pos+2] || '';
+                pos++;
+                if (pos < total - 2) setTimeout(show, {speed * 1000});
+            }}
+            show();
+            </script></body></html>"""
+            components.html(html, height=330, scrolling=False)
+            st.caption(f"💡 共 {total} 行，每次 3 行大字，{speed} 秒换一行 | 到底自动停止")
+
+        else:
+            # 数字人模式
+            st.markdown("### 📝 台词（原样使用，未改写）")
+            st.text_area("台词内容", script, height=150, key="script_display")
+            st.download_button("📥 下载台词", script, file_name="台词.txt")
+
+            st.markdown("### 🎥 视频")
+            video_path = st.session_state.get("hg_video_path", "")
+            audio_path = st.session_state.get("hg_audio_path", "")
+            task_code = st.session_state.get("hg_task_code", "")
+
+            if audio_path and os.path.exists(audio_path):
+                st.audio(audio_path)
+            if video_path and os.path.exists(video_path):
+                st.video(video_path)
+            elif task_code:
+                st.info(st.session_state.get("hg_msg", "任务已提交，约 2-3 分钟完成"))
+                st.caption(f"任务编号: `{task_code}`")
+                if st.button("🔄 刷新进度（生成完毕后点击查看）"):
+                    from tools.heygem_client import heygem_query_task
+                    q = heygem_query_task(task_code)
+                    if q["finished"] and q["video_path"]:
+                        st.session_state["hg_video_path"] = q["video_path"]
+                    st.rerun()
+
+        # 重置
+        if st.button("🗑️ 清除重新开始"):
+            for k in ["hg_has_result", "hg_video_path", "hg_audio_path",
+                      "hg_task_code", "hg_msg", "hg_script", "hg_mode"]:
+                st.session_state.pop(k, None)
+            st.rerun()
+
+        _add_history("口播视频", script[:60])
+```
+
+---
+
+## 视频剪辑
+
+> 章节概述：视频剪辑模块是整个项目中最复杂的环节，采用 DeepAgents 智能体 加载 video-use 技能包全权负责剪辑流程。核心思路是将剪辑知识编码为 SKILL.md 操作手册，deepagent 自动调用 ffmpeg/ffprobe、moviepy、FunASR、HyperFrames 等工具完成：素材分析 → 转录生成字幕 → HyperFrames 生成动画叠加素材（至少 6-10 个）→ 上下排布穿插 → BGM 循环混音（10%音量，总体放大至 300%） → 渲染输出。技术细节上做了大量工程适配：Windows 控制台 UTF-8 强制编码、subprocess 防管道阻塞 monkey-patch、Git Bash / Windows 路径混用修复（normalize_path）、LocalShellBackend 虚拟沙箱路径解析补丁等。deepagent 系统提示词中约定了严格的约束规则：字幕只能用 SubtitlesClip 加载 SRT（严禁 for 循环 TextClip）、禁止使用 .with_mask()/.set_mask() 产生隐式蒙版、CompositeVideoClip 的 size 必须为 (w, h + h//3) 防止底部素材被裁切等。前端支持上传口播视频 + 多个穿插素材 + 自定义背景音乐，所有中间文件输出到 .cache/videos/ 目录。目标：对口播视频进行后期剪辑 — 自动转录、剪切、加字幕、调色、渲染。
+
+### 技术架构
+
+| 组件 | 说明 |
+| deepagents | uv add deepagents，LangGraph 多 Agent 编排框架 |
+| video-use skill | 项目 .skills/video-use/，包含完整剪辑流程（转录 → 剪切 → 字幕 → 渲染） |
+| HyperFrames | npx hyperframes，HTML/CSS/GSAP → MP4 动画叠加层 |
+
+[DIAGRAM] 动画叠加层（并行子代理） -> HyperFrames -> 📁 口播视频 -> 🤖 deepagent加载 video-use skill -> 🔍 自动分析ffprobe + 转录 -> 📋 提出策略确认剪辑方案 -> ✂️ 执行剪辑剪切/字幕/调色 -> 🎥 渲染 MP4 -> 📺 剪辑后视频
+
+### 工作流
+
+[DIAGRAM] deepagent分析素材 -> 提出剪辑策略 -> 执行剪辑 -> 剪切冗余片段 -> 添加字幕叠加 -> 调色 -> 动画叠加层（并行） -> 渲染输出
+
+deepagent 内部：
+
+[DIAGRAM] 🔧 兜底层 -> 🎨 生产层 -> 👀 分析层 -> 🧠 AI编排层 -> LangGraph + DeepAgents -> execute · 分析脚本 -> 元数据 + 带时间戳转录文本 -> write · HTML + execute · npx -> 6~10个动画MP4 -> write · 合成脚本 + execute -> 元数据 · 转录文本 · SRT字幕 -> 动画MP4 -> 渲染 · libx264 · aac -> 完成 -> 兜底查找 -> 返回绝对路径 -> 用户输入视频路径 + 需求JSON -> DeepAgent 编排任务 -> FFprobe & FunASR -> HyperFrames + npx -> MoviePy + FFmpeg -> mashup_final.mp4 -> find 节点 -> 输出成品
+
+> 核心理念：deepagent 加载 video-use SKILL.md 作为 "操作手册"，自动按流程执行。无需手写每个步骤，deepagent 自己调用 ffmpeg、transcribe.py、grade.py 等工具完成剪辑。
+
+### LangGraph 工作流
+
+```
+# 文件: workflows/mashup.py
+"""
+视频剪辑工作流 — deepagents + video-use skill
+
+deepagent 全权负责：加速 → 转录 → HyperFrames → 排布 → BGM → 渲染
+"""
+from typing import TypedDict
+import os, sys, json, re, subprocess, time
+
+# Windows 控制台强制 UTF-8（防止日志中文变繁体）
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')  # type: ignore
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')  # type: ignore
+    except Exception:
+        pass
+
+# subprocess monkey-patch: UTF-8 + Windows 防卡
+_orig_init = subprocess.Popen.__init__
+def _patched_init(self, *args, **kwargs):
+    if kwargs.get('text') or kwargs.get('universal_newlines'):
+        kwargs.setdefault('encoding', 'utf-8')
+        kwargs.setdefault('errors', 'replace')
+    # Windows: CREATE_NO_WINDOW 防止控制台阻塞，bufsize 防止管道阻塞
+    if sys.platform == 'win32':
+        kwargs.setdefault('creationflags', subprocess.CREATE_NO_WINDOW)
+        kwargs.setdefault('bufsize', 102400 * 1024)  # 1MB 缓冲区，防 ffmpeg stderr 撑爆管道
+    _orig_init(self, *args, **kwargs)
+subprocess.Popen.__init__ = _patched_init
+
+from langgraph.graph import StateGraph, START, END
+from config import settings
+
+class MashupState(TypedDict):
+    input_video: str
+    edit_style: str
+    edit_requirements: str
+    output_video: str
+    editor_log: str
+    steps: str
+    edit_start: float
+
+DEFAULT_BGM = r"C:\Users\13261\Pictures\风格\1408816_Science revolution.wav"
+
+# 用项目根目录定位 .cache（绝对路径，防止 CWD 不同导致路径错误）
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+CACHE_DIR = os.path.join(_PROJECT_ROOT, ".cache", "videos")
+
+#  路径清洗 — 修复 Git Bash / Windows 路径混用产生的畸形路径
+def normalize_path(p: str) -> str:
+    """修复 Git Bash / Windows 路径混用导致的各种畸形路径。
+
+    常见畸形及修复：
+      C:\\c\\Users\\...  →  C:\\Users\\...
+      C:/c/Users/...    →  C:\\Users\\...
+      /c/Users/...      →  C:\\Users\\...
+      /d/project/...    →  D:\\project\\...
+      C:\\d\\Data\\...    →  D:\\Data\\... (当 C: 后面的盘符字母与 C: 不同时)
+    """
+    if not p or not isinstance(p, str):
+        return p
+
+    original = p
+
+    # 1) 修复 Windows 盘符 + Git Bash 盘符前缀叠加：
+    #    C:\\c\\Users\\... → C:\\Users\\...（盘符字母相同）
+    #    C:\\d\\Data\\...  → D:\\Data\\...（盘符字母不同，以第二个为准）
+    #    匹配: <盘符1>:\ 或 :/  然后 <盘符2>\ 或 /
+    m = re.match(r'^([A-Za-z]):[\\/]([a-z])([\\/].+)$', p)
+    if m:
+        drive1 = m.group(1).lower()
+        drive2 = m.group(2).lower()
+        rest = m.group(3)
+        if drive1 == drive2:
+            # 同一个盘符重复：C:\c\Users → C:\Users
+            p = f'{m.group(1)}:{rest}'
+        else:
+            # 不同盘符：可能是 LLM 把目标盘符误拼成 "当前盘符:\目标盘符\..."
+            p = f'{m.group(2).upper()}:{rest}'
+
+    # 2) 修复纯 Git Bash 路径：/c/Users/... → C:\\Users\\...
+    if sys.platform == 'win32':
+        m2 = re.match(r'^/([a-zA-Z])/(.+)$', p)
+        if m2:
+            drive = m2.group(1).upper()
+            rest = m2.group(2)
+            p = f'{drive}:\\{rest}'
+
+    # 3) 统一斜杠方向（Windows）
+    if sys.platform == 'win32' and '\\' not in p and '/' in p:
+        p = p.replace('/', '\\')
+        # 修复 /videos、/videos/output.mp4 → \videos\... 被 Windows 误判为 C:\videos\...
+        # 原始输入以 / 开头但不是 /c/ 格式（Git Bash 路径）→ 去掉前导反斜杠，恢复为相对路径
+        if original.startswith('/') and not re.match(r'^/[a-zA-Z]/', original):
+            p = p.lstrip('\\')
+
+    # 4) 最终规范化
+    try:
+        p = os.path.normpath(p)
+    except Exception:
+        pass
+
+    if p != original:
+        print(f"[PathFix] 路径已修复: {original!r} → {p!r}")
+    return p
+
+def safe_abspath(p: str) -> str:
+    """安全的 abspath：先清洗再解析，防畸形路径。"""
+    return os.path.abspath(normalize_path(p))
+
+#  deepagent 懒加载
+_editor_agent = None
+
+def _get_editor_agent():
+    global _editor_agent
+    if _editor_agent is not None:
+        return _editor_agent
+
+    from deepagents import create_deep_agent
+    from deepagents.backends import LocalShellBackend
+    from langchain_openai import ChatOpenAI
+
+    model = ChatOpenAI(
+        model=settings.get_deepagent_model(),
+        api_key=settings.api_key,
+        base_url=settings.base_url,
+        temperature=0.5,
+    )
+
+    skills_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".skills"))
+
+    env = os.environ.copy()
+    for p in [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    ]:
+        if os.path.exists(p):
+            env["CHROMIUM_PATH"] = p
+            env["PUPPETEER_EXECUTABLE_PATH"] = p
+            break
+
+    # 禁用 MSYS/Git Bash 路径自动转换
+    # 防止 Git Bash 把 /c/Users/... 转成 C:\Users\... 后又与盘符叠加
+    env["MSYS_NO_PATHCONV"] = "1"
+    env["MSYS2_ARG_CONV_EXCL"] = "*"
+    # 强制 Windows 原生路径风格（不生成 /c/Users 格式）
+    env["GIT_BASH_PATH_CONV"] = "none"
+
+    # 注入项目关键路径，让 agent 引用而非自己拼
+    env["PROJECT_ROOT"] = _PROJECT_ROOT
+    env["CACHE_DIR"] = CACHE_DIR  # 绝对路径，供 Python 代码 fallback 使用
+    env["WORK_DIR"] = "videos"  # 沙箱内相对路径，供 agent 文件操作使用
+
+    # 项目根下的 .cache 目录
+    _cache_dir = os.path.join(_PROJECT_ROOT, ".cache")
+    os.makedirs(_cache_dir, exist_ok=True)
+
+    backend = LocalShellBackend(
+        root_dir=_cache_dir,
+        virtual_mode=True,
+        inherit_env=True,
+        timeout=300,
+        max_output_bytes=5000000,
+        env=env,
+    )
+
+    # monkey-patch: 清洗 Git Bash 路径 /c/Users/... → C:\Users\...
+    # 否则 virtual_mode 会把 /c/Users/... 当成虚拟路径拼到 .cache 下面
+    _orig_resolve = backend._resolve_path
+
+    def _patched_resolve(key: str):
+        cleaned = normalize_path(key)
+        # 如果清洗后是沙箱内的绝对路径，转为相对路径让 virtual_mode 正常处理
+        if os.path.isabs(cleaned):
+            try:
+                rel = os.path.relpath(cleaned, _cache_dir)
+                if not rel.startswith(".."):
+                    cleaned = rel
+            except ValueError:
+                pass  # 不同盘符，保持原样让后端正常拒绝
+        return _orig_resolve(cleaned)
+
+    backend._resolve_path = _patched_resolve
+
+    _editor_agent = create_deep_agent(
+        model=model,
+        skills=[skills_dir] if os.path.isdir(skills_dir) else [],
+        backend=backend,
+        system_prompt=(
+            "你是视频剪辑专家。\n"
+            "所有视频处理必须使用 moviepy 库！示例：from moviepy import VideoFileClip, AudioFileClip, CompositeVideoClip, concatenate_videoclips, vfx, afx\n"
+            "禁止写 subprocess.run(['ffmpeg',...]) 或 subprocess.run(['ffprobe',...])！禁止在脚本中直接调用 ffmpeg/ffprobe 子进程命令！\n"
+            "moviepy 内部会自动调用 ffmpeg 完成编码，你只需用 moviepy 的 Python API：\n"
+            "  - 加速: clip.with_effects([vfx.SpeedX(1.3)])\n"
+            "  - 裁剪: clip.subclipped(start, end)\n"
+            "  - 缩放: clip.resized(new_size) 或 clip.resized(height=426)\n"
+            "  - 音量: clip.with_effects([afx.VolumeX(3.0)])\n"
+            "  - 拼接: concatenate_videoclips([clip1, clip2, ...])\n"
+            "  - 合成: CompositeVideoClip([top, bottom.set_position((0, top_h))], size=(w, top_h+bottom_h)) ← size 必须包含全部层高，严禁 (w, h)，否则产生隐式蒙版裁掉底部\n"
+            "  - 严禁: .with_mask() / .set_mask() / .to_mask() / clip.resized((w,h)) — 都会产生隐式蒙版\n"
+            "  - 字幕: 只能用 SubtitlesClip 加载 SRT 文件，严禁 for 循环 + TextClip（会导致字幕重复）\n"
+            "    必须用 make_textclip 参数显式指定字幕位置，否则 SubtitlesClip 默认定位到合成帧最底部（素材区域），字幕会被裁掉！\n"
+            "    正确写法：\n"
+            "      def make_st(txt):\n"
+            "          return TextClip(text=txt, font='Microsoft YaHei', font_size=52,\n"
+            "              color='white', stroke_color='black', stroke_width=2,\n"
+            "              size=(w, None), method='caption')\n"
+            "              .with_position(('center', h * 0.75))  # ← 关键！定位在原视频区域内\n"
+            "      subtitles = SubtitlesClip('subtitles.srt', encoding='utf-8', make_textclip=make_st)\n"
+            "  - 混音: CompositeAudioClip([voice, bgm])\n"
+            "  - 输出: clip.write_videofile('output.mp4', codec='libx264', audio_codec='aac')\n"
+            "写 Python 脚本时 import moviepy 完成全部剪辑、合成、字幕、混音操作，然后 execute('python script.py')。\n"
+            "语音转文字（转录）必须使用 funasr，model='iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch'，示例：\n"
+            "  from funasr import AutoModel\n"
+            "  model = AutoModel(model='iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch')\n"
+            "  res = model.generate(input=audio_path, batch_size_s=300)\n"
+            "  结果在 res[0]['text'] 中，每段有 timestamp，可直接生成 SRT 字幕。\n"
+            "素材保持宽高比禁拉伸，输出分辨率与源视频完全一致。\n"
+            "BGM: volume=0.1 人声: volume=3.0 混音: volume=3.0。\n"
+            "npx 加 --yes，禁 playwright install。\n"
+            "HyperFrames 生成 HTML 时，每个文件 `<head>` 内必须加：\n"
+            "  `<style>body{font-family:'Microsoft YaHei','PingFang SC','Noto Sans CJK SC',sans-serif}</style>`\n"
+            "  否则中文全变方框！不写这条 style 的中文内容等于白做。\n"
+            "\n"
+            "=== ⚠️ 沙箱路径规则（每次文件操作前必须遵守，违反者输出会被丢弃） ===\n"
+            "你运行在一个文件沙箱中，当前工作目录就是沙箱根目录。\n"
+            "所有文件操作（write、ls、read、execute）都只能访问沙箱内的文件。\n"
+            "\n"
+            "【输出目录】\n"
+            "  os.environ['WORK_DIR'] = 'videos'（沙箱内的相对路径）\n"
+            "  所有中间文件和最终输出都放在 videos/ 下。\n"
+            "\n"
+            "【Python 脚本内】\n"
+            "  用 os.environ['WORK_DIR'] 构造路径：\n"
+            "    out = os.path.join(os.environ['WORK_DIR'], 'output.mp4')\n"
+            "  写文件前创建目录：\n"
+            "    os.makedirs(os.path.dirname(out), exist_ok=True)\n"
+            "\n"
+            "【后端工具（write/ls/read）】\n"
+            "  同样用 os.environ['WORK_DIR'] 拼接相对路径。\n"
+            "  例如: ls videos/  或  write('videos/script.py', content)\n"
+            "\n"
+            "【外部文件（源视频、BGM）】\n"
+            "  源视频和 BGM 的绝对路径会通过环境变量或任务提示传入。\n"
+            "  在 Python 脚本中直接使用这些绝对路径读取即可，不需要复制到沙箱。\n"
+            "\n"
+            "【严禁】\n"
+            "  禁止手写任何含盘符的路径（C:、D: 等）。\n"
+            "  禁止使用 /c/Users 这种 Linux 风格绝对路径。\n"
+            "  所有输出路径一律用 os.path.join(os.environ['WORK_DIR'], '文件名')。\n"
+        ),
+    )
+    print("[deepagents] 视频剪辑 Agent 已初始化")
+    return _editor_agent
+
+#  Node: deepagent 剪辑（全权负责）
+def node_edit_video(state: MashupState) -> dict:
+    video = safe_abspath(state["input_video"])
+    edit_requirements_raw = state.get("edit_requirements", "")
+    edit_start = time.time()
+
+    if not os.path.exists(video):
+        return {"editor_log": f"文件不存在: {video}", "output_video": ""}
+
+    try:
+        req = json.loads(edit_requirements_raw) if edit_requirements_raw else {}
+    except Exception:
+        req = {}
+    materials = req.get("materials", [])
+    bgm_path = req.get("bgm_path", DEFAULT_BGM)
+    extra_req = req.get("extra_requirements", "")
+
+    materials_desc = ""
+    if materials:
+        materials_desc = "\n\n## 穿插素材\n"
+        for i, mp in enumerate(materials):
+            mp = normalize_path(mp)
+            mt = "视频" if os.path.splitext(mp)[1].lower() in (".mp4", ".mov", ".avi") else "图片"
+            materials_desc += f"{i+1}. [{mt}] `{os.path.abspath(mp)}`\n"
+
+    bgm_info = f"\nBGM: `{bgm_path}`" if os.path.exists(bgm_path) else ""
+
+    prompt = f"""## 剪辑任务
+
+### 源视频
+`{os.path.abspath(video)}`
+{materials_desc}
+{bgm_info}
+
+### 用户要求
+{extra_req if extra_req else "完整剪辑（始终保持和原视频像素一致）：转录 → HyperFrames素材 → 排布穿插 → BGM → 字幕 → 渲染"}
+
+首先利用HyperFrames 生成至少6-10个动画素材（绝对不少于6个，越多越好），注意要指明字体防止中文乱码，
+开头素材是在最上的图层与原视频像素一致，其他素材高度需要是1/3，放在原视频下面的
+根据口播内容节奏在不同时间点穿插素材，有的上下排布，上边用原来的口播视频，下边用生成的素材（覆盖口播视频下部分，空素材的地方要全屏用原视频，不能黑屏），注意不要拉伸图像，不要上下都用原视频
+=== 字幕约束（必须严格遵守，否则字幕重复+下半截消失） ===
+字幕只能生成一次！正确流程：funasr 转录音频 → 用转录结果的 timestamp 生成一个 SRT 文件 → 用 SubtitlesClip('subtitle.srt') 加载 SRT，仅此一次！
+严禁 for 循环手动创建 TextClip / TextClip.list 来逐行添加字幕！严禁同时使用 SubtitlesClip 和 TextClip！
+关键：必须用 make_textclip 参数 + with_position 显式指定字幕位置，否则 SubtitlesClip 默认把字幕定位到合成帧最底部（y ≈ h + h//3，是素材区域），字幕下半截会被隐式蒙版裁掉！
+正确写法：
+  def make_st(txt):
+      return TextClip(text=txt, font='Microsoft YaHei', font_size=52,
+          color='white', stroke_color='black', stroke_width=2,
+          size=(w, None), method='caption'
+      ).with_position(('center', h * 0.75))  # ← 定位在原视频区域内，不是合成帧底部
+  subtitles = SubtitlesClip('subtitles.srt', encoding='utf-8', make_textclip=make_st)
+=== 蒙版约束（必须严格遵守，否则底部被隐式蒙版裁掉） ===
+严禁在任何 clip 上调用 .with_mask() / .set_mask() / .to_mask() / .with_position()配合mask！
+CompositeVideoClip 的 size 必须为 (w, h + h//3)，严禁写成 (w, h) — 因为 (w, h) 会在 h 位置创建隐式裁剪蒙版，把素材层和字幕下半截全部裁掉！
+video_clip 不要调用 .resized((w, h)) 改尺寸，保持原始分辨率，避免隐式蒙版！
+=== 字幕位置约束 ===
+字幕只能放在原视频区域内（y坐标范围: h*0.02 ~ h*0.65），计算 y = h*0.62 - clip_h//2，保证字幕底部离 h 边界至少留 20px 余量。
+字幕 clip 排在 CompositeVideoClip 列表最后一项（最上层）。
+=== 以上约束必须写到 Python 脚本的注释里 ===
+之后加上背景音乐，
+注意如果背景音乐"C:\\Users\\13261\\Pictures\\风格\\1408816_Science revolution.wav"，
+如果背景音乐时长短于视频就重复使用背景音乐，
+注意衔接时，去掉开头音乐空白的地方。但第一个音乐不去掉空白，背景音乐需要降低至10%音量，总体音量调大至300%
+- 最终输出路径用: os.path.join(os.environ['WORK_DIR'], 'mashup_final.mp4')
+- ⚠️ 所有文件路径使用 os.path.join(os.environ['WORK_DIR'], 'xxx') 构造，不要用手写路径！
+不要重复加字幕！只最后加一次！
+完成后报告最终输出路径。"""
+
+    steps_log = []
+    tool_count = 0
+    print("[Edit] 启动 deepagent（主线程流式）...")
+
+    agent = _get_editor_agent()
+    last_chunk = {}
+
+    try:
+        for chunk in agent.stream(
+            {"messages": [{"role": "user", "content": prompt}]},
+            stream_mode="values",
+        ):
+            last_chunk = chunk
+            msgs = chunk.get("messages", [])
+            if not msgs:
+                continue
+            last = msgs[-1]
+
+            # 打印 agent 思考
+            if hasattr(last, "content") and last.content and hasattr(last, "type"):
+                c = str(last.content).strip()
+                if c and c not in steps_log:
+                    steps_log.append(c)
+                    role = getattr(last, "type", "?")
+                    emoji = {"ai": "🤖", "tool": "🔧", "human": "👤"}.get(role, "📝")
+                    print(f"  [{emoji}] {c[:300]}")
+
+            # 打印工具调用详情
+            if hasattr(last, "tool_calls") and last.tool_calls:
+                for tc in last.tool_calls:
+                    tool_count += 1
+                    name = tc.get("name", "?")
+                    args = tc.get("args", {})
+                    steps_log.append(f"[tool] {name}")
+                    cmd = args.get("command", args.get("cmd", ""))
+                    if cmd:
+                        print(f"  [{tool_count}] ⚡ {name}: {cmd[:200]}")
+                    elif name == "task":
+                        print(f"  [{tool_count}] 🚀 task → {str(args.get('description', args.get('subagent_type', '')))[:150]}")
+                    elif name in ("write_file", "write"):
+                        print(f"  [{tool_count}] 📄 {name}: {args.get('file_path', args.get('path', '?'))}")
+                    elif name in ("read_file", "read"):
+                        print(f"  [{tool_count}] 📖 {name}: {args.get('file_path', args.get('path', '?'))}")
+                    elif name == "write_todos":
+                        for td in args.get("todos", [])[:5]:
+                            print(f"  [{tool_count}] 📋 todo: {td.get('content', str(td)[:100])}")
+                    else:
+                        print(f"  [{tool_count}] 🔨 {name}")
+
+            # 打印工具返回
+            if hasattr(last, "type") and last.type == "tool":
+                result = str(last.content)[:200] if hasattr(last, "content") else ""
+                if result:
+                    print(f"  [↩] → {result}")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[Edit] 异常: {e}")
+        return {"editor_log": f"剪辑出错: {e}", "steps": json.dumps(steps_log, ensure_ascii=False), "output_video": ""}
+
+    # 清理根目录散落的中间文件（先清洗路径再处理）
+    import glob as _glob
+    for _pat in ["*.wav", "*.txt", "concat_list*", "speedup*.mp4", "assembled*.mp4",
+                 "final_with_bgm*.mp4"]:
+        for _f in _glob.glob(_pat):
+            _f = normalize_path(_f)
+            if os.path.isfile(_f) and CACHE_DIR not in normalize_path(os.path.abspath(_f)):
+                try:
+                    _dst = os.path.join(CACHE_DIR, os.path.basename(_f))
+                    os.replace(_f, _dst)
+                    print(f"  [Clean] {_f} → {_dst}")
+                except Exception:
+                    pass
+
+    # 提取输出路径（先清洗再验证）
+    last_msg = ""
+    output_video = ""
+    for m in reversed(last_chunk.get("messages", [])):
+        c = str(getattr(m, "content", ""))
+        if c:
+            last_msg = c
+            for word in c.replace(',', ' ').replace('\n', ' ').split():
+                word = normalize_path(word.strip('`"\'[]()'))
+                if word.endswith('.mp4') and os.path.isfile(word):
+                    if os.path.getmtime(word) > edit_start - 10:
+                        inp_sz = os.path.getsize(state["input_video"])
+                        if os.path.getsize(word) != inp_sz:
+                            output_video = word
+                            break
+            if output_video:
+                break
+
+    return {
+        "editor_log": last_msg[:2000] if last_msg else "deepagent 完成",
+        "steps": json.dumps(steps_log, ensure_ascii=False),
+        "output_video": output_video,
+    }
+
+#  Node: 兜底查找
+def node_find_output(state: MashupState) -> dict:
+    out = normalize_path(state.get("output_video", ""))
+    inp = safe_abspath(state["input_video"])
+    if out and os.path.isfile(out) and safe_abspath(out) != inp:
+        return {"output_video": safe_abspath(out)}
+
+    # 用绝对路径搜索（CACHE_DIR 已是绝对路径）
+    candidates = [
+        os.path.join(CACHE_DIR, "mashup_final.mp4"),
+        os.path.join(CACHE_DIR, "final_with_bgm.mp4"),
+    ]
+    for candidate in candidates:
+        candidate = normalize_path(candidate)
+        if os.path.isfile(candidate) and safe_abspath(candidate) != inp:
+            return {"output_video": safe_abspath(candidate)}
+
+    import glob
+    for sd in [CACHE_DIR, os.path.join(CACHE_DIR, "edit")]:
+        for f in sorted(glob.glob(os.path.join(sd, "*.mp4")),
+                        key=os.path.getmtime, reverse=True):
+            f = normalize_path(f)
+            f_abs = safe_abspath(f)
+            if f_abs == inp:
+                continue
+            try:
+                if os.path.getsize(f) < 100 * 1024:
+                    continue
+                if os.path.getsize(f) == os.path.getsize(state["input_video"]):
+                    continue
+            except OSError:
+                continue
+            return {"output_video": f_abs}
+    return {}
+
+#  Graph
+builder = StateGraph(MashupState)
+builder.add_node("edit", node_edit_video)
+builder.add_node("find", node_find_output)
+
+builder.add_edge(START, "edit")
+builder.add_edge("edit", "find")
+builder.add_edge("find", END)
+
+mashup_graph = builder.compile()
+
+def run_mashup(input_video: str, edit_requirements: str = "", **_kwargs) -> dict:
+    return mashup_graph.invoke({
+        "input_video": input_video,
+        "edit_requirements": edit_requirements,
+    })
+```
+
+### Streamlit 页面
+
+```
+# 文件: views/mashup.py
+"""视频剪辑页面 — deepagents + video-use skill + HyperFrames"""
+import streamlit as st
+import os
+import json
+import shutil
+
+DEFAULT_BGM = r"C:\Users\13261\Pictures\风格\1408816_Science revolution.wav"
+
+CACHE_DIR = ".cache/mashup"
+MATERIALS_DIR = os.path.join(CACHE_DIR, "materials")
+BGM_CACHE = os.path.join(CACHE_DIR, "bgm.json")
+
+def _load_bgm_path() -> str:
+    """读取已保存的背景音乐路径"""
+    try:
+        if os.path.exists(BGM_CACHE):
+            with open(BGM_CACHE, "r") as f:
+                return json.load(f).get("bgm_path", DEFAULT_BGM)
+    except Exception:
+        pass
+    return DEFAULT_BGM
+
+def _save_bgm_path(path: str):
+    """保存背景音乐路径"""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(BGM_CACHE, "w") as f:
+        json.dump({"bgm_path": path}, f)
+
+def _add_history(action: str, summary: str):
+    from datetime import datetime
+    st.session_state.history.append({
+        "time": datetime.now().strftime("%H:%M"),
+        "action": action,
+        "summary": summary[:200],
+    })
+
+def show_mashup():
+    """视频剪辑 — deepagents + video-use + HyperFrames 素材穿插"""
+    st.title("🎬 视频剪辑智能体")
+    st.markdown(
+        "上传口播视频 + 素材，AI 自动完成：HyperFrames 生成素材 → 上下排布穿插 → "
+        "1.3倍速 → 背景音乐 → 渲染\n\n"
+        "**技术栈**：`deepagents` + `video-use` + `HyperFrames`"
+    )
+
+    os.makedirs(MATERIALS_DIR, exist_ok=True)
+
+    # 输入视频
+    st.markdown("### 📁 输入口播视频")
+    video_file = st.file_uploader(
+        "上传口播视频", type=["mp4", "mov", "avi", "mkv", "webm"],
+        help="主口播视频，AI 将在其中穿插素材",
+    )
+
+    video_path = ""
+    if video_file:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        suffix = os.path.splitext(video_file.name)[1]
+        video_path = os.path.join(
+            CACHE_DIR, f"input_{hash(video_file.name) % 100000:05d}{suffix}")
+        with open(video_path, "wb") as f:
+            f.write(video_file.getvalue())
+        st.video(video_file)
+        st.success(f"已加载：{video_file.name}")
+
+    # 或输入路径
+    path_input = st.text_input(
+        "或输入视频路径", placeholder="例: ./.cache/videos/heygem_xxx.mp4")
+    if path_input and os.path.exists(path_input):
+        video_path = path_input
+        st.video(path_input)
+
+    # 素材上传
+    st.markdown("### 🖼️ 穿插素材（图片/视频）")
+    st.caption("这些素材将由 AI 智能穿插到口播视频中，上下排布展示")
+
+    material_files = st.file_uploader(
+        "上传素材（可多选）",
+        type=["png", "jpg", "jpeg", "gif", "webp", "mp4", "mov", "avi", "webm"],
+        accept_multiple_files=True,
+        help="上传多个图片或短视频，AI 会在口播的合适时机穿插展示",
+    )
+
+    material_paths = []
+    if material_files:
+        # 清理旧素材
+        for old in os.listdir(MATERIALS_DIR):
+            try:
+                os.remove(os.path.join(MATERIALS_DIR, old))
+            except Exception:
+                pass
+        for mf in material_files:
+            suffix = os.path.splitext(mf.name)[1]
+            mp = os.path.join(MATERIALS_DIR, mf.name)
+            with open(mp, "wb") as f:
+                f.write(mf.getvalue())
+            material_paths.append(mp)
+        st.success(f"已加载 {len(material_paths)} 个素材")
+
+    # 显示已有素材
+    existing = sorted(
+        [f for f in os.listdir(MATERIALS_DIR) if os.path.splitext(f)[1].lower()
+         in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mov", ".avi", ".webm")],
+        key=lambda x: os.path.getmtime(os.path.join(MATERIALS_DIR, x)), reverse=True,
+    )
+    if existing:
+        st.caption(f"📂 已有素材 ({len(existing)} 个): {', '.join(existing[:10])}")
+
+    # 背景音乐
+    st.markdown("### 🎵 背景音乐")
+    current_bgm = _load_bgm_path()
+
+    col_bgm1, col_bgm2 = st.columns([3, 1])
+    with col_bgm1:
+        bgm_path_input = st.text_input(
+            "背景音乐路径",
+            value=current_bgm,
+            placeholder="输入 WAV/MP3 文件路径...",
+            help="默认使用 Science revolution 背景音乐",
+            key="bgm_path",
+        )
+    with col_bgm2:
+        bgm_file = st.file_uploader(
+            "📁 上传",
+            type=["wav", "mp3", "m4a", "ogg"],
+            help="上传新的背景音乐文件将替换当前设置",
+        )
+        if bgm_file:
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            bgm_path = os.path.join(CACHE_DIR, bgm_file.name)
+            with open(bgm_path, "wb") as f:
+                f.write(bgm_file.getvalue())
+            _save_bgm_path(bgm_path)
+            st.success("已更新")
+            st.rerun()
+
+    # 保存 bgm 路径
+    if bgm_path_input != current_bgm:
+        _save_bgm_path(bgm_path_input)
+    bgm_path = bgm_path_input if bgm_path_input else current_bgm
+
+    if os.path.exists(bgm_path):
+        st.caption(f"✅ BGM: `{os.path.basename(bgm_path)}`")
+    else:
+        st.warning(f"⚠️ BGM 文件不存在: `{bgm_path}`")
+
+    # 剪辑要求
+    st.markdown("### ✏️ 额外剪辑要求")
+    requirements = st.text_area(
+        "补充要求（可选）",
+        placeholder="例：特定时间段剪掉、加特定文字、调色风格...",
+        height=60,
+    )
+
+    # 开始剪辑
+    if st.button("🎬 开始剪辑", type="primary", use_container_width=True):
+        if not video_path:
+            st.warning("请先上传口播视频或输入视频路径")
+            return
+        if not os.path.exists(video_path):
+            st.error(f"视频文件不存在: {video_path}")
+            return
+
+        # 收集素材路径
+        if material_paths:
+            use_materials = material_paths
+        else:
+            use_materials = [
+                os.path.join(MATERIALS_DIR, f)
+                for f in existing
+                if os.path.isfile(os.path.join(MATERIALS_DIR, f))
+            ]
+
+        with st.spinner("🤖 deepagent 正在分析视频并剪辑..."):
+            from workflows.mashup import mashup_graph
+            result = mashup_graph.invoke({
+                "input_video": video_path,
+                "edit_style": "",
+                "edit_requirements": json.dumps({
+                    "materials": use_materials,
+                    "bgm_path": bgm_path,
+                    "extra_requirements": requirements,
+                }, ensure_ascii=False),
+            })
+
+        output_video = result.get("output_video", "")
+        editor_log = result.get("editor_log", "")
+
+        if editor_log:
+            with st.expander("📝 剪辑日志", expanded=False):
+                st.text(editor_log[:3000])
+
+        if output_video and os.path.exists(output_video):
+            st.success("✅ 剪辑完成！")
+            st.video(output_video)
+            with open(output_video, "rb") as f:
+                st.download_button("⬇️ 下载视频", f.read(),
+                                   file_name=os.path.basename(output_video),
+                                   mime="video/mp4")
+        elif editor_log:
+            st.warning("剪辑日志已生成，请在 ./.cache/videos/ 查找输出文件。")
+        else:
+            st.warning("请安装 deepagents: `uv add deepagents`")
+
+        _add_history("视频剪辑", os.path.basename(video_path))
+```
+
+---
+
+## 数据复盘
+
+> 章节概述：数据复盘模块接入 本地抖音爬虫项目（erma0/douyin），实现从数据采集到 AI 诊断的完整闭环。用户输入抖音个人主页链接后，工作流依次执行四个节点：① 数据采集 — 调用本地 douyin 爬虫抓取最近 20 条作品的真实互动数据（播放量仅本人可见）；② 流量漏斗诊断 — LLM 分析播放→点赞→评论→分享→收藏的转化漏斗，计算各环节转化率，找出最优/最差作品；③ 内容质量评估 — 从内容方向、标题技巧、节奏建议、竞争分析四个维度评估作品表现；④ 优化策略生成 — 输出立即执行（3条）、短期策略（3条）、长期规划（3条）及 A/B 测试方案。Cookie 管理支持两种方式：通过手动复制已登录的抖音 Cookie。前端以数据概览卡片展示总播放/点赞/评论/分享/收藏，Tab 页切换漏斗诊断/内容评估/优化策略，支持完整报告下载。目标：接入真实抖音数据 → 自动采集作品列表 → AI 多维度诊断分析。
+
+### Cookie 配置（数据采集前置条件）
+
+抖音作品数据接口需要识别登录状态
+
+```
+{
+  "cookie": "sessionid=<值>; sessionid_ss=<值>; sid_tt=<值>; sid_guard=<值>; s_v_web_id=<值>; __ac_nonce=<值>; ..."
+}
+```
+
+### 工作流
+
+[DIAGRAM] 从抖音采集数据 -> 流量漏斗诊断 -> 内容质量评估 -> 生成优化策略
+
+### 核心设计：集成本地 douyin 爬虫
+
+```
+# 文件: workflows/review.py（关键部分）
+"""
+数据复盘工作流 — 接入真实抖音数据采集
+
+使用本地 douyin 项目 (erma0/douyin) 抓取个人主页作品数据，
+LLM 进行流量漏斗诊断、内容质量评估和优化策略建议。
+
+douyin 项目: C:/Users/13261/Documents/project/douyin
+"""
+from typing import TypedDict
+import os, sys, json
+from langgraph.graph import StateGraph, START, END
+from workflows import llm_call
+
+# 添加 douyin 项目到 Python 路径
+DOUYIN_PROJECT = os.path.expanduser("C:/Users/13261/Documents/project/douyin")
+if os.path.isdir(DOUYIN_PROJECT):
+    sys.path.insert(0, DOUYIN_PROJECT)
+
+class ReviewState(TypedDict):
+    profile_url: str        # 抖音主页 URL
+    video_data: str         # JSON: 作品列表 + 统计数据
+    funnel_diagnosis: str
+    content_assessment: str
+    suggestions: str
+    error_msg: str
+
+#  Node 1: 从抖音抓取真实数据
+def node_fetch_data(state: ReviewState) -> dict:
+    """
+    使用本地 douyin 项目采集个人主页作品数据。
+
+    输入: 抖音用户主页 URL（如 https://www.douyin.com/user/xxx）
+    输出: JSON 格式的作品列表，包含播放/点赞/评论/分享/收藏数据
+    """
+    url = state.get("profile_url", "")
+
+    if not url:
+        return {"error_msg": "请输入抖音用户主页链接",
+                "video_data": "{}"}
+
+    # 尝试使用本地 douyin 项目采集
+    try:
+        from backend.lib.douyin import Douyin
+
+        # 直接从配置文件读取 Cookie（绕过缓存，确保读到最新值）
+        settings_file = os.path.join(DOUYIN_PROJECT, "config", "settings.json")
+        cookie = ""
+        if os.path.exists(settings_file):
+            try:
+                with open(settings_file, "r", encoding="utf-8") as f:
+                    cookie = json.load(f).get("cookie", "")
+            except Exception:
+                pass
+
+        if not cookie:
+            return {
+                "error_msg": (
+                    "douyin 项目尚未配置 Cookie，请在页面上方 🍪 抖音 Cookie 配置 中粘贴并保存"
+                ),
+                "video_data": "[]",
+            }
+
+        # 处理 /user/self（通过页面HTML提取自己的sec_uid）
+        if url.endswith("/user/self"):
+            import niquests as requests_mod
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Cookie": cookie,
+                }
+                resp = requests_mod.get(url, headers=headers, timeout=15)
+                import re
+                match = re.search(r'sec_uid[\"\s:=]+(MS4w[^\"\s&\\\\]+)', resp.text)
+                if match:
+                    url = f"https://www.douyin.com/user/{match.group(1)}"
+                    print(f"[复盘] 解析到自己的主页: {url}")
+            except Exception as e:
+                print(f"[复盘] 解析 /user/self 失败: {e}，将使用原URL")
+
+        print(f"[复盘] 正在采集: {url}")
+        # 仅采集数据不下载视频，限制最多 20 条
+        crawler = Douyin(url, limit=20, type="post", cookie=cookie)
+        crawler.run()
+        results = crawler.results
+
+        if results and len(results) > 0:
+            # 检测是否有真实播放量（自己的主页有，别人的主页全为0）
+            has_play_count = any(
+                int(r.get("play_count", r.get("playCount", 0))) > 0
+                for r in results[:5]
+            )
+
+            items = []
+            for r in results[:20]:
+                # douyin 爬虫 parser 把 statistics 字段展开到了顶层，直接读 r
+                item = {
+                    "标题": str(r.get("desc", r.get("title", "")))[:80],
+                    "发布时间": str(r.get("time", "")),
+                    "时长": f"{int(r.get('duration', 0) / 1000)}秒" if r.get("duration") else "未知",
+                    "点赞": int(r.get("digg_count", r.get("diggCount", 0))),
+                    "评论": int(r.get("comment_count", r.get("commentCount", 0))),
+                    "分享": int(r.get("share_count", r.get("shareCount", 0))),
+                    "收藏": int(r.get("collect_count", r.get("collectCount", 0))),
+                }
+                # 只有自己的主页才显示播放量
+                if has_play_count:
+                    item["播放"] = int(r.get("play_count", r.get("playCount", 0)))
+                items.append(item)
+
+            data_json = json.dumps(items, ensure_ascii=False, indent=2)
+            print(f"[复盘] 采集完成: {len(items)} 条作品")
+            return {"video_data": data_json, "error_msg": ""}
+        else:
+            return {"error_msg": "未获取到作品数据，请检查链接是否正确或 Cookie 是否有效",
+                    "video_data": "[]"}
+
+    except ImportError as e:
+        # douyin 项目依赖未安装
+        return {
+            "error_msg": f"douyin 项目依赖缺失: {e}\n请先: cd {DOUYIN_PROJECT} && uv pip install -r requirements.txt",
+            "video_data": "[]",
+        }
+    except Exception as e:
+        return {
+            "error_msg": f"数据采集失败: {e}\n请确保 douyin 项目已配置 Cookie",
+            "video_data": "[]",
+        }
+
+#  Node 2: LLM 漏斗诊断
+def node_funnel(state: ReviewState) -> dict:
+    data = state.get("video_data", "[]")
+    if data == "[]" or data == "{}":
+        return {"funnel_diagnosis": "暂无数据"}
+
+    prompt = f"""你是短视频运营诊断专家。以下是抖音个人主页的真实数据：
+
+{data}
+
+请诊断：
+1. **播放/互动量分析** — 哪些作品播放/点赞/评论/分享/收藏高？高表现作品的共同特征是什么？
+   （注：如果播放量为0或不含播放字段，说明是非本人主页，只基于互动数据做分析即可）
+2. **转化分析** — 计算点赞→评论转化率、点赞→收藏转化率（如有播放量，加上播放→点赞转化率），找出各指标最优/最差作品
+3. **流量漏斗** — 分析从曝光到互动的转化情况
+4. **发布时间** — 哪个时间段发布效果最好？
+每个结论用数据支撑。
+"""
+    return {"funnel_diagnosis": llm_call(prompt, temperature=0.3)}
+
+# 
+#  Node 3: LLM 内容评估
+# 
+
+def node_content(state: ReviewState) -> dict:
+    data = state.get("video_data", "[]")
+    if data == "[]" or data == "{}":
+        return {"content_assessment": "暂无数据"}
+
+    prompt = f"""基于这些抖音作品真实数据，评估内容质量：
+
+{data}
+
+从以下维度评估：
+1. **内容方向** — 哪些主题/选题表现最好？有没有明显的内容偏好？
+2. **标题技巧** — 高播放作品的标题有什么共同特征？
+3. **节奏建议** — 根据播放/互动数据，建议最佳视频时长
+4. **竞争分析** — 对比同赛道平均水平，这组数据的优劣势在哪里
+"""
+    return {"content_assessment": llm_call(prompt, temperature=0.4)}
+
+#  Node 4: LLM 优化策略
+def node_suggest(state: ReviewState) -> dict:
+    data = state.get("video_data", "[]")
+    if data == "[]" or data == "{}":
+        return {"suggestions": "暂无数据"}
+
+    funnel = state.get("funnel_diagnosis", "")
+    content = state.get("content_assessment", "")
+
+    prompt = f"""基于抖音账号真实数据分析，生成可执行优化方案：
+
+真实数据:
+{data}
+
+诊断结果:
+{funnel}
+
+内容评估:
+{content}
+
+请给出：
+1. **立即执行**（3条 — 下一条视频就能用的改进）
+2. **短期策略**（3条 — 1周内迭代方向）
+3. **长期规划**（3条 — 1个月优化路径）
+4. **A/B 测试方案** — 设计一个对比实验：改什么、怎么测、看什么指标
+"""
+    return {"suggestions": llm_call(prompt, temperature=0.4)}
+
+#  Graph
+builder = StateGraph(ReviewState)
+builder.add_node("fetch", node_fetch_data)
+builder.add_node("funnel", node_funnel)
+builder.add_node("content", node_content)
+builder.add_node("suggest", node_suggest)
+
+builder.add_edge(START, "fetch")
+builder.add_edge("fetch", "funnel")
+builder.add_edge("funnel", "content")
+builder.add_edge("content", "suggest")
+builder.add_edge("suggest", END)
+
+review_graph = builder.compile()
+
+def run_review(profile_url: str) -> dict:
+    """运行数据复盘工作流
+
+    Args:
+        profile_url: 抖音用户主页链接
+
+    Returns:
+        {"video_data": str, "funnel_diagnosis": str,
+         "content_assessment": str, "suggestions": str}
+    """
+    return review_graph.invoke({"profile_url": profile_url})
+```
+
+### Streamlit 页面
+
+```
+# 文件: views/review.py（关键部分）
+"""show_review页面"""
+import streamlit as st
+import json
+import os
+import shutil
+import sqlite3
+import tempfile
+
+DOUYIN_SETTINGS_FILE = os.path.expanduser(
+    "C:/Users/13261/Documents/project/douyin/config/settings.json"
+)
+
+EDGE_COOKIES_DIR = os.path.expandvars(
+    r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Network"
+)
+EDGE_COOKIES_FILE = os.path.join(EDGE_COOKIES_DIR, "Cookies")
+
+def _load_douyin_cookie() -> str:
+    """从 douyin 配置文件读取 Cookie"""
+    try:
+        if os.path.exists(DOUYIN_SETTINGS_FILE):
+            with open(DOUYIN_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("cookie", "")
+    except Exception:
+        pass
+    return ""
+
+def _save_douyin_cookie(cookie: str):
+    """保存 Cookie 到 douyin 配置文件"""
+    os.makedirs(os.path.dirname(DOUYIN_SETTINGS_FILE), exist_ok=True)
+    data = {}
+    if os.path.exists(DOUYIN_SETTINGS_FILE):
+        try:
+            with open(DOUYIN_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data["cookie"] = cookie
+    with open(DOUYIN_SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def _read_edge_cookies() -> tuple[str, str | None]:
+    """通过 CDP (Chrome DevTools Protocol) 从 Edge 浏览器直接读取 douyin.com Cookie
+
+    自动处理 Edge 文件锁定和 v20 加密，通过浏览器自身 API 读取无需解密。
+
+    Returns:
+        (cookie_string, error_message)
+    """
+    import subprocess
+    import time
+
+    # Step 1: 查找或启动带调试端口的 Edge 
+    # 尝试常见调试端口
+    debug_port = None
+    for port in [9222, 9223, 9224, 9225]:
+        try:
+            import urllib.request
+            resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2)
+            debug_port = port
+            break
+        except Exception:
+            continue
+
+    edge_launched = False
+    edge_proc = None
+
+    if debug_port is None:
+        # 需要自己启动 Edge（先杀后台进程释放 profile 锁）
+        for proc_name in ["msedge.exe", "msedgewebview2.exe"]:
+            try:
+                subprocess.run(
+                    ["taskkill", "/f", "/im", proc_name],
+                    capture_output=True, timeout=10,
+                )
+            except Exception:
+                pass
+        time.sleep(1.5)
+
+        user_data = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data")
+        debug_port = 9223
+        try:
+            edge_proc = subprocess.Popen(
+                [
+                    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                    f"--remote-debugging-port={debug_port}",
+                    f"--user-data-dir={user_data}",
+                    "--headless=new",  # 无头模式，不显示窗口
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            edge_launched = True
+            # 等待 Edge 启动
+            for _ in range(15):
+                time.sleep(0.5)
+                try:
+                    import urllib.request
+                    urllib.request.urlopen(f"http://127.0.0.1:{debug_port}/json/version", timeout=2)
+                    break
+                except Exception:
+                    continue
+        except FileNotFoundError:
+            # 尝试其他 Edge 安装路径
+            alt_paths = [
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            ]
+            for alt in alt_paths:
+                if os.path.exists(alt):
+                    try:
+                        edge_proc = subprocess.Popen(
+                            [alt, f"--remote-debugging-port={debug_port}",
+                             f"--user-data-dir={user_data}", "--headless=new"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        )
+                        edge_launched = True
+                        for _ in range(15):
+                            time.sleep(0.5)
+                            try:
+                                import urllib.request
+                                urllib.request.urlopen(
+                                    f"http://127.0.0.1:{debug_port}/json/version", timeout=2
+                                )
+                                break
+                            except Exception:
+                                continue
+                        break
+                    except Exception:
+                        continue
+
+    if debug_port is None:
+        return "", "无法连接到 Edge 调试端口，请确认 Edge 已安装"
+
+    # Step 2: 通过 CDP 获取 Cookie
+    try:
+        import urllib.request
+        import json as _json
+
+        # 获取 WebSocket 端点
+        resp = urllib.request.urlopen(
+            f"http://127.0.0.1:{debug_port}/json/version", timeout=5
+        )
+        version_info = _json.loads(resp.read().decode())
+        ws_url = version_info.get("webSocketDebuggerUrl", "")
+        if not ws_url:
+            return "", "无法获取 Edge CDP WebSocket URL"
+
+        # 用 websocket-client 连接
+        try:
+            from websocket import create_connection
+        except ImportError:
+            return "", "缺少 websocket-client 库，请执行: uv add websocket-client"
+
+        ws = create_connection(ws_url, timeout=10)
+
+        # 发送 Network.getCookies 命令（可指定域名）
+        # 获取所有 douyin 相关域名的 cookie
+        all_cookies = []
+        domains = ["www.douyin.com", ".douyin.com", ".iesdouyin.com"]
+        for domain in domains:
+            msg = _json.dumps({
+                "id": 1,
+                "method": "Network.getCookies",
+                "params": {"domain": domain},
+            })
+            ws.send(msg)
+            resp_data = _json.loads(ws.recv())
+            cookies = resp_data.get("result", {}).get("cookies", [])
+            all_cookies.extend(cookies)
+
+        ws.close()
+
+        if not all_cookies:
+            return "", (
+                "Edge 中未找到 douyin.com 的 Cookie。\n"
+                "请先在 Edge 浏览器中打开 douyin.com 并登录"
+            )
+
+        # 去重、拼成 cookie 字符串
+        seen = set()
+        parts = []
+        for c in all_cookies:
+            key = c["name"]
+            if key not in seen:
+                seen.add(key)
+                parts.append(f"{key}={c['value']}")
+
+        cookie_str = "; ".join(parts)
+        return cookie_str, None
+
+    except Exception as e:
+        return "", f"CDP 读取 Cookie 失败: {e}"
+
+    finally:
+        # Step 3: 清理 
+        if edge_launched and edge_proc:
+            try:
+                edge_proc.terminate()
+                edge_proc.wait(timeout=5)
+            except Exception:
+                try:
+                    edge_proc.kill()
+                except Exception:
+                    pass
+
+def _add_history(action: str, summary: str):
+    from datetime import datetime
+    st.session_state.history.append({
+        "time": datetime.now().strftime("%H:%M"),
+        "action": action,
+        "summary": summary[:200],
+    })
+
+def show_review():
+    """数据复盘 — 接入真实抖音数据"""
+    st.title("📊 数据复盘智能体")
+    st.markdown("输入抖音主页链接 → 采集真实作品数据 → AI 多维度诊断分析")
+
+    #   Cookie 配置区  
+    with st.expander("🍪 抖音 Cookie 配置", expanded=False):
+        st.caption(
+            "两种方式获取 Cookie：① 点按钮自动从 Edge 读取  ② 手动复制粘贴"
+        )
+
+        # 方式一：自动从 Edge 读取
+        col_auto, col_tip = st.columns([1, 3])
+        with col_auto:
+            if st.button("🔍 从 Edge 浏览器获取", use_container_width=True,
+                         help="自动读取 Edge 中已登录的抖音 Cookie"):
+                cookie_str, err = _read_edge_cookies()
+                if err:
+                    st.error(err)
+                else:
+                    _save_douyin_cookie(cookie_str)
+                    st.success(f"✅ 已从 Edge 获取并保存 Cookie（{len(cookie_str)} 字符）")
+                    st.rerun()
+
+        with col_tip:
+            saved_cookie = _load_douyin_cookie()
+            if saved_cookie:
+                st.caption(f"✅ 已配置 Cookie（{len(saved_cookie)} 字符）")
+            else:
+                st.caption("⚠️ 尚未配置 Cookie，请点击按钮获取或手动粘贴")
+
+        # 方式二：手动粘贴
+        cookie_input = st.text_area(
+            "或手动粘贴 Cookie 字符串",
+            value=saved_cookie,
+            placeholder="从浏览器 F12 → Application → Cookies → 复制完整 Cookie...",
+            height=100,
+            key="douyin_cookie_input",
+        )
+        if st.button("💾 手动保存 Cookie"):
+            _save_douyin_cookie(cookie_input)
+            st.success("Cookie 已保存")
+            st.rerun()
+
+    st.markdown("---")
+
+    url = st.text_input(
+        "🔗 抖音个人主页链接",
+        value="https://www.douyin.com/user/self",
+        placeholder="https://www.douyin.com/user/xxxxx...",
+    )
+
+    if st.button("🔍 获取数据并分析", type="primary", use_container_width=True):
+        if not url:
+            st.warning("请输入抖音主页链接")
+            return
+
+        # 检查 Cookie 是否配置
+        cookie = _load_douyin_cookie()
+        if not cookie:
+            st.error(
+                "请先在上方 🍪 抖音 Cookie 配置 中粘贴 Cookie 并保存"
+            )
+            return
+
+        with st.spinner("正在通过本地 douyin 项目采集数据..."):
+            from workflows.review import review_graph
+            result = review_graph.invoke({"profile_url": url})
+
+        # 存入 session_state 防止页面刷新后丢失
+        st.session_state["review_result"] = result
+        st.session_state["review_url"] = url
+
+    #   从 session_state 恢复结果  
+    result = st.session_state.get("review_result")
+    url = st.session_state.get("review_url", "")
+
+    if result:
+        error = result.get("error_msg", "")
+        if error:
+            st.error(error)
+            return
+
+        data_str = result.get("video_data", "[]")
+        try:
+            items = json.loads(data_str)
+        except Exception:
+            items = []
+
+        if not items:
+            st.warning("未获取到作品数据。请检查：\n"
+                       "1. douyin 项目是否已配置 Cookie\n"
+                       "2. 链接是否正确\n"
+                       "3. 网络是否正常")
+            return
+
+        funnel_diag = result.get("funnel_diagnosis", "")
+        content_eval = result.get("content_assessment", "")
+        suggestions = result.get("suggestions", "")
+
+        # 数据概览卡片
+        total_likes = sum(i.get("点赞", 0) for i in items)
+        total_comments = sum(i.get("评论", 0) for i in items)
+        total_shares = sum(i.get("分享", 0) for i in items)
+        total_collects = sum(i.get("收藏", 0) for i in items)
+        total_plays = sum(i.get("播放", 0) for i in items)
+        has_plays = total_plays > 0
+
+        if has_plays:
+            cols = st.columns(6)
+            cols[0].metric("📊 作品数", len(items))
+            cols[1].metric("👀 总播放", f"{total_plays:,}")
+            cols[2].metric("❤️ 总点赞", f"{total_likes:,}")
+            cols[3].metric("💬 总评论", f"{total_comments:,}")
+            cols[4].metric("🔁 总分享", f"{total_shares:,}")
+            cols[5].metric("⭐ 总收藏", f"{total_collects:,}")
+        else:
+            cols = st.columns(5)
+            cols[0].metric("📊 作品数", len(items))
+            cols[1].metric("❤️ 总点赞", f"{total_likes:,}")
+            cols[2].metric("💬 总评论", f"{total_comments:,}")
+            cols[3].metric("🔁 总分享", f"{total_shares:,}")
+            cols[4].metric("⭐ 总收藏", f"{total_collects:,}")
+
+        # 作品详情表
+        with st.expander("📋 作品数据明细", expanded=False):
+            st.dataframe(items, use_container_width=True)
+
+        # 分析 tabs
+        tab1, tab2, tab3 = st.tabs(["📉 漏斗诊断", "📝 内容评估", "💡 优化策略"])
+        with tab1:
+            st.markdown(funnel_diag)
+        with tab2:
+            st.markdown(content_eval)
+        with tab3:
+            st.markdown(suggestions)
+
+        #   完整报告下载  
+        st.markdown("---")
+
+        # 生成完整报告
+        from datetime import datetime
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        report = f"""# 📊 抖音数据复盘报告
+
+> 生成时间：{now}
+> 分析链接：{url}
+> 作品数量：{len(items)} 条
+
+---
+
+## 📈 总体数据概览
+
+| 指标 | 数值 |
+|------|------|
+| 作品数 | {len(items)} |
+"""
+        if has_plays:
+            report += f"| 👀 总播放 | {total_plays:,} |\n"
+        report += f"""| ❤️ 总点赞 | {total_likes:,} |
+| 💬 总评论 | {total_comments:,} |
+| 🔁 总分享 | {total_shares:,} |
+| ⭐ 总收藏 | {total_collects:,} |
+"""
+
+        # 作品数据明细
+        report += "\n---\n\n## 📋 作品数据明细\n\n"
+        if items:
+            keys = list(items[0].keys())
+            header = "| " + " | ".join(keys) + " |\n"
+            sep = "|" + "|".join(["------"] * len(keys)) + "|\n"
+            report += header + sep
+            for item in items:
+                row = "| " + " | ".join(str(item.get(k, "")) for k in keys) + " |\n"
+                report += row
+
+        # 漏斗诊断
+        report += "\n---\n\n## 📉 漏斗诊断\n\n"
+        report += funnel_diag + "\n"
+
+        # 内容评估
+        report += "\n---\n\n## 📝 内容评估\n\n"
+        report += content_eval + "\n"
+
+        # 优化策略
+        report += "\n---\n\n## 💡 优化策略\n\n"
+        report += suggestions + "\n"
+
+        st.download_button(
+            "📥 下载完整复盘报告",
+            data=report,
+            file_name=f"抖音复盘报告_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+
+        _add_history("数据复盘", url[:60])
+```
+
+---
+
+## 整合
+
+> 章节概述：整合部分将所有功能模块串联为统一的 Streamlit 应用。main.py 作为应用入口，通过侧边栏导航（st.sidebar.radio）实现七个页面的路由切换，每个页面对应一个独立的功能模块。views/home.py 提供首页仪表盘，以三列卡片布局展示六大功能的图标、简介和核心流程。所有页面共享 session_state.history 记录用户操作历史，侧边栏底部展示项目技术栈信息。整个应用遵循统一模式：页面调用 workflows/xxx_graph.invoke() → LangGraph 编排节点 → LLM 推理 → 返回结构化结果，新增功能时复制 views/ + workflows/ 配对即可快速扩展。
+
+### 主界面入口
+
+```
+# views/home.py
+"""show_home页面"""
+import streamlit as st
+
+def show_home():
+    """首页"""
+    st.title("🎬 自媒体AI创作全流程平台")
+
+    # 三列功能卡片
+    cols = st.columns(3)
+    cards = [
+        ("🎯", "账号定位", "输入背景信息\nAI生成专属定位方案",
+         "分析画像 → 对标账号 → 输出方案"),
+        ("🔥", "热点监控", "实时追踪平台热点\n筛选赛道相关选题",
+         "TrendRadar抓取 → LLM筛选 → 选题建议"),
+        ("📝", "内容复刻", "下载爆款视频\n拆解结构 → 仿写新文案",
+         "videodl下载 → FunASR转文字 → LLM仿写"),
+        ("🎥", "口播视频", "文案 → 口播优化 → 数字人出镜\nHeyGem数字人生成4K口播视频",
+         "文案 → TTS配音 → 数字人 → 4K视频"),
+        ("🎬", "视频剪辑", "口播视频后期剪辑\n自动加字幕/特效/转场",
+         "video-use → FunASR字幕 → HyperFrames → MP4"),
+        ("📊", "数据复盘", "多维数据诊断\n输出优化策略",
+         "数据 → 漏斗分析 → 改进方案"),
+    ]
+    for i, (icon, title, desc, flow) in enumerate(cards):
+        with cols[i % 3]:
+            st.markdown(f"""
+            <div style="padding:20px; border:1px solid #e0e0e0;
+                 border-radius:10px; margin:8px 0; text-align:center;
+                 min-height:180px;">
+            <h1>{icon}</h1>
+            <h4>{title}</h4>
+            <p style="color:#555;font-size:13px;white-space:pre-line">{desc}</p>
+            <hr style="margin:8px 0;">
+            <small style="color:#999;">{flow}</small>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # 历史记录
+    if st.session_state.history:
+        st.markdown("---")
+        st.markdown("### 📋 本次操作记录")
+        for h in reversed(st.session_state.history[-10:]):
+            st.caption(f"🕐 {h['time']} | {h['action']} | {h['summary'][:80]}...")
+```
+
+```
+# 文件: main.py
+"""自媒体AI创作平台 — Streamlit 入口
+
+路由到 ui/pages/ 下各功能页面。
+启动: streamlit run main.py
+"""
+import streamlit as st
+
+#   初始化  
+st.set_page_config(
+    page_title="自媒体AI创作平台",
+    page_icon="🎬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+#   工具函数  
+def add_to_history(action: str, summary: str):
+    """记录操作历史"""
+    from datetime import datetime
+    st.session_state.history.append({
+        "time": datetime.now().strftime("%H:%M"),
+        "action": action,
+        "summary": summary[:200],
+    })
+
+#   侧边栏导航  
+st.sidebar.title("🎬 自媒体AI创作平台")
+st.sidebar.markdown("---")
+
+PAGES = {
+    "🏠 首页": "home",
+    "🎯 账号定位": "positioning",
+    "🔥 热点监控": "hot_topic",
+    "📝 内容复刻": "replicate",
+    "🎥 口播视频": "video",
+    "🎬 视频剪辑": "mashup",
+    "📊 数据复盘": "review",
+}
+
+page = st.sidebar.radio("导航菜单", list(PAGES.keys()))
+
+st.sidebar.markdown("---")
+with st.sidebar.expander("📋 项目信息"):
+    st.caption("技术栈：LangGraph + Streamlit")
+
+#   路由  
+from views.home import show_home
+from views.positioning import show_positioning
+from views.hot_topic import show_hot_topic
+from views.replicate import show_replicate
+from views.video import show_video
+from views.mashup import show_mashup
+from views.review import show_review
+
+ROUTES = {
+    "home": show_home,
+    "positioning": show_positioning,
+    "hot_topic": show_hot_topic,
+    "replicate": show_replicate,
+    "video": show_video,
+    "mashup": show_mashup,
+    "review": show_review,
+}
+
+route_key = PAGES.get(page, "home")
+route_fn = ROUTES.get(route_key, show_home)
+route_fn()
+```
+
+### 启动命令
+
+#### 部署前置环境（Windows）
+
+视频剪辑和动画素材生成依赖 FFmpeg 与 HyperFrames CLI。首次部署项目时，在 Windows PowerShell 中执行以下命令；已经安装过的环境无需重复执行。
+
+```
+# 安装 FFmpeg：视频转码、音频提取和最终渲染都会用到
+winget install ffmpeg
+
+# 安装 HyperFrames CLI：生成 HTML/CSS/GSAP 动画叠加素材
+npm install -g hyperframes
+```
+
+安装完成后关闭并重新打开终端，使系统 PATH 生效，再检查命令是否可用：
+
+```
+ffmpeg -version
+hyperframes --help
+```
+
+如果提示 npm 不是命令，请先安装 Node.js（会同时提供 npm），然后重新打开 PowerShell 再执行安装命令。
+
+```
+# 1. 安装依赖（一次性安装，自动创建 .venv 并写入 pyproject.toml）
+cd self_media_agent
+uv add streamlit langgraph langchain langchain-openai pydantic pydantic-settings python-dotenv videofetch requests funasr openai edge-tts Pillow httpx niquests
+
+# 2. 配置密钥
+cp .env.example .env
+# 编辑 .env 填入真实的 API Key
+
+# 3. 启动应用
+uv run streamlit run main.py
+# 打开 http://localhost:8501
+```
+
+---
+
+## 调试
+
+### 常见问题
+
+Q1:运行方式
+
+```
+cd self_media_agent
+uv run streamlit run main.py
+```
+
+Q2: Streamlit 页面空白或无响应
+
+```
+# 检查依赖是否完整（根据 pyproject.toml + uv.lock 同步）
+uv sync
+
+# 查看详细日志
+uv run streamlit run main.py --logger.level=debug
+```
+
+Q3: LLM API 返回错误
+
+```
+# 在 config.py 中检查配置
+from config import settings
+print(settings.api_key[:8] + "***")
+print(settings.base_url)
+
+# 测试调用
+from langchain_openai import ChatOpenAI
+model = ChatOpenAI(api_key=settings.api_key, base_url=settings.base_url,
+                    model=settings.model_name)
+print(model.invoke("你好"))
+```
+
+Q4: videodl 安装失败（quickjs 编译错误）
+
+```
+# 方案1：跳过有问题的依赖安装
+# 注：--no-deps 是 uv pip 接口的参数（uv add 不支持），这里用 uv pip install 作用于当前项目环境
+uv pip install videofetch --no-deps
+uv pip install requests rich prettytable click json-repair pathvalidate platformdirs
+uv pip install emoji bleach beautifulsoup4 parsel tqdm pycryptodomex pycryptodome
+uv pip install cryptography tldextract fake-useragent nodejs-wheel questionary
+
+# 方案2：直接克隆源码使用
+cd tools/
+git clone https://github.com/CharlesPikachu/videodl.git
+
+# 方案3：降级到 yt-dlp
+# videodl 不可用时，download_video() 自动降级为 yt-dlp
+uv add yt-dlp
+```
+
+Q5: TrendRadar 热点抓取返回空数据
+
+```
+# 检查 NewsNow API 是否可达
+import requests
+resp = requests.get("https://newsnow.busiyi.world/api/s?id=weibo&latest")
+print(resp.status_code, len(resp.json().get("items", [])))
+
+# 如果公共 API 不可用，可自部署 newsnow
+# docker run -d -p 3000:3000 ourongxing/newsnow
+# 然后修改 config.py 中的 trendradar_api_url
+```
+
+### 调试技巧
+
+```
+# 1. 用 stream 模式查看每个节点输出
+from workflows.positioning import positioning_graph
+
+for event in positioning_graph.stream({"user_info": "程序员，想做科技自媒体"}):
+    node_name = list(event.keys())[0]
+    print(f"  节点: {node_name}  ")
+    # 打印前200字符预览
+    print(str(event[node_name])[:200])
+    print()
+
+# 2. 在节点中加日志
+def node_analyze(state):
+    print(f"[DEBUG] 输入长度: {len(state['user_info'])}")
+    result = model.invoke(...)
+    print(f"[DEBUG] 输出长度: {len(result.content)}")
+    return {"profile": result.content}
+
+# 3. 检查 LangGraph 图结构
+print(positioning_graph.get_graph().draw_ascii())
+```
+
+### LangGraph 可视化
+
+```
+# 生成 Mermaid 图（可直接粘贴到 GitHub）
+from workflows.positioning import positioning_graph
+mermaid_code = positioning_graph.get_graph().draw_mermaid()
+print(mermaid_code)
+
+# 保存为 PNG（需要安装 pygraphviz）
+# graph = positioning_graph.get_graph()
+# graph.draw_png("positioning_workflow.png")
+```
+
+---
+
+## 总结
+
+> 本章从零构建了一个完整的 自媒体 AI 创作全流程平台，六大功能模块覆盖了自媒体运营的完整链路：从账号定位出发，经过热点选题、内容复刻、口播视频生成、后期剪辑，最终以数据复盘形成运营闭环。每个模块都遵循"前端 → 工作流 → 工具"三层架构，代码结构统一、可扩展性强。
+
+### 技术栈总览
+
+| 层级 | 技术 | 用途 |
+| 前端框架 | Streamlit | 页面路由、交互组件、session_state 状态管理 |
+| 工作流引擎 | LangGraph | StateGraph 编排、Send 并行、conditional_edges 条件路由 |
+| LLM 调用 | LangChain + OpenAI 兼容 API | 统一 llm_call() 入口，支持任意兼容 OpenAI 的模型 |
+| Agent 编排 | DeepAgents | 视频剪辑智能体，SKILL.md 技能包驱动 |
+| 视频下载 | videodl | 三级降级策略，覆盖 100+ 平台 |
+| 语音识别 | FunASR (阿里达摩院) | Fun-ASR-Nano + fsmn-vad，本地运行，无需联网 |
+| TTS 配音 | Edge-TTS / HeyGem Fish-Speech | 通用配音 + 克隆声音配音，自动降级 |
+| 热点抓取 | TrendRadar / NewsNow API | 35+ 平台热点聚合，支持自部署 |
+| 数字人生成 | HeyGem (硅基智能) | Docker 三容器，照片+音频 → 4K 口播视频 |
+| 动画渲染 | HyperFrames / Remotion / Manim | HTML/CSS/GSAP → MP4 动画叠加 |
+| 数据采集 | erma0/douyin 爬虫 | 真实抖音作品数据抓取，CDP Cookie 自动读取 |
+
+### 架构演进
+
+[DIAGRAM] Agent + 工具链模式 -> 用户输入 -> DeepAgent -> 多工具调用 -> LLM + 渲染 -> 成品输出 -> 工作流编排模式 -> 多节点串行/并行 -> LLM 推理 -> 结构化输出 -> 基础Agent模式 -> 输出结果
