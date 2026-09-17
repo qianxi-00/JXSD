@@ -15,7 +15,7 @@
 
 | 课案本地部署 | 本项目替换为 | 接口 |
 |---|---|---|
-| **FunASR** `Fun-ASR-Nano-2512` + `fsmn-vad`<br>（纯文本转写） | 百炼 **Qwen-Audio-3.0-ASR-Flash / Fun-ASR-Flash** | `POST {base}/services/aigc/multimodal-generation/generation` |
+| **FunASR** `Fun-ASR-Nano-2512` + `fsmn-vad`<br>（纯文本转写） | 百炼 **Qwen-Audio-3.0-ASR-Flash**（Fun-ASR 家族的云托管版；模型名由 `MEDIA_ASR_MODEL` 决定，默认即 `qwen-audio-3.0-asr-flash`） | `POST {base}/services/aigc/multimodal-generation/generation` |
 | **FunASR** `seaco-paraformer-large` + `fsmn-vad` + `ct-punc`<br>（句级/词级时间戳，生成 SRT） | **同一个接口** | 返回 `output.sentence.begin_time/end_time` + `words[].punctuation` |
 | **Fish-Speech 1.5**（声音克隆 TTS） | 百炼 **CosyVoice 声音复刻** | `VoiceEnrollmentService.create_voice()` + `SpeechSynthesizer.call()` |
 | **HeyGem / Duix Avatar**（唇形驱动） | 百炼 **爱诗 PixVerse 视频对口型** | `VideoSynthesis.async_call(model="pixverse/pixverse-lipsync", media=[...])` |
@@ -27,8 +27,8 @@
 
 | 方式 | 模块 | 产出 | 适用 | 实测结论 |
 |---|---|---|---|---|
-| 百炼免费临时存储 | `tools/dashscope_upload.py` | `oss://…`（48h） | 多模态 / 图像 / 视频类接口 | ⚠️ **CosyVoice 不收**（400 `audio url should start with http or https`） |
-| 自建静态托管 | `tools/asset_host.py` | `http(s)://…` | 声音克隆（必需）、数字人 | ✅ 实测可用 |
+| 百炼免费临时存储 | `tools/dashscope_upload.py` | `oss://…`（48h） | 多模态 / 图像 / 视频类接口；**数字人对口型的 `video_url` / `audio_url`**；音频超过 10MB 时的 ASR | ⚠️ **CosyVoice 不收**（400 `audio url should start with http or https`） |
+| 自建静态托管 | `tools/asset_host.py` | `http(s)://…` | 声音克隆（必需）—— **只有这一处需要** | ✅ 实测可用 |
 
 自建托管的做法：把本地素材 `scp` 到自己的服务器静态目录，nginx 只读分发。
 服务器侧只需要一个 location（上传走 scp，**不需要写权限**）：
@@ -39,7 +39,8 @@ location /media-assets/ { alias /var/www/media-assets/; autoindex off; }
 
 > ⚠️ **声音克隆必须用自建托管**（或任何真正的 http(s) 地址）——
 > CosyVoice 的 `create_voice` 明确拒绝 `oss://`。
-> ASR 走的是 Base64 Data URI，两条路都不依赖。
+> ASR 默认走 Base64 Data URI（≤ `MEDIA_ASR_INLINE_MAX_BYTES`，默认 10MB），
+> 超过才先上传百炼临时存储换成 `oss://` —— 两种情形**都不依赖自建托管**。
 
 ### 保留原样的部分（本来就不是"模型"）
 
@@ -97,7 +98,7 @@ npm install --cache .npm-cache hyperframes
 
 1. **阿里云百炼**（`DASHSCOPE_API_KEY`）—— 用于语音识别 / 声音复刻 / 视频对口型。
    ⚠️ 这三个能力**只在华北2（北京）地域提供**，要用该地域的 API Key。
-2. **开通模型**：百炼控制台 → 模型市场 → 分别开通 **Fun-ASR（或 Qwen-Audio）**、**CosyVoice**、
+2. **开通模型**：百炼控制台 → 模型市场 → 分别开通 **Qwen-Audio-3.0-ASR-Flash**（Fun-ASR 家族的云托管版）、**CosyVoice**、
    **爱诗 PixVerse**（PixVerse 要搜到卡片点「立即开通」）。
 3. 可选：`MEDIA_IMAGE_API_KEY`（图片生成，不配就用占位图）、
    `MEDIA_DOUYIN_COOKIE`（抖音数据复盘）。
@@ -221,13 +222,15 @@ Media_Agent/
 - 🎭 **数字人**：克隆音色 → TTS 配音 → 对口型 → MP4
 
 **知识点**：
-- **素材必须先变成公网 URL**：百炼接口只收 URL，走 `tools/dashscope_upload.py`
+- **素材必须先换成可访问的资源 URL**：数字人走百炼临时存储（`tools/dashscope_upload.py` → `oss://`，48 小时有效），**不需要自建公网托管**；只有声音克隆的 `create_voice` 才要真正的 http(s)（走 `tools/asset_host.py`）
 - **音色缓存**：CosyVoice 创建音色有**配额**，同一个源音频必须复用 voice_id
   （按 路径+大小+修改时间 做指纹，落 `.cache/voices.json`）
 - **异步任务交互**：提交拿 `task_id` → 页面点「刷新进度」轮询 → 完成后自动下载到本地。
   在 Streamlit 里**不能阻塞等待**（会把界面卡死）
 - PixVerse 两种驱动：**音频驱动**（用克隆音色）/ **TTS 文本驱动**（用平台内置音色，一步出片）
-- **降级链**：克隆音色失败 → edge-tts 通用音色 → PixVerse 内置 TTS
+- **配音路由**（由页面「优先使用克隆音色」勾选框决定，见 `workflows/video.py` 的 `node_generate_video`）：
+  - **勾选**（默认）→ 克隆音色 → 失败降级 edge-tts 通用音色 → 两者都失败才回退 PixVerse 内置 TTS；
+  - **不勾** → 跳过克隆与 edge-tts，直接用页面选好的 PixVerse 内置音色（`speaker_id`）一步出片
 
 ### 🎬 5. 视频剪辑
 
@@ -239,6 +242,11 @@ Media_Agent/
 **知识点**：
 - **DeepAgents 技能机制**：`create_deep_agent(skills=[技能父目录])`，
   启动时只读 `name` + `description`，匹配到才 `read_file` 拉正文（渐进式披露，省 token）
+- ⚠️ **`skills=` 的路径必须相对 backend 的 `root_dir`** —— 传**绝对路径**是「第一次真跑就崩」的硬约束：
+  `SkillsMiddleware` 拿它去 `backend.ls()`，被 `virtual_mode` 判为沙箱外，直接抛
+  `ValueError: Path ... outside root directory`，agent 一步都没执行。
+  本项目实际写法是 `CompositeBackend(default=沙箱, routes={"/skills/": FilesystemBackend(...)})`
+  + `skills=list(routes)`（见 `workflows/mashup.py` 文件头第 9 条、VERIFY_REPORT 5.9①）
 - **`LocalShellBackend`**：`FilesystemBackend + execute`，agent 能在沙箱里真的跑 `python script.py`
 - **沙箱路径规则**：所有输出必须用 `os.path.join(os.environ['WORK_DIR'], ...)`，
   禁止手写盘符路径
@@ -257,11 +265,19 @@ Media_Agent/
 | `CompositeVideoClip` 的 `size` 必须是 `(w, h + h//3)` | 写 `(w, h)` 会裁掉素材层和字幕下半截 |
 | 视频 clip 不要 `.resized((w, h))` | 隐式蒙版 |
 
-**本仓库实测补的两条**（课案没有，不加会翻车）：
+**本仓库实测补的四条**（课案没有，不加会翻车；对应 `workflows/mashup.py` 文件头 docstring 的第 7~10 条）：
 1. **把 `.venv\Scripts` 顶到子进程 PATH 最前面** ——
    本机 PATH 里的 `python` 是 Windows Store 占位符，**执行后静默无输出**。
 2. **system_prompt 里必须说明 `execute` 跑的是 `cmd.exe` 不是 bash** ——
    不写，模型会反复敲 `ls`/`pwd`/`cat`，实测一路撞到 `GraphRecursionError`。
+3. **技能目录必须经 `CompositeBackend` 挂到虚拟路径** ——
+   传绝对路径实测第一次真跑就抛 `ValueError: Path ... outside root directory`（见上）。
+4. **Windows 上 `capture_output=True` 不能走管道** ——
+   管道句柄被整棵子进程树继承，`timeout=` 会整体失效（实测 `execute(timeout=8)` 301.8 秒才返回）。
+
+同属本仓库实测补充的还有 **`_ToolErrorToMessage` 工具异常中间件**（`workflows/mashup.py`）：
+把工具异常转成回给模型的 `ToolMessage(status="error")`，而不是直接抛出去终结整轮任务 ——
+不加，一次沙箱越界读取就会让 20+ 步的工作当场作废（见 VERIFY_REPORT 5.9③a）。
 
 **moviepy 2.x 的坑**：
 ```python
@@ -336,12 +352,16 @@ Media_Agent 特有的：
 |---|---|---|
 | `MEDIA_LLM_MODEL` | 空 | 留空 = 复用根 `MODEL_NAME` |
 | `MEDIA_DEEPAGENT_MODEL` | 空 | 留空 = 复用 `MEDIA_LLM_MODEL` |
-| `MEDIA_ASR_MODEL` | `qwen-audio-3.0-asr-flash` | 语音识别模型 |
+| `MEDIA_LLM_PROVIDER` | 空 | 模型路由：留空 = 复用根 `API_KEY` / `BASE_URL`；填 `deepseek` = 只让本子项目改用根 `.env` 的 `DEEPSEEK_*` 三项 |
+| `MEDIA_ASR_MODEL` | `qwen-audio-3.0-asr-flash` | 语音识别模型（Fun-ASR 家族的云托管版） |
 | `MEDIA_ASR_LANGUAGE` | `zh` | 语种提示 |
+| `MEDIA_ASR_INLINE_MAX_BYTES` | `10485760`（10MB） | 音频转 Base64 内嵌的上限；超过则先上传百炼临时存储换 `oss://` |
 | `MEDIA_TTS_ENABLED` | `true` | 关掉则完全不做配音 |
 | `MEDIA_TTS_MODEL` | `cosyvoice-v2` | 声音复刻驱动模型（创建音色与合成必须一致） |
 | `MEDIA_TTS_FALLBACK_VOICE` | `zh-CN-XiaoxiaoNeural` | edge-tts 兜底音色 |
+| `MEDIA_VOICE_CACHE_FILE` | `.cache/voices.json` | 克隆音色缓存文件（CosyVoice 建音色有配额，必须复用，不能每次重建） |
 | `MEDIA_AVATAR_MODEL` | `pixverse/pixverse-lipsync` | 数字人对口型模型 |
+| `MEDIA_AVATAR_TIMEOUT` | `900` | 数字人异步任务最长等待秒数 |
 | `MEDIA_ASSET_SSH` | 空 | 公网素材托管的 ssh 目标，形如 `ubuntu@1.2.3.4` |
 | `MEDIA_ASSET_REMOTE_DIR` | `/var/www/media-assets` | 服务器上的静态目录 |
 | `MEDIA_ASSET_BASE_URL` | 空 | 对外基址，形如 `http://1.2.3.4/media-assets` |

@@ -36,7 +36,7 @@ description: 口播视频后期剪辑的标准流程与硬性约束。当用户�
   moviepy 内部会自己调 ffmpeg，你只需要用它提供的 Python API。
 - **禁止**用 `ffprobe` 探测元数据 —— 用 `clip.duration` / `clip.size` / `clip.fps`。
 
-## moviepy 2.x 常用 API（本机 2.1.2 实测可用）
+## moviepy 2.x 常用 API（本机 2.2.1 实测可用）
 
 ```python
 from moviepy import (
@@ -71,7 +71,7 @@ TextClip(font=..., text=..., font_size=..., size=(w, None),
 
 > ⚠️ 2.x 用 `font`（**字体文件路径**），**没有** `fontsize=`（那是 1.x）。
 >
-> 🔴 **中文字体必须写字体文件路径，不能写字族名**（本机 moviepy 2.1.2 实测）：
+> 🔴 **中文字体必须写字体文件路径，不能写字族名**（本机 moviepy 2.2.1 实测）：
 >
 > ```python
 > TextClip(text='中文', font='Microsoft YaHei', ...)          # ✗ ValueError: Invalid font

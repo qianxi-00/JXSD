@@ -11,7 +11,7 @@
 
 | 验证项 | 结果 |
 |---|---|
-| 模块自检（14 个模块 × 子进程） | **14/14 通过** |
+| 模块自检（15 个模块 × 子进程） | **15/15 通过**（三层合计 17 项，见第 2 节） |
 | Streamlit 视图导入（7 个页面） | **通过** |
 | 环境契约检查（配置 / 依赖 API 形状 / 关键文件 / 降级路径） | **通过** |
 | 真实联网检查（LLM / 热点 / 百炼接线） | **4/4 通过** |
@@ -61,21 +61,40 @@ Set-Location F:\ProGram\Python_Base\Media_Agent
 
 **命令**：`verify_all.py` 第 1 层，每个模块用独立子进程跑它自己的 `__main__` 自检块。
 
+**本轮真跑的实际输出**（15 行，`exit code 0`）：
+
 ```
-  ✓ tools/dashscope_upload.py          退出码=0    0.3s
-  ✓ tools/audio_transcriber.py         退出码=0    0.4s
-  ✓ tools/media_tools.py               退出码=0    0.7s
-  ✓ tools/trend_radar_client.py        退出码=0    0.4s
-  ✓ tools/voice_clone.py               退出码=0    0.3s
-  ✓ tools/avatar_client.py             退出码=0    0.4s
+  ✓ tools/dashscope_upload.py          退出码=0    0.4s
+  ✓ tools/asset_host.py                退出码=0    0.4s
+  ✓ tools/audio_transcriber.py         退出码=0    0.5s
+  ✓ tools/media_tools.py               退出码=0    0.8s
+  ✓ tools/trend_radar_client.py        退出码=0    0.5s
+  ✓ tools/voice_clone.py               退出码=0    0.4s
+  ✓ tools/avatar_client.py             退出码=0    0.5s
   ✓ tools/douyin_client.py             退出码=0    4.5s
-  ✓ workflows/positioning.py           退出码=0    1.0s
-  ✓ workflows/hot_topic.py             退出码=0    1.1s
-  ✓ workflows/replicate.py             退出码=0    1.0s
-  ✓ workflows/video.py                 退出码=0    1.0s
-  ✓ workflows/mashup.py                退出码=0    1.0s
-  ✓ workflows/review.py                退出码=0    1.1s
+  ✓ workflows/base.py                  退出码=0    1.0s
+  ✓ workflows/positioning.py           退出码=0    1.3s
+  ✓ workflows/hot_topic.py             退出码=0    1.2s
+  ✓ workflows/replicate.py             退出码=0    1.3s
+  ✓ workflows/video.py                 退出码=0    1.1s
+  ✓ workflows/mashup.py                退出码=0    4.1s
+  ✓ workflows/review.py                退出码=0    1.2s
+
+【第 2 层】视图导入检查（views/*.py 不能直接运行，改用 import）
+----------------------------------------------------------------------
+  ✓ views 导入  退出码=0
+
+【第 3 层】环境契约检查（配置 + 依赖 API 形状 + 关键文件 + 降级路径）
+  ✓ 环境契约检查 退出码=0
+
+共 17 项检查，通过 17 项，失败 0 项。
+
+全部自检通过 ✓
 ```
+
+> 此前本表的粘贴遗漏了 `tools/asset_host.py` 一行（只贴了 13 行），现已按真跑输出补全；
+> 第 1 层共 **15** 个模块（`verify_all.py:118-132` 的清单），三层合计 **17** 项。
+> 各模块耗时每次跑会有零点几秒浮动，行数与结论不受影响。
 
 每个自检都是**纯逻辑断言，不联网、不花钱**，覆盖：
 
@@ -96,11 +115,23 @@ Set-Location F:\ProGram\Python_Base\Media_Agent
 
 ## 3. 环境契约检查（第 3 层）
 
-这一层是「升级依赖前先跑一下」的护栏，验证代码对第三方库的假设仍然成立：
+这一层是「升级依赖前先跑一下」的护栏，验证代码对第三方库的假设仍然成立。
+
+**第二轮的历史快照**（当时根 `.env` 还是 `grok-4.6`，保留原输出）：
 
 ```
 文本模型: grok-4.6
 编排模型: grok-4.6
+百炼端点: https://dashscope.aliyuncs.com/api/v1
+百炼密钥: 已配置
+环境契约检查全部通过
+```
+
+**切到 `deepseek-flash` 之后重跑（当前值，与第 1 节表格一致）**：
+
+```
+文本模型: deepseek-flash
+编排模型: deepseek-flash
 百炼端点: https://dashscope.aliyuncs.com/api/v1
 百炼密钥: 已配置
 环境契约检查全部通过
@@ -440,6 +471,10 @@ ASR 走 Base64 Data URI 是另一条路（**已实测可用**），但 **TTS 的
 > 是否能吃 `oss://` **尚未实测**（官方文档说「素材必须是公网可访问 URL」，
 > 而临时存储文档又说适用于「多模态、图像、视频或音频模型」—— 只有真提交一次才知道）。
 > 如果 PixVerse 也不收 `oss://`，数字人同样需要上面这套托管。
+>
+> ✅ **这个疑问已在 5.11 实测解决：PixVerse 直接接受 `oss://`，数字人链路不需要自建公网托管。**
+> 上面这段保留为当时（第二轮）的判断记录。现行代码的注释也已同步
+> （`config.py` 的「公网素材托管」段：**只有声音克隆需要**）。
 
 ### 5.8 补齐 5.6 / 5.7 的结论（第二轮验证）
 
@@ -801,6 +836,9 @@ run_video(raw_script=..., mode="avatar", avatar_path=<6s 素材>, use_cloned_voi
   → node_generate_video → edge-tts 配音 → submit_lipsync(音频驱动) → 轮询 → 下载
 ```
 
+> ⚠️ 本次修改后，`use_cloned_voice=False` 已改为直接走 PixVerse 内置 TTS（TTS 文本驱动），
+> 上述路径反映的是修改前的行为。（`use_cloned_voice=True` 的那条降级链未变。）
+
 **结果**：
 
 ```
@@ -895,18 +933,25 @@ Set-Location F:\ProGram\Python_Base\Media_Agent
 | `workflows/positioning.py` | 调未 import 的 `get_session()` / `PositioningRecord` | 整段删除（结果由 Streamlit `session_state` 承载） | 自检通过 |
 | `views/replicate.py` | 三引号 f-string 内层复用外层 `"`（PEP 701 之前是 SyntaxError） | 先取变量再插值 | 视图导入通过 |
 | `mashup.py` / `views/mashup.py` | 两边 `CACHE_DIR` 不一致（`.cache/videos` vs `.cache/mashup`），兜底查找扫不到 | 统一取 `settings.media.get_mashup_work_dir()` | 兜底查找自检通过 |
-| `mashup.py` / `views/mashup.py` | `DEFAULT_BGM` 硬编码 `C:\Users\13261\...wav` | 改为 `MEDIA_BGM_PATH`；留空则不混音 | 全项目 grep 无 `13261` |
-| `review.py` / `views/review.py` | 硬编码 `C:/Users/13261/Documents/project/douyin` | 改为 `settings.media.douyin_api_base` | 全项目 grep 无 `13261` |
+| `mashup.py` / `views/mashup.py` | `DEFAULT_BGM` 硬编码 `C:\Users\13261\...wav` | 改为 `MEDIA_BGM_PATH`；留空则不混音 | **可执行代码**中 grep 无 `13261`（7 处命中均在差异表 / docstring 里作为课案原文引用） |
+| `review.py` / `views/review.py` | 硬编码 `C:/Users/13261/Documents/project/douyin` | 改为 `settings.media.douyin_api_base` | **可执行代码**中 grep 无 `13261`（同上） |
 | `media_tools.py` | `extract_audio_text()` 里两段完全相同的 URL 判断 | 去重 | 自检通过 |
 
-**本仓库实测补充的两条**（课案没有，不加会翻车）：
+**本仓库实测补充的四条**（课案没有，不加会翻车；对应 `workflows/mashup.py` 文件头 docstring 的第 7~10 条）：
 
 | 补充 | 为什么 | 落在哪 |
 |---|---|---|
 | 把 `.venv\Scripts` 顶到子进程 `PATH` 最前 | 本机 PATH 里的 `python` 是 Windows Store 占位符，**执行后静默无输出**，deepagent 跑 `python script.py` 会「成功但什么也没发生」 | `workflows/mashup.py` 的 `_get_editor_agent()` |
 | system_prompt 里说明 `execute` 跑的是 `cmd.exe` 不是 bash | 不写，模型会反复敲 `ls`/`pwd`/`cat`，实测一路撞到 `GraphRecursionError` | `_build_editor_system_prompt()` |
+| 技能目录必须经 `CompositeBackend` 挂到虚拟路径 `/skills/` | `skills=` 传绝对路径 → `SkillsMiddleware` 走 `backend.ls()` 被判「沙箱外」，抛 `ValueError: Path ... outside root directory`，agent 一步都没执行（本报告 **5.9①** 的必崩 bug） | `_get_editor_agent()` 的 `routes` / `CompositeBackend` |
+| Windows 上 `capture_output=True` 不能走管道 | 管道句柄被整棵子进程树继承，`timeout=` 整体失效（实测 `execute(timeout=8)` 301.8 秒才返回），此前会把整轮剪辑永久卡死（**5.9②**） | `_patched_run()` |
 
-**moviepy API 实测修正**（`moviepy 2.1.2`）：
+另有一条同属本仓库实测补充、但不在上面 4 条编号里：**`_ToolErrorToMessage` 工具异常中间件**
+（`workflows/mashup.py`，挂法 `middleware=[_ToolErrorToMessage()]`）——
+把工具异常转成回给模型的 `ToolMessage(status="error")`，避免 `deepagents` 默认的
+`_default_handle_tool_errors` 直接 raise 终结整轮任务（详见 5.9③a）。
+
+**moviepy API 实测修正**（`moviepy 2.2.1`）：
 
 ```python
 # 课案的 system_prompt 让 agent 从顶层导入 SubtitlesClip —— 实测 ImportError
@@ -1023,6 +1068,13 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
    > 位于注释「阿里云百炼 DashScope —— 课案「监控与评估 / RAG评估」的评测模型 + 向量模型」
    > 之下，由 RAG 子项目共用；本次工作只是**复用它**，没有引入、替换或新增任何百炼密钥。
    > 它也不是记忆栈那把 key（`F:\ProGramApp\DSH\memory\.env` 的 `MEMORY_LLM_API_KEY`）。
+7. **`graph.get_graph().draw_ascii()`（课案「调试技巧 3」教的图可视化）在本机不可用** ——
+   实测 `ImportError: Install grandalf to draw graphs: 'pip install grandalf'`；
+   `grandalf` 与 `pygraphviz` **两个可选依赖都没装**。
+   同一份图对象上的 `draw_mermaid()` **无需额外依赖、实测可用**（输出 384 字符），
+   所以课案那段调试代码要落地，只能改用 `draw_mermaid()` 或先补装 `grandalf`。
+   复现：
+   `& 'F:\ProGram\Python_Base\.venv\Scripts\python.exe' -c "import sys; sys.path.insert(0,'.'); from workflows.positioning import positioning_graph as g; print(g.get_graph().draw_mermaid()[:20])"`
 
 ### 环境限制（影响验证方式，不是代码问题）
 
@@ -1044,3 +1096,4 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 | `MEDIA_IMAGE_*` 未配置 | 图片生成走占位图分支（首页环境面板已明示）。 |
 | HyperFrames | 渲染链路不可用（浏览器依赖拉不下来），默认由 `MEDIA_MASHUP_USE_HYPERFRAMES=false` 走 moviepy 分支；换到浏览器链路正常的机器改成 `true` 即恢复课案原方案。 |
 | `docs/` 下的课案提取文件 | 由 `docs/html提取脚本.py` 从课案 HTML 生成，课案更新后可重跑。 |
+| `workflows/base.py` 无调用方 | **全仓 0 引用**：`from workflows.base` / `workflows.base` 在 `views/`、`workflows/` 下均 0 命中，`safe_llm_call()` 也没有任何调用方（模块只被当作课案「工作流基类」这一节的载体保留，纯转发 `workflows/__init__.py` 的实现）。**已补自检**并纳入 `verify_all.py` 第 1 层清单（`verify_all.py:126`，共 15 个模块）：断言转发对象同一性、`safe_llm_call` 签名、模型不可用时返回提示文本而非抛异常、缺密钥降级为 `[LLM未配置]`。留着不删是刻意的——删掉会让课案结构对不上；若将来确认不需要，可直接删文件 + 摘掉那一行清单。 |
