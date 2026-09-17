@@ -32,7 +32,14 @@ DeepAgents 官方补充篇③：Rubric 评分循环（非课案内容）
        所以可以无条件挂在中间件栈里 —— 本文件 Demo 2 用零额外模型调用验证了这一点；
     C. 非 satisfied 终止（failed / max_iterations_reached / grader_error）时，
        中间件**不会改写**消息 —— 最后一条 AIMessage 就是评分器放弃前模型产出的那份，
-       要判断结局必须靠 `on_evaluation` 回调或 v3 流事件（官方 note 明确提醒）。
+       要判断结局必须靠 `on_evaluation` 回调或 v3 流事件（官方 note 明确提醒）；
+    D. **评分器依赖结构化输出**：deepagents 内部用 ToolStrategy 让评分器吐出结构化的
+       逐条判定，而 ToolStrategy 固定发强制 `tool_choice`。因此**思考模型端点跑不了
+       评分器** —— 实测 DeepSeek（deepseek-flash / deepseek-v4-pro）返回
+       `400 Thinking mode does not support this tool_choice`，中间件把它兜成
+       `grader_error`：脚本不崩，但 Demo 1/3 看不到「判定 → 反馈 → 重做」的循环。
+       要完整跑通请把 .env 切回支持强制 tool_choice 的端点（如网关）。
+       详见 `02_langchain/20_上下文工程_官方补充.py` 文末「实测结论」第 5 条。
 
 ⚠️ 本文件需要真实模型（评分器 + 被评的 agent 都会调模型，且**每次迭代两次调用**）。
 
@@ -61,8 +68,9 @@ model = init_chat_model(
     api_key=settings.api_key,
     base_url=settings.base_url,
     max_retries=0,
-    # 评分循环一次要跑 6+ 次模型调用（主 agent + 评分器，每轮两次），
-    # 本机网关在高负载下单次请求可能超过两分钟 —— 给足 5 分钟，避免整跑崩在超时上。
+    # 评分循环一次要跑 6+ 次模型调用（主 agent + 评分器，每轮两次）；
+    # 本机网关在负载高时单次请求可能超过两分钟，给足 5 分钟避免整跑崩在超时上。
+    # （换成 DeepSeek 端点后单次基本 2~10 秒返回，这个值只当兜底上限用。）
     timeout=300,
 )
 
@@ -247,7 +255,7 @@ if __name__ == "__main__":
 #    - `on_evaluation` 回调是观察评分过程的主要手段；v3 流上还会发
 #      rubric_evaluation_start / rubric_evaluation_end 自定义事件（配 CustomTransformer）；
 #    - 不传 rubric 时中间件是 no-op（可无条件常驻）。
-# 2. 本地实测（deepagents 0.7.13）：
+# 2. 本地实测（deepagents 0.7.13，端点 = 网关 grok-4.6）：
 #    - `RubricMiddleware.__init__` 签名：`(*, model, system_prompt=None, tools=None,
 #      grader_middleware=None, grader_context_schema=None, grader_state_schema=None,
 #      prepare_messages_for_grader=None, build_grader_state=None, max_iterations=3,
@@ -279,3 +287,10 @@ if __name__ == "__main__":
 #    D. 非 satisfied 结束时消息不被改写 —— 如果业务要根据结局分支，必须读回调/事件，
 #       不要拿最后一条消息去猜（官方 note 专门提醒过）；
 #    E. 该中间件是 beta，升级 deepagents 后请优先回归本文件。
+# 5. 换端点复跑记录（2026-09，端点 = DeepSeek api.deepseek.com / deepseek-flash）：
+#    - Demo 2 依旧通过（「不传 rubric 即 no-op」与端点无关，不调评分器）；
+#    - Demo 1 / Demo 3 的评分器全部落到 **grader_error**，on_evaluation 的 explanation 是
+#      「Grader raised OpenAIInvalidRequestError (HTTP 400)」，后端原文即上面「要点 D」
+#      那条 `Thinking mode does not support this tool_choice`；
+#    - 脚本本身仍然正常退出（中间件把评分器异常兜成了 grader_error，不会抛穿），
+#      所以**换端点后先看 on_evaluation 判定是不是 grader_error**，别误判成代码有问题。

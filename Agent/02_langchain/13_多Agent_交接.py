@@ -72,15 +72,34 @@ def supervisor(state: MessagesState):
     return {"messages": [response]}
 
 
+def _run_specialist(agent, state: MessagesState):
+    """把整段对话交给专家处理；端点不兼容时退回「只交用户消息」再试一次。
+
+    ⚠️ 实测踩坑（2026-09，端点=DeepSeek 思考模型）：思考模式要求 assistant 消息把
+    `reasoning_content` **一起回传**，而分诊台那条 AIMessage 经 LangGraph 状态往返后
+    该字段丢了，专家代理再把它发给模型就会 400：
+        The `reasoning_content` in the thinking mode must be passed back to the API.
+    退回策略：摘掉分诊台那条 AIMessage，只把用户消息交给专家 ——
+    这也更贴近「交接到专家」的真实语义（分诊台的内部判断不必进专家的上下文）。
+    """
+    try:
+        return agent.invoke({"messages": state["messages"]})
+    except Exception as exc:   # noqa: BLE001 —— 端点不支持回放思考消息时降级，不崩
+        trimmed = state["messages"][:-1] or state["messages"]
+        print(f"  [降级] 端点拒绝回放分诊台消息（{type(exc).__name__}）：{str(exc)[:90]}")
+        print("         改为只把用户消息交给专家（分诊台的判断不进专家上下文）。")
+        return agent.invoke({"messages": trimmed})
+
+
 def handoff_billing(state: MessagesState):
     """交接到账务专家：以独立身份处理整段对话"""
-    result = billing_agent.invoke({"messages": state["messages"]})
+    result = _run_specialist(billing_agent, state)
     return {"messages": [result["messages"][-1]]}
 
 
 def handoff_network(state: MessagesState):
     """交接到网络专家"""
-    result = network_agent.invoke({"messages": state["messages"]})
+    result = _run_specialist(network_agent, state)
     return {"messages": [result["messages"][-1]]}
 
 
