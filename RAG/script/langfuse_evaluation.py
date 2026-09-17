@@ -302,6 +302,10 @@ def rag_task(*, item: Any, **kwargs: Any) -> dict:
         "from_cache": result.get("from_cache", False),
         "from_faq": result.get("from_faq", False),
         "agent_error": result.get("error"),
+        # token 用量与成本（T5）。`tokens` 是这一轮**整条链路**的累加
+        # （主 Agent + evidence-analyst 子代理 + 工具里的 LLM 调用），见 agentic/usage.py。
+        "tokens": result.get("tokens") or {},
+        "cost": result.get("cost"),
     }
 
 
@@ -337,6 +341,18 @@ def item_evaluator(*, input: Any, output: dict, metadata: dict | None = None, **
         # float() 强转:SDK 的 Evaluation.value 只接受数值,而 output 里可能是 int/None
         Evaluation(name="latency_s", value=float(output.get("latency_s", 0.0))),
         Evaluation(name="search_queries", value=float(output.get("search_queries", 0))),
+        # token 用量（T5）。名字固定成 tokens_in / tokens_out / tokens_total / llm_calls：
+        # 改名等于改 UI 指标名、历史 run 会对不上（与 Ragas 四项同一约定）。
+        Evaluation(name="tokens_in", value=float((output.get("tokens") or {}).get("input_tokens", 0))),
+        Evaluation(name="tokens_out", value=float((output.get("tokens") or {}).get("output_tokens", 0))),
+        Evaluation(name="tokens_total", value=float((output.get("tokens") or {}).get("total_tokens", 0))),
+        Evaluation(name="llm_calls", value=float((output.get("tokens") or {}).get("llm_calls", 0))),
+        # 成本：没填单价时 estimate_cost 返回 None ⇒ 这里**不出这一条**（避免把"没算"报成 0）
+        *(
+            [Evaluation(name="cost", value=float(output["cost"]))]
+            if output.get("cost") is not None
+            else []
+        ),
     ]
 
 
@@ -494,6 +510,11 @@ def batch_run_evaluator(*, item_results: list, **kwargs: Any) -> list:
             value=float(sum(1 for o in outputs if o.get("agent_error"))),
         ),
     ]
+    # token 与成本**不在这里显式写**：下面的"自动汇总所有条目级指标"会把条目级的
+    # tokens_in / tokens_out / tokens_total / llm_calls（以及填了单价时的 cost）
+    # 汇总成 batch_mean_tokens_* / batch_mean_cost —— 一处定义、两处生效，避免同义指标两套名字
+    # （实测踩过：先显式加了一组 batch_mean_input_tokens，结果与自动汇总的
+    #  batch_mean_tokens_in 同时在报告里出现，读者会不知道以哪个为准）。
 
     # 把**所有条目级数值指标**自动汇总成批次均值(而不是写死 Recall@K 一项):
     # 这样将来条目级加了新指标,批次侧自动就有 batch_mean_<name>,不用改两处。
