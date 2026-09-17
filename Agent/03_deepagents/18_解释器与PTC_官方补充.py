@@ -63,7 +63,8 @@ llm = init_chat_model(
     api_key=settings.api_key,
     base_url=settings.base_url,
     max_retries=0,
-    timeout=120,
+    # 深度智能体的系统提示长、单轮推理量大，网关繁忙时容易超时；给足 4 分钟
+    timeout=240,
 )
 
 

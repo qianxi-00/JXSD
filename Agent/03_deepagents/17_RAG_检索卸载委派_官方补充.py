@@ -64,10 +64,9 @@ llm = init_chat_model(
     api_key=settings.api_key,
     base_url=settings.base_url,
     max_retries=0,
-    # 显式给超时：本机网关在**长输出/高推理量**的请求上偶发直接掐断连接
-    # （表现为进程硬退出，try/except 兜不住 —— 见文末实测结论）。
-    # 设了 timeout 至少能让"卡住不动"变成"快速失败"。
-    timeout=120,
+    # 显式给足超时：本机网关在负载高（或长输出/高推理量）时单次请求可能超过两分钟。
+    # 实测：120 秒会在网关繁忙时抛 OpenAITimeoutError；放宽到 300 秒后稳定通过。
+    timeout=300,
 )
 
 embeddings = OpenAIEmbeddings(
@@ -219,7 +218,13 @@ def demo_2_two_step_rag() -> None:
         "**回答控制在三句话以内**（本机网关对长输出不稳，短答也更适合演示）。\n\n"
         f"{context}\n\n问题：{query}"
     )
-    response = llm.invoke(prompt)
+    try:
+        response = llm.invoke(prompt)
+    except Exception as exc:  # noqa: BLE001
+        # 网络/网关抖动兜底：不让一次超时把整个演示带崩（按仓库惯例给中文提示）
+        print(f"  本次模型调用失败（网关抖动/超时，非代码问题）：{type(exc).__name__}")
+        print("  提示：本文件依赖真实模型；网关繁忙时重跑一次即可，其余输出仍可参考。")
+        return
     usage = getattr(response, "usage_metadata", None) or {}
     print(f"  送进模型的上下文：{len(prompt)} 字符（{len(picked)} 块全文）")
     print(f"  回答：{str(response.content)[:150]}")
@@ -285,10 +290,16 @@ def demo_3_offload_and_delegate(workdir: Path) -> None:
     )
 
     query = "线上接口变慢时应该怎么排查？上下文塞不下怎么办？"
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": query}]},
-        config={"recursion_limit": 30},
-    )
+    try:
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": query}]},
+            config={"recursion_limit": 30},
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"  本次 agent 运行失败（网关抖动/超时，非代码问题）：{type(exc).__name__}")
+        print("  提示：深度智能体的系统提示很长、每轮推理量也大，网关繁忙时容易超时；")
+        print("        本文件已把超时放宽到 300 秒，重跑一次通常即可。")
+        return
 
     tool_sequence = [
         call["name"]
