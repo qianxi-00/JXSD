@@ -1058,20 +1058,39 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
    **`browser-rpc` 与 `downloader` 两个镜像要从源码构建**，另需写密钥、
    进控制台建账号并生成 API Key，之后还要把 `douyin_client.py` 从 v4 端点改到 v5。
    这是本报告里**唯一一处"已知可行但未做"**的改造。
-5. **`_read_edge_cookies()`（从 Edge 读抖音 Cookie）** —— 未实跑。
+5. **`_read_edge_cookies()`（从 Edge 读抖音 Cookie）** —— **机制已端到端跑通**（修复轮），
+   但**「用你本人登录的抖音账号取回完整 Cookie」仍未验证**。
    它会 `taskkill` 掉所有 Edge 进程再起无头实例，副作用大，不适合在验证阶段触发。
-   仅验证了端口探活函数不可达时返回 `False` 且不抛异常。
 
-   > 修复轮补记（**代码已改，本条仍未实跑**）：原先它连的是 `/json/version` 给的
+   > 修复轮补记（**代码已改，且已真跑**）：原先它连的是 `/json/version` 给的
    > **browser 级** CDP 目标，而 `Network` 是页级域 —— 在那个目标上调
    > `Network.getCookies` 会直接回 `-32601 "'Network.getCookies' wasn't found"`，
-   > Cookie 恒为空，**已登录的用户也会被劝去登录**（实测记录写在 `views/review.py`
-   > 的文件头 docstring 里，本报告不重复它的运行输出）。现在的做法是从 `/json/list`
-   > 里挑 `type == "page"` 的目标（一个页级目标都没有时用 browser 级的
-   > `Target.createTarget` 造一个 `about:blank` 页兜底），并把三个抖音域名**一次**
-   > 传给 `Network.getCookies` 的 `urls`（`domain` 不是 CDP 的合法参数）。
-   > 自检新增了 `_pick_page_target` 的字段形状回归，但**「真从 Edge 里取到 Cookie」
-   > 仍属未实跑**，别把它当成已验证。
+   > Cookie 恒为空，**已登录的用户也会被劝去登录**。实测记录写在
+   > `views/review.py` 的文件头 docstring 里，本报告不重复它的运行输出。
+   > 现在的做法是从 `/json/list` 里挑 `type == "page"` 的目标（一个页级目标都没有时
+   > 用 browser 级的 `Target.createTarget` 造一个 `about:blank` 页兜底），并把三个
+   > 抖音域名**一次**传给 `Network.getCookies` 的 `urls`（`domain` 不是 CDP 的合法参数）。
+   >
+   > **真跑记录（修复轮）**：起一台真 Edge 153（`--remote-debugging-port=9223`），
+   > 先用 CDP `Network.setCookie` 往 cookie 罐里塞两个 `.douyin.com` 的种子 cookie，
+   > 再调项目自己的 `_read_edge_cookies()`：
+   > ```text
+   > 浏览器: Edg/153.0.4234.32
+   > 已塞入 2 个 douyin cookie（page 级目标 EA6F41DFA8FBEC06…）
+   > 返回: error=None   cookie 长度=38
+   > ✓ cookie 串里含 e2e_sessionid    ✓ cookie 串里含 e2e_ttwid
+   > A1 端到端通过 ✓   [exit 0]
+   > ```
+   > 顺带钉死了**第二个**、只有真连一次才会暴露的缺陷：`websocket-client` 默认会带一个
+   > 从 URL 推出的 `Origin` 头，现代 Edge 对带 Origin 的 CDP 连接回 **403**
+   > （`Rejected an incoming WebSocket connection from the http://127.0.0.1:9223 origin`），
+   > 所以两处连接都补了 `suppress_origin=True`（不给 Edge 加 `--remote-allow-origins`：
+   > `_find_debug_port()` 的意图正是复用用户**已经开着**的 Edge，那种进程补不了命令行开关）。
+   >
+   > **仍未覆盖的部分**：上面验的是「CDP 机制通不通」，用的是**种子 cookie**；
+   > 「用户本人在 Edge 里登录抖音后，这套能不能取回那一整份 Cookie」没跑过 ——
+   > 那需要你本机真登录一次，且会关掉你当前所有 Edge 窗口（`_launch_edge()` 的副作用，
+   > 页面上已明示）。
 6. **~~【需要你处理】~~ 百炼账号对计费模型返回 `Arrearage`** —— **已充值解决**。
    本轮实测（同一把 key，`sha256[:12]=b96e9a10cb9f`，len 35）：
 
