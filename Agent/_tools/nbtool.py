@@ -562,6 +562,14 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 # 匹配 markdown 里的 `### 预期输出` + ```text 围栏
 EXPECT_RE = re.compile(r"###\s*预期输出[^\n]*\n+```text\n(.*?)```", re.DOTALL)
 
+# 「本段输出不确定」的标注词。写 notebook 的人已经把易变内容标出来了
+# （时间戳、随机 UUID、模型自己的措辞……），核对器必须认这些标注，
+# 否则会把「本来就每次不同」的段落当成错误，一天到晚误报。
+VOLATILE_RE = re.compile(
+    r"每次(运行|执行)?[^\n]{0,6}(不同|不一样|会变)|随机|非确定|不确定|时间戳|会变|"
+    r"视[^\n]{0,8}而定|实测值|本机跑出来|因机器而异|以你运行时为准"
+)
+
 
 def norm_lines(text: str) -> list[str]:
     """把输出切成「非空且已去首尾空白」的行列表 —— 比对时忽略缩进与空行差异。"""
@@ -613,7 +621,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print("没有找到 notebook")
         return 1
 
-    total_blocks = total_ok = 0
+    total_blocks = total_ok = skipped = 0
     bad_files = 0
     for path in targets:
         rel = disp(path)
@@ -638,9 +646,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
                 if text.strip():
                     last_out = norm_lines(text)
                 continue
+            # 这个 markdown 格自己声明了「输出不确定」→ 整格的预期输出都跳过
+            volatile = bool(VOLATILE_RE.search(cell.source))
             for block in EXPECT_RE.findall(cell.source):
                 want = norm_lines(block)
                 if not want:
+                    continue
+                if volatile:
+                    skipped += 1
                     continue
                 total_blocks += 1
                 ok, missing = is_subsequence(want, last_out)
@@ -660,7 +673,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print(f"  ✓ {rel}")
 
     print(f"\n核对 {len(targets)} 个 notebook：「预期输出」共 {total_blocks} 段，"
-          f"与实跑一致 {total_ok} 段，不一致 {total_blocks - total_ok} 段；有问题的文件 {bad_files} 个")
+          f"与实跑一致 {total_ok} 段，不一致 {total_blocks - total_ok} 段；"
+          f"另有 {skipped} 段已声明为非确定输出（跳过比对）；有问题的文件 {bad_files} 个")
     return 1 if bad_files else 0
 
 

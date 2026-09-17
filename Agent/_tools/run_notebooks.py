@@ -87,14 +87,27 @@ def resolve_targets(target: str | None) -> list[Path]:
     如果每人都跑一次 `run_notebooks.py <章>`，就会把同章其它 notebook 也带着跑一遍
     —— 既浪费模型额度，又会因为抢端口 / 抢 tmp 工作目录而互相干扰。
     所以每个 subagent 只跑自己那一个。
+
+    路径的两种写法都接受（踩过的坑）：
+        `Agent\\01_langgraph\\01_xx.ipynb`  —— 相对仓库根
+        `01_langgraph\\01_xx.ipynb`         —— 相对 Agent/
+    一开始只实现了后者，于是任务书里写的 `Agent\\...` 形式被拼成 `Agent/Agent/...`，
+    报「没有找到 notebook」—— 有 5 个 subagent 先后踩到并反馈。
     """
     if not target:
         return all_notebooks()
     if target.endswith(".ipynb"):
         p = Path(target)
-        if not p.is_absolute():
-            p = AGENT / target
-        return [p] if p.exists() else []
+        candidates: list[Path] = []
+        if p.is_absolute():
+            candidates.append(p)
+        else:
+            candidates.append(REPO_ROOT / p)    # 相对仓库根
+            candidates.append(AGENT / p)        # 相对 Agent/
+        for c in candidates:
+            if c.exists():
+                return [c]
+        return []
     return all_notebooks(target)
 
 
