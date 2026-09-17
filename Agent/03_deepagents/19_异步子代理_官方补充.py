@@ -312,8 +312,15 @@ def demo_2_check_and_list() -> None:
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="ap_server_") as tmp:
         workdir = Path(tmp)
-        print(f"生成最小 Agent Protocol 应用（临时目录，跑完即删）：{workdir}")
-        process = start_agent_protocol_server(workdir)
+        # 先判断端口上是否已有服务：有就复用（那时**不会**生成应用文件，也不该打印"已生成"）
+        if server_is_up():
+            print(f"检测到 {BASE_URL} 已有服务 → 复用（本次不生成应用、不新起进程）")
+            print("  ⚠️ 注意：复用的服务加载的是**它自己启动时**那份图定义；")
+            print("     若你刚改过 BG_GRAPH_SOURCE，请先杀掉旧服务（或换端口）再跑，否则验的是旧代码。")
+            process = None
+        else:
+            print(f"生成最小 Agent Protocol 应用（临时目录，跑完即删）：{workdir}")
+            process = start_agent_protocol_server(workdir)
         try:
             if process is not None:
                 print(f"启动服务 {BASE_URL}（langgraph dev，PYTHONUTF8=1）…")
