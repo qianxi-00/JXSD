@@ -5,6 +5,23 @@
     "coverage 审计与 subagent 任务书都以本文件为准。"
   ],
   "_源根": "_py_source",
+  "_端口分配": {
+    "_为什么要这张表": [
+      "多个 notebook 会自己起本地服务，全量无头执行时它们在不同车道并发跑 —— 端口撞了就必然互踩，",
+      "而且症状很隐蔽：01_langgraph/03 原本用 8100，而本机用户的 RAG 服务正好在 8100 上，",
+      "它的就绪探测（connect_ex）把 RAG 误判成『自己起的服务已就绪』，请求全打到 RAG 上返回 404，静默失败。",
+      "所以端口在这里统一登记，改端口先改这张表。另：8099 / 8100 是用户 RAG 服务占用的，谁都别碰。"
+    ],
+    "01_langgraph/03_流式与中断.ipynb": "8110（FastAPI 常驻，后台起 + 末尾 taskkill）、8021（线程版自测）",
+    "02_langchain/06_管道_MCP进阶_RAG与测试.ipynb": "8180（HTTP MCP 服务端，子进程后台起）",
+    "05_mcp/01_服务端与客户端.ipynb": "8150",
+    "05_mcp/02_资源与提示词.ipynb": "8120",
+    "05_mcp/03_三种Agent调用.ipynb": "8130",
+    "05_mcp/04_权限_JWT认证.ipynb": "9110（认证服务）+ 8140（MCP 服务端）",
+    "05_mcp/05_部署与调试.ipynb": "不起服务（只探测并给 Inspector 指引）",
+    "07_protocols/02_A2A协议.ipynb": "进程内非阻塞服务，绑随机端口（ThreadingHTTPServer 用 0），不占固定号",
+    "03_deepagents/05_解释器PTC与异步子代理.ipynb": "2024（langgraph dev，后台起 + 末尾 taskkill /T）"
+  },
   "_排除": {
     "03_deepagents/create_txt.py": "不是课案文件：它是 06_后端_LocalShell_jxsd 演示时『Agent 自己写出来的』脚本，属于运行时产物（早期误提交入库）。归档保留但不纳入合并与覆盖率审计。"
   },
