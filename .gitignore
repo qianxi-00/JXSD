@@ -135,3 +135,17 @@ output.txt
 
 # .env 的备份文件同样含密钥，绝不允许进仓库
 .env.bak*
+
+# DSH harness 的工作区临时目录
+/.dsh_tmp/
+
+# notebook 化之后：归档区里的课案脚本仍会生成 tmp_* 工作目录
+Agent/_py_source/*/tmp_*/
+# notebook 自己的临时工作目录（每个章节目录下）
+Agent/*/tmp_nb_work/
+Agent/*/*/tmp_nb_work/
+
+# 归档区的课案脚本会按 __file__ 位置重建自己的资源目录（notebook 一律用原位置那份）
+Agent/_py_source/08_skills/skills/
+Agent/_py_source/08_skills/.claude/
+Agent/_py_source/09_aegra_deploy/aegra_project/
