@@ -35,7 +35,28 @@ from config import settings
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-# 平台 ID 映射 —— 来自 TrendRadar 的 config.yaml
+# 平台 ID 映射 —— 真实来源是 **NewsNow 的 source 列表**（`newsnext/newsnow` 的
+# `shared/sources.json` 里的键），**不是** TrendRadar 的 `config.yaml`。
+#
+# ⚠️ 原注释「来自 TrendRadar 的 config.yaml」实测不成立：
+#    TrendRadar `config/config.yaml` 只有 15 个 id，与本表（24 项）交集仅 10 个，
+#    表里 14 项它根本没有。本模块打的 API 就是 NewsNow 的 `/api/s`。
+#
+# ⚠️ 上游 id 会变，本表只是 **2026-09-17 的一次快照**。核对某个 id 现在还有效吗：
+#    · 首选 ``fetch_platform_hot("<id>")`` 看返回条数（0 条基本就是死了）；
+#    · 或直接 GET ``https://newsnow.busiyi.world/api/s?id=<id>&latest``
+#      —— 注意**必须带 DEFAULT_HEADERS 里的浏览器 UA**：不带 UA 时 Cloudflare 对
+#      python-requests 的默认 UA 一律回 403，看起来像「所有平台全挂了」。
+#
+# ⚠️ 已知在上游失效的键（**别删** —— 删了会连带影响 NAME_TO_IDS 与页面的平台下拉，
+#    属行为变更）。2026-09-17 实测，下面这 7 项（8 个名字，netease-news 与
+#    neteasenews 是同一平台的两种拼法）**全部 HTTP 500**，且都不在
+#    `shared/sources.json`（66 项）里：
+#        netease-news / neteasenews / xiaohongshu / tencent-news / sogou /
+#        guancha / acfun / csdn
+#    失效表现：`fetch_platform(pid)` 会重试 2 次（每次失败后 sleep 2~5s），
+#    实测白等 7.6s（网易新闻）/ 12.0s（小红书）后静默返回 `[]`，界面显示 0 条。
+#    所以看到「某个平台总是 0 条」，先按上面的方法核 id，别去怀疑网络或限流。
 PLATFORM_IDS = {
     # 主流平台
     "douyin": "抖音",

@@ -10,6 +10,12 @@
     | 生成方式：提交 HeyGem，拿 task_code 后点刷新 | 提交 PixVerse 对口型，同样拿 task_code 后点刷新（交互一致） |
     | 音色：只有「克隆声音」一条路 | 增加「PixVerse 内置音色」下拉 —— 克隆不可用时也能一步出片 |
     | 选中模特的记忆文件 ``.cache/heygem_state.json`` | ``.cache/avatar_state.json`` |
+    | 模式名 ``mode="heygem"`` | 改为 ``mode="avatar"``（引擎换了，沿用旧名会误导） |
+    | 上传框收「照片或视频」 | **只收视频** —— PixVerse 对口型要视频，照片只能出静态画面（页面文案原本就这么写了） |
+    | ``_add_history`` 在按钮分支 | 同样放按钮分支（本项目其它 5 个页面统一如此；放渲染分支会每次 rerun 多记一条） |
+    | 提词器用 ``st.components.v1.html`` | 改用 ``st.iframe``（前者 docstring 标明 2026-06-01 后移除，本机已在打弃用告警） |
+    | ``use_container_width=True`` | ``width="stretch"``（streamlit 1.61 已弃用前者） |
+    | 产物名用 ``abs(hash(...))`` | 改用 ``hashlib.md5(...)[:8]`` —— 字符串 hash 带进程级随机盐，跨进程不稳定、只堆积不复用 |
 
 保留课案的设计
     · **提词器**是纯前端 HTML/JS 大字滚动（每次 3 行、1~15 秒/行可调），不调任何模型。
@@ -17,6 +23,7 @@
     · 模特用网格展示，支持预览 / 选择 / 二次确认删除。
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -34,7 +41,11 @@ from config import settings  # noqa: E402
 STATE_FILE = Path(_HERE) / ".cache" / "avatar_state.json"
 
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".webm", ".mkv"}
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+# 注：本项目不做图片模特 —— PixVerse 对口型要的是视频（照片只能出静态画面），
+# 所以上传与列表都按 VIDEO_EXTS 过滤。原先那个 IMAGE_EXTS 常量已失去调用方，删掉。
+
+# 上传框只收视频扩展名，且从 VIDEO_EXTS 派生 —— 手写两份会和模特列表的过滤走偏
+AVATAR_UPLOAD_TYPES = sorted(ext.lstrip(".") for ext in VIDEO_EXTS)
 
 # 会话状态里需要初始化的键
 _SESSION_KEYS = (
@@ -68,11 +79,32 @@ def _save_selected_avatar(path: str) -> None:
 
 
 # --------------------------------------------------------------------------
+# 操作历史（首页展示最近 10 条）
+# --------------------------------------------------------------------------
+def _add_history(action: str, summary: str) -> None:
+    """往本次操作记录里追加一条（首页展示最近 10 条）。
+
+    ``main.py`` 已经初始化了 ``st.session_state.history``；
+    这里的 ``setdefault`` 只是让页面脱离 main.py 单独跑时也不炸。
+    """
+    from datetime import datetime
+
+    history = st.session_state.setdefault("history", [])
+    history.append({
+        "time": datetime.now().strftime("%H:%M"),
+        "action": action,
+        "summary": summary[:200],
+    })
+
+
+# --------------------------------------------------------------------------
 # 模特列表
 # --------------------------------------------------------------------------
 def _list_avatars() -> list:
-    """扫描模特目录，列出所有可用的视频/图片。
+    """扫描模特目录，列出所有可用的**视频**。
 
+    图片（png/jpg…）选不了对口型 —— 只会生成静态画面，却会一路走到付费提交，
+    所以照 ``VIDEO_EXTS`` 过滤掉。
     跳过中间产物（``_muted`` 后缀、``tts_``/``voice_`` 前缀等），
     这些是流程自己生成的，不该出现在选择列表里。
     """
@@ -93,7 +125,7 @@ def _list_avatars() -> list:
         if not full.is_file():
             continue
         ext = full.suffix.lower()
-        if ext not in VIDEO_EXTS and ext not in IMAGE_EXTS:
+        if ext not in VIDEO_EXTS:
             continue
         name = full.stem
         if name.endswith("_muted"):
@@ -128,8 +160,6 @@ def _render_teleprompter(script: str) -> None:
     lines = [ln.strip() for ln in script.split("\n") if ln.strip()] or [script]
     total = len(lines)
 
-    import streamlit.components.v1 as components
-
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 * {{ margin:0; padding:0; }}
@@ -157,7 +187,11 @@ function show() {{
 }}
 show();
 </script></body></html>"""
-    components.html(html, height=330, scrolling=False)
+    # ⚠️ 从 `st.components.v1.html` 迁到 `st.iframe`：前者的 docstring 里写着
+    #    「will be removed after 2026-06-01」（本机运行时也确实打这条弃用告警），
+    #    而 streamlit 1.61.1 的 `st.iframe(src, ...)` 明确支持直接传 HTML 内容。
+    #    唯一的能力差异：`st.iframe` 没有 `scrolling=` 参数（原值 False 即默认行为）。
+    st.iframe(html, height=330)
     st.caption(f"💡 共 {total} 行，每次 3 行大字，{speed} 秒换一行 | 到底自动停止")
 
 
@@ -211,14 +245,13 @@ def show_video() -> None:
                     with cols[ci]:
                         try:
                             data = Path(a["path"]).read_bytes()
-                            if a["type"] == "image":
-                                st.image(data, use_container_width=True)
-                            else:
-                                st.video(data)
+                            # 模特列表已按 VIDEO_EXTS 过滤（见 _list_avatars），
+                            # 这里必然都是视频 —— 原来那条 st.image 分支已不可达，删掉。
+                            st.video(data)
                         except Exception:  # noqa: BLE001
                             st.warning("无法加载预览")
 
-                        icon = "🎬" if a["type"] == "video" else "🖼️"
+                        icon = "🎬"
                         size = (
                             f"{a['size_mb']:.1f}MB" if a["size_mb"] < 1000
                             else f"{a['size_mb'] / 1024:.1f}GB"
@@ -231,7 +264,7 @@ def show_video() -> None:
                             if st.button(
                                 "✅ 已选中" if selected else "🔘 选择此模特",
                                 key=f"sel_avatar_{idx}",
-                                use_container_width=True,
+                                width="stretch",
                                 type="primary" if not selected else "secondary",
                                 disabled=selected,
                             ):
@@ -265,13 +298,13 @@ def show_video() -> None:
 
         new_file = st.file_uploader(
             "📤 上传新模特（10~30 秒正面说话视频）",
-            type=["mp4", "mov", "avi", "png", "jpg", "jpeg"],
+            type=AVATAR_UPLOAD_TYPES,
             key="new_avatar_upload",
         )
         if new_file:
             avatar_dir = Path(settings.media.get_avatar_input_dir())
             avatar_dir.mkdir(parents=True, exist_ok=True)
-            save_path = avatar_dir / f"avatar_{abs(hash(new_file.name)) % 100000:05d}{Path(new_file.name).suffix}"
+            save_path = avatar_dir / f"avatar_{hashlib.md5(new_file.name.encode('utf-8')).hexdigest()[:8]}{Path(new_file.name).suffix}"
             save_path.write_bytes(new_file.getvalue())
             _save_selected_avatar(str(save_path))
             st.success(f"✅ 已上传: {save_path.name}")
@@ -295,7 +328,7 @@ def show_video() -> None:
             st.caption("内置音色由 PixVerse 直接合成语音，一步出片，但无法使用你自己的声音。")
 
     # ---------------- 开始生成 ----------------
-    if st.button("🎬 开始生成", type="primary", use_container_width=True):
+    if st.button("🎬 开始生成", type="primary", width="stretch"):
         if not raw:
             st.warning("请输入台词")
             return
@@ -316,6 +349,8 @@ def show_video() -> None:
         st.session_state["hg_msg"] = result.get("avatar_msg", "")
         st.session_state["hg_mode"] = mode_key
         st.session_state["hg_has_result"] = True
+        # 历史只在这里记一次（放渲染分支的话，每次 rerun 都会重放一条）
+        _add_history("口播视频", raw[:60])
         st.rerun()
 
     # ---------------- 渲染结果 ----------------

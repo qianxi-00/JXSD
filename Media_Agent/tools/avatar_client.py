@@ -44,6 +44,7 @@
        计费按音频时长向上取整（TTS 模式按文本 UTF-8 字节数 ÷ 15 向上取整）。
 """
 
+import hashlib
 import os
 import sys
 import time
@@ -325,9 +326,12 @@ def download_result(video_url: str, output_path: str = None) -> str:
         return ""
 
     if output_path is None:
+        # 用 md5 而不是内置 hash()：字符串 hash 带**进程级随机盐**，
+        # 同一段素材每次新进程会得到不同文件名 → 只会堆积、不会复用。
+        _digest = hashlib.md5(video_url.encode("utf-8")).hexdigest()[:8]
         output_path = os.path.join(
             settings.media.get_video_output_dir(),
-            f"avatar_{abs(hash(video_url)) % 100000:05d}.mp4",
+            f"avatar_{_digest}.mp4",
         )
 
     try:

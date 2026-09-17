@@ -20,7 +20,7 @@
     |---|---|---|---|
     | 操作历史 | `_add_history(...)` 放在**渲染分支末尾** | 移到「生成方案」按钮分支里 | 课案那行每次 rerun 都会执行一次 —— 点一下下载按钮就多一条历史记录 |
     | 按钮宽度 | `use_container_width=True` | `width="stretch"` | Streamlit 1.61 已弃用前者（`st.dataframe` 上会弹弃用警告），两者行为完全一致 |
-    | 失败提示 | 无 | 三块结果里任一带 `[LLM调用失败/未配置]` 前缀就红条提示 | 否则页面上是一坨「模型未配置」的文本，看着像正常输出 |
+    | 失败提示 | 无 | 三块结果里任一带 `_FAIL_PREFIXES` 里的前缀就红条提示：LLM 层 `[LLM调用失败/未配置]` + 工作流节点级 `[画像分析失败/对标账号分析失败/定位方案生成失败]` + 图级 `[工作流执行失败]` | 否则页面上是一坨「模型未配置」或兜底文案的文本，看着像正常输出 |
     | 绝对路径 | 无 | 无 | 课案其余页面里的 `C:/Users/13261/...` 一律不带过来 |
     | 无结果显示 | 什么都不显示 | 提示「填写后点击生成」 | 空页面让人以为功能坏了 |
 
@@ -54,8 +54,17 @@ if _PROJECT_ROOT not in sys.path:
 
 import streamlit as st  # noqa: E402
 
-# LLM 全失败时返回的文本前缀（positions 页只做展示，不做重试）
-_FAIL_PREFIXES = ("[LLM调用失败", "[LLM未配置")
+# 失败结果的文本前缀（本页只做展示，不做重试）。
+# 不能只认 LLM 层的两条：`workflows/positioning.py` 自己也会回填三种**节点级**失败文案，
+# 图级 `except` 还会回填一条 —— 漏掉它们，失败文本就会被当正常输出渲染，红条不出现。
+_FAIL_PREFIXES = (
+    "[LLM调用失败",        # 见 workflows/base.py 的 llm_call 兜底
+    "[LLM未配置",          # 同上：根目录 .env 里没配 API_KEY
+    "[画像分析失败",        # workflows/positioning.py 节点① 的 except
+    "[对标账号分析失败",    # workflows/positioning.py 节点② 的 except
+    "[定位方案生成失败",    # workflows/positioning.py 节点③ 的 except
+    "[工作流执行失败",      # workflows/positioning.py 图级 except
+)
 
 
 def _add_history(action: str, summary: str) -> None:
@@ -116,9 +125,6 @@ def show_positioning() -> None:
         st.info("填写上方信息后点击「生成定位方案」。")
         return
 
-    st.success("✅ 方案生成完成！")
-    st.caption(f"输入：{st.session_state.get('pos_input', '')}")
-
     profile = result.get("profile", "")
     competitors = result.get("competitors", "")
     plan = result.get("plan", "")
@@ -129,11 +135,14 @@ def show_positioning() -> None:
         if value.startswith(_FAIL_PREFIXES)
     ]
     if failed:
+        # ⚠️ 失败时**不能**再打「方案生成完成」的绿条 —— 红绿并存会让人以为只是部分降级。
         st.error(
             "以下环节没有跑成功：" + "、".join(failed) +
             "。可以直接重试；若一直失败，检查根目录 .env 里的 API_KEY / BASE_URL / MODEL_NAME。"
         )
-
+    else:
+        st.success("✅ 方案生成完成！")
+    st.caption(f"输入：{st.session_state.get('pos_input', '')}")
     tab1, tab2, tab3 = st.tabs(["📊 画像分析", "🔍 对标账号", "📝 完整方案"])
     with tab1:
         st.markdown(profile or "分析中...")

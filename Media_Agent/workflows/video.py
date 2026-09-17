@@ -12,7 +12,7 @@
     |---|---|
     | 数字人引擎：本地 HeyGem（Docker 三容器 / AutoDL） | 百炼爱诗 PixVerse 视频对口型 |
     | 声音克隆：AutoDL Fish-Speech | 百炼 CosyVoice 声音复刻（``tools/voice_clone.py``） |
-    | 降级配音：Edge TTS | 不变（保留课案的降级链） |
+    | 降级配音：Edge TTS | 勾了克隆时不变（克隆失败 → edge-tts → PixVerse 内置 TTS）；**不勾克隆**则跳过前两级，直接用平台内置音色 |
     | 模特素材目录：HeyGem 的 Docker 挂载目录 | ``MEDIA_AVATAR_INPUT_DIR``（项目内 ``.cache/avatars``） |
     | 模式名 ``mode="heygem"`` | 改为 ``mode="avatar"``（不再用 HeyGem，沿用旧名会误导） |
 
@@ -21,11 +21,28 @@
     但 ``VideoState`` 里根本没有 ``optimized`` 这个字段（只有 ``raw_script``）——
     数字人模式一跑就 ``KeyError``。本项目统一用 ``state["raw_script"]``。
 
+**本项目特有的两处**（都不改 ``VideoState`` 的键，页面与 ``refresh_avatar_task`` 照旧）
+    ① **配音分流**：页面的「优先使用克隆音色」勾选框不只是一个降级开关 ——
+       **不勾它**意味着用户已经在上方下拉里挑好了「PixVerse 内置音色」，那就该一步出片。
+       原写法是不勾也照样先跑一次 edge-tts，于是 ``speaker_id`` 几乎永远用不上：
+       用户选了内置音色，实际听到的却是 edge-tts 的通用音色。现在的分支::
+
+           use_cloned_voice=True  （默认）克隆音色 → 失败降级 edge-tts → 再失败才用 PixVerse 内置 TTS
+           use_cloned_voice=False 跳过克隆与 edge-tts，直接 PixVerse 内置 TTS（speaker_id 生效）
+
+       课案里根本没有「内置音色」这条用户可见的路（是被克隆在本机跑不通逼出来的备选），
+       所以这条分流的语义由本项目定义。
+    ② **模特视频校验**：课案原文是 ``if not avatar_video or not os.path.exists(avatar_video)``，
+       本项目只判了非空 —— 路径失效时不会提前拦，要走到 ``tools/avatar_client.py``
+       才报「人脸视频不存在」，而那时 TTS 已经白跑完了（本节点注释本来就在强调
+       「不要白跑一次 TTS」）。现已把存在性校验补回。
+
 课案的设计意图（保留）
     台词**原样使用，不做 LLM 改写** —— 用户是拿它当提词器读稿的，
     改写等于换了稿子。所以这条链路上一次 LLM 都不调。
 """
 
+import os
 import sys
 
 from langgraph.graph import END, START, StateGraph
@@ -50,8 +67,8 @@ class VideoState(TypedDict, total=False):
     raw_script: str          # 用户输入的台词（原样使用）
     mode: str                # "teleprompter" | "avatar"
     avatar_path: str         # 数字人模特视频路径（10~30 秒正面说话）
-    use_cloned_voice: bool   # 是否尝试用克隆音色（失败自动降级 edge-tts）
-    speaker_id: str          # 走 PixVerse 内置 TTS 时的音色 ID
+    use_cloned_voice: bool   # True=优先克隆音色（失败降级 edge-tts）；False=直接用内置音色
+    speaker_id: str          # 走 PixVerse 内置 TTS 时的音色 ID（不勾克隆音色时生效）
 
     teleprompter: str        # 提词器内容 = 用户原文
     audio_path: str          # 生成的配音音频
@@ -76,6 +93,10 @@ def node_generate_video(state: VideoState) -> dict:
 
     提词器模式直接短路返回。
 
+    配音走哪条路，由 ``use_cloned_voice`` 决定（详见文件头）：
+    ``True`` 克隆音色 → 失败降级 edge-tts → 再失败才用 PixVerse 内置 TTS；
+    ``False`` 直接用 PixVerse 内置 TTS（页面的内置音色下拉，一步出片）。
+
     **本节点不阻塞等待**：对口型任务是异步的（官方说 1~5 分钟），
     在 Streamlit 里阻塞会把界面卡死。这里只提交、留下 ``task_code``，
     由页面的「刷新进度」按钮去轮询。
@@ -90,14 +111,18 @@ def node_generate_video(state: VideoState) -> dict:
     if not script.strip():
         return {"avatar_msg": "台词为空", "task_code": "", "audio_path": "", "video_path": ""}
 
-    # 先校验模特视频：缺了就直接返回提示，**不要白跑一次 TTS**。
+    # 先校验模特视频：没给、或路径已失效，都直接返回提示，**不要白跑一次 TTS**。
     # （课案的顺序是先配音后检查，会白白消耗一次合成额度。）
-    if not avatar_video:
+    if not avatar_video or not os.path.exists(avatar_video):
+        # 分清「还没选模特」和「选过但文件没了」：后者在页面上看不出异常，
+        # 把失效路径带上才能看出是文件被删/被移走了。
+        stale = f"模特视频不存在：`{avatar_video}`\n\n" if avatar_video else ""
         return {
             "audio_path": "",
             "video_path": "",
             "task_code": "",
             "avatar_msg": (
+                f"{stale}"
                 "请先上传一段模特视频！\n\n"
                 "数字人对口型需要一段 10~30 秒的正面说话视频（mp4/mov），"
                 "用它的面部运动特征来驱动口型。\n"
@@ -106,11 +131,14 @@ def node_generate_video(state: VideoState) -> dict:
         }
 
     # ---------- Step 1: 产出配音音频 ----------
+    # 不勾「优先使用克隆音色」= 用户已经在下拉里挑好了 PixVerse 内置音色 →
+    # 这里就不要再用 edge-tts 顶替（否则 speaker_id 永远轮不到，用户听到的是通用音色）。
     audio_path = ""
     if state.get("use_cloned_voice", True):
         audio_path = _try_cloned_voice(script, avatar_video)
-    if not audio_path:
-        audio_path = _try_edge_tts(script)
+        if not audio_path:
+            # 勾了克隆但没成功 → 走课案的降级链：edge-tts 通用音色兜底
+            audio_path = _try_edge_tts(script)
 
     # ---------- Step 2: 提交数字人任务 ----------
     from tools.avatar_client import submit_lipsync
@@ -120,7 +148,8 @@ def node_generate_video(state: VideoState) -> dict:
         submitted = submit_lipsync(video_path=avatar_video, audio_path=audio_path)
         driver = "音频驱动（用生成的配音）"
     else:
-        # 没有配音（克隆与 edge-tts 都失败）→ 退回 PixVerse 内置 TTS，一步出片
+        # 没抽音频（用户没勾克隆音色，或克隆与 edge-tts 都失败）→
+        # 退回 PixVerse 内置 TTS，用选好的音色一步出片
         submitted = submit_lipsync(
             video_path=avatar_video,
             tts_text=script,
@@ -208,8 +237,10 @@ def run_video(
     Args:
         raw_script: 用户原始台词（原样使用，不做改写）。
         mode: ``"teleprompter"``（只看稿）或 ``"avatar"``（数字人出镜）。
-        avatar_path: 模特视频路径（数字人模式必填）。
-        use_cloned_voice: 是否优先尝试克隆音色（失败自动降级 edge-tts）。
+        avatar_path: 模特视频路径（数字人模式必填，且必须真实存在）。
+        use_cloned_voice: 是否优先尝试克隆音色。``True`` 时克隆失败依次降级
+            edge-tts、PixVerse 内置 TTS；``False`` 时直接走 PixVerse 内置 TTS
+            （即 ``speaker_id``）一步出片，不跑 edge-tts。
         speaker_id: 走 PixVerse 内置 TTS 时的音色 ID。
 
     Returns:
@@ -284,6 +315,13 @@ if __name__ == "__main__":
     assert "模特视频" in r2["avatar_msg"], r2["avatar_msg"]
     print("  数字人缺模特 → 中文提示    OK")
 
+    # 3b) 模特路径已失效（文件被删/被移走）→ 同样在跑 TTS 之前就拦下
+    _missing = str(Path(__file__).resolve().parent / "no_such_avatar.mp4")
+    r2b = run_video("你好", mode="avatar", avatar_path=_missing)
+    assert r2b["task_code"] == "" and r2b["audio_path"] == "", r2b
+    assert "不存在" in r2b["avatar_msg"] and _missing in r2b["avatar_msg"], r2b["avatar_msg"]
+    print("  模特路径失效 → 提前拦下    OK")
+
     # 4) 空台词
     r3 = run_video("", mode="avatar", avatar_path="x.mp4")
     assert "台词为空" in r3["avatar_msg"], r3
@@ -299,6 +337,78 @@ if __name__ == "__main__":
     # 6) 刷新接口的失败路径
     assert refresh_avatar_task("")["finished"] is False
     print("  refresh_avatar_task 空参   OK")
+
+    # 7) 配音分流（本轮修的那个 bug）：不勾克隆音色 = 用户已经挑了 PixVerse 内置音色，
+    #    就该跳过克隆与 edge-tts，把 tts_text / speaker_id 交给 submit_lipsync 一步出片。
+    #    离线打桩：用假的 tools.* 模块顶掉真实导入 —— 不联网、也不依赖 dashscope/edge-tts。
+    import types
+
+    _stubbed = ("tools.avatar_client", "tools.media_tools", "tools.voice_clone")
+    _saved_modules = {n: sys.modules.get(n) for n in _stubbed}
+    seen: dict = {}
+    counts = {"clone": 0, "edge": 0}
+
+    try:
+        fake_client = types.ModuleType("tools.avatar_client")
+
+        def _fake_submit(**kwargs):          # 只记录实收参数，不发请求
+            seen.clear()
+            seen.update(kwargs)
+            return {"success": True, "task_id": "stub-task", "message": ""}
+
+        fake_client.submit_lipsync = _fake_submit
+
+        fake_media = types.ModuleType("tools.media_tools")
+
+        def _fake_tts(text, output_path=None):   # 顶掉真实 edge-tts（那是网络调用）
+            counts["edge"] += 1
+            return "C:/fake/edge.mp3"
+
+        fake_media.generate_tts = _fake_tts
+
+        fake_voice = types.ModuleType("tools.voice_clone")
+
+        def _fake_clone(path):
+            counts["clone"] += 1
+            return {"success": False, "message": "stub 故意失败"}
+
+        fake_voice.clone_voice = _fake_clone
+        fake_voice.tts_with_cloned_voice = lambda *a, **k: "C:/fake/cloned.mp3"
+
+        sys.modules["tools.avatar_client"] = fake_client
+        sys.modules["tools.media_tools"] = fake_media
+        sys.modules["tools.voice_clone"] = fake_voice
+
+        _avatar = str(Path(__file__).resolve())      # 只要是真实存在的文件就行，这里用本文件
+
+        # 7a) 不勾克隆音色 → 一次 TTS 都不跑，文本与音色直接交给 PixVerse
+        r7a = run_video("你好", mode="avatar", avatar_path=_avatar,
+                        use_cloned_voice=False, speaker_id="piccolo")
+        assert counts == {"clone": 0, "edge": 0}, f"不勾克隆音色时不该再跑 TTS: {counts}"
+        assert seen.get("tts_text") == "你好", seen
+        assert seen.get("speaker_id") == "piccolo", seen
+        assert "audio_path" not in seen, seen
+        assert r7a["task_code"] == "stub-task" and "内置音色" in r7a["avatar_msg"], r7a
+        print("  不勾克隆 → 内置音色出片   OK")
+
+        # 7b) 勾了克隆（默认）→ 克隆失败降级 edge-tts，仍是音频驱动（课案降级链不变）
+        run_video("你好", mode="avatar", avatar_path=_avatar)
+        assert counts == {"clone": 1, "edge": 1}, f"克隆失败应降级一次 edge-tts: {counts}"
+        assert seen.get("audio_path") == "C:/fake/edge.mp3", seen
+        assert "tts_text" not in seen, seen
+        print("  勾了克隆 → 失败降级 edge  OK")
+
+        # 7c) 克隆与 edge-tts 都失败 → 退回 PixVerse 内置 TTS（最后一级保底还在）
+        fake_media.generate_tts = lambda text, output_path=None: ""
+        run_video("你好", mode="avatar", avatar_path=_avatar, speaker_id="auto")
+        assert seen.get("tts_text") == "你好", seen
+        print("  两级都失败 → 内置 TTS 兜底 OK")
+    finally:
+        for _name, _mod in _saved_modules.items():
+            if _mod is None:
+                sys.modules.pop(_name, None)
+            else:
+                sys.modules[_name] = _mod
 
     print(f"\n  数字人模型: {settings.media.avatar_model}")
     print("全部自检通过")

@@ -44,18 +44,10 @@ st.set_page_config(
 )
 
 if "history" not in st.session_state:
+    # 操作历史由各页面自己 append（见 views/*.py 的 _add_history）。
+    # 课案在这里还带了一份 add_to_history()，但全仓 0 调用方，已删 ——
+    # 两份同逻辑实现容易只改一处（各页面的 _add_history 已用 setdefault 加固）。
     st.session_state.history = []
-
-
-def add_to_history(action: str, summary: str) -> None:
-    """记录一条操作历史（首页会展示最近 10 条）。"""
-    from datetime import datetime
-
-    st.session_state.history.append({
-        "time": datetime.now().strftime("%H:%M"),
-        "action": action,
-        "summary": summary[:200],
-    })
 
 
 # ==================== 侧边栏导航 ====================

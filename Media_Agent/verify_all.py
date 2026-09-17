@@ -7,8 +7,9 @@
     按「表驱动」的方式跑完 Media_Agent 的全部检查，最后统一汇总：
 
     第 1 层 · 模块自检（子进程）
-        每个 ``tools/*.py`` 与 ``workflows/*.py`` 末尾都有一个
-        ``if __name__ == "__main__":`` 自检块（纯逻辑断言，不联网）。
+        每个承担实际功能的模块（``tools/*.py`` 与 ``workflows/*.py``；
+        ``tools/__init__.py``、``workflows/__init__.py`` 两个包入口除外）
+        末尾都有一个 ``if __name__ == "__main__":`` 自检块（纯逻辑断言，不联网）。
         这里用子进程逐个跑，验证三件事：
             · 解释器能导入该模块的全部依赖；
             · 自检断言全过（退出码 0）；
@@ -122,6 +123,7 @@ MODULE_SELF_CHECKS = [
     ("tools/voice_clone.py", None),
     ("tools/avatar_client.py", None),
     ("tools/douyin_client.py", None),
+    ("workflows/base.py", None),
     ("workflows/positioning.py", None),
     ("workflows/hot_topic.py", None),
     ("workflows/replicate.py", None),
@@ -164,12 +166,13 @@ print("%d 个 views 模块全部导入成功" % len(mods))
 _CONTRACT_SNIPPET = r'''
 """环境契约检查：配置可读 + 依赖 API 形状符合代码假设 + 关键文件就位。"""
 import inspect
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, r"%HERE%")
 
-from config import settings
+from config import MediaAgentSettings, settings
 
 problems = []
 
@@ -283,7 +286,34 @@ try:
 except Exception as exc:
     problems.append(f"降级路径检查异常: {type(exc).__name__}: {exc}")
 
-# ---- 6. 语言提示：不要误报 ----
+# ---- 6. 文档键名契约：.env.example 里的 MEDIA_* 必须真能被 pydantic 读到 ----
+# 键名 = "MEDIA_" + 字段名大写（由 MediaAgentSettings 的 env_prefix 决定）。
+# 字段名写错时**不会报错**：那个键静默无效，只剩代码里的默认值在生效 ——
+# 用户照文档改了 .env 却毫无反应。实测踩到过两次，其中一次字段就叫 use_hyperframes，
+# 文档里写的 MEDIA_MASHUP_USE_HYPERFRAMES 根本读不到（默认值恰好是 false，表面看不出）。
+env_example = Path(r"%ROOT%") / ".env.example"
+if not env_example.is_file():
+    problems.append(f"模板文件缺失: {env_example}")
+else:
+    # 注释掉的键（形如 `# MEDIA_VIDEO_OUTPUT_DIR=`）也算「文档声明过的键」，
+    # 所以整篇全量扫描，不做行首过滤。
+    documented = set(re.findall(r"\bMEDIA_[A-Z0-9_]+\b", env_example.read_text(encoding="utf-8")))
+    readable = {"MEDIA_" + name.upper() for name in MediaAgentSettings.model_fields}
+
+    for key in sorted(documented - readable):
+        problems.append(
+            f"文档里的 {key} 读不到：MediaAgentSettings 没有对应字段"
+            f"（键名 = MEDIA_ + 字段名大写）。"
+            f"要么把字段改名成 {key[6:].lower()}，要么把文档改成正确的键名。"
+        )
+
+    # 反向只做提示、不算失败：有几个内部调优项确有合理默认值，不必都写进模板。
+    undocumented = sorted(readable - documented)
+    if undocumented:
+        print(f"  （提示）{len(undocumented)} 个字段未在 .env.example 出现: "
+              + ", ".join(undocumented))
+
+# ---- 7. 语言提示：不要误报 ----
 print(f"文本模型: {settings.media_llm_model()}")
 print(f"编排模型: {settings.media_deepagent_model()}")
 print(f"百炼端点: {settings.dashscope_api_endpoint}")
@@ -295,7 +325,7 @@ if problems:
         print("  ✗ " + p)
     raise SystemExit(1)
 print("环境契约检查全部通过")
-'''.replace("%HERE%", str(HERE))
+'''.replace("%HERE%", str(HERE)).replace("%ROOT%", str(ROOT))
 
 
 # ------------------------------------------------------------ 联网检查（--live）

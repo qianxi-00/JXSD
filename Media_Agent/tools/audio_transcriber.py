@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""语音转文字 —— 百炼 Fun-ASR-Flash（替代课案的本地 FunASR）
+"""语音转文字 —— 百炼 Qwen-Audio-3.0-ASR-Flash（替代课案的本地 FunASR）
 
 课案出处：自媒体课案 → 内容复刻（提文案）/ 视频剪辑（生成 SRT 字幕）
 
@@ -9,7 +9,8 @@
       （懒加载，请求帧带 ``"return_timestamps": true`` 时才走）
 两个模型在 GPU 服务器上跑一个自写的 WebSocket 服务（``deploy/funasr_ws_server.py``，端口 6006）。
 
-本项目换成百炼的 **Qwen-Audio-3.0-ASR-Flash / Fun-ASR-Flash 非实时识别**：
+本项目换成百炼的 **Qwen-Audio-3.0-ASR-Flash 非实时识别**
+（Fun-ASR 家族的云托管版；模型名由 ``MEDIA_ASR_MODEL`` 决定，见 ``config.py``）：
 一个 HTTP 接口同时提供「纯文本」与「句级 + 词级时间戳」，
 **一个接口就替掉了课案的两个模型**，本机不需要 GPU、不下载权重。
 
@@ -22,7 +23,8 @@
     {"model": "...",
      "input": {"messages": [{"role": "user", "content": [
          {"type": "input_audio", "input_audio": {"data": "<公网URL 或 data:...;base64,xxx>"}}]}]},
-     "parameters": {"format": "mp3", "sample_rate": "16000", "language_hints": ["zh"]}}
+     "parameters": {"format": "mp3",   # 按输入自身的容器推导，见 _guess_audio_format()
+                    "sample_rate": "16000", "language_hints": ["zh"]}}
 
 响应（实测，208 秒音频）::
 
@@ -77,6 +79,7 @@ import json
 import mimetypes
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
@@ -112,6 +115,9 @@ _MIME_BY_EXT = {
     ".webm": "video/webm",
 }
 
+# ``parameters.format`` 的兜底值：输入里既看不出容器、也认不出 MIME 时才用它
+_DEFAULT_AUDIO_FORMAT = "wav"
+
 
 # ==========================================================================
 # 对外主函数
@@ -137,7 +143,7 @@ def transcribe(audio_path: str, want_timestamps: bool = False) -> dict:
     if not settings.dashscope_api_key:
         result["error"] = (
             "未配置 DASHSCOPE_API_KEY（见根目录 .env）。"
-            "语音识别走百炼 Fun-ASR-Flash，需要该密钥。"
+            "语音识别走百炼 Qwen-Audio-3.0-ASR-Flash，需要该密钥。"
         )
         print(f"[ASR] {result['error']}")
         return result
@@ -282,13 +288,46 @@ def _to_audio_input(audio_path: str) -> tuple:
     return oss_url, ""
 
 
+def _guess_audio_format(data: str) -> str:
+    """从输入自身推出 ``parameters.format`` 用的容器名。
+
+    ``_to_audio_input()`` 交到 ``_post()`` 的只有两种东西：
+    ``data:<mime>;base64,xxx`` 或 http(s)/oss:// URL —— 到这一层**本地后缀已经没了**，
+    所以 data URI 读它自带的 mediatype、URL 读路径后缀，认不出才退回
+    ``_DEFAULT_AUDIO_FORMAT``。
+
+    ⚠️ 以前这里硬编码 ``"wav"``，而函数实际吃 mp3/mp4/m4a 各种容器
+    （MIME 表见 ``_MIME_BY_EXT``），docstring 的示例又写 ``"mp3"`` —— 三方不一致。
+    实测 mp3 输入照样能识别（服务端似乎不拿这个值校验容器），所以不是功能故障；
+    但**声明与输入不符**，换模型 / 换地域就可能踩，这里按输入推导掉。
+    """
+    if data.startswith("data:"):
+        mime = data[5:].split(";", 1)[0].strip().lower()
+        for ext, known in _MIME_BY_EXT.items():
+            if known == mime:
+                return ext.lstrip(".")
+        # mimetypes 猜出来的别名（如 audio/x-m4a）→ 取子类型、去掉 x- 前缀
+        return mime.split("/")[-1].removeprefix("x-") or _DEFAULT_AUDIO_FORMAT
+
+    suffix = Path(urlparse(data).path).suffix.lower()
+    # 只认表里认识的容器，别把 URL 上奇怪的后缀（.php/.aspx）当格式发上去
+    if suffix in _MIME_BY_EXT:
+        return suffix.lstrip(".")
+    return _DEFAULT_AUDIO_FORMAT
+
+
 def _post(data: str) -> requests.Response:
     """发一次**非流式**请求。
 
     ``X-DashScope-OssResourceResolve`` 只在传 ``oss://`` 时必须，
     但它对普通 URL / Base64 也无害，所以统一带上、少一个分支。
+
+    ``format`` 由输入自身的容器推导（见 ``_guess_audio_format()``），不再硬编码。
     """
-    params = {"format": "wav", "sample_rate": "16000"}
+    params = {
+        "format": _guess_audio_format(data),
+        "sample_rate": "16000",
+    }
     lang = (settings.media.asr_language or "").strip()
     if lang:
         params["language_hints"] = [lang]

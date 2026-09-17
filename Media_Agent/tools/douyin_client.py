@@ -436,6 +436,12 @@ def fetch_user_videos(profile_url: str, limit: int = 20) -> dict:
     cookie = resolve_cookie()
     headers = {"User-Agent": _UA, "Accept": "application/json"}
     if cookie:
+        # ⚠️ 实测（2026-09）：这个头在自托管 v4 镜像上**不参与上游请求** ——
+        #    服务端不会把请求头里的 Cookie 转发给抖音，「带 Cookie」与「不带 Cookie」
+        #    返回完全相同的 400。真正生效的是**容器内** `crawlers/douyin/web/config.yaml`
+        #    里那份 Cookie（由 deploy/start_api.py 启动时注入，来源仍是根 .env 的
+        #    MEDIA_DOUYIN_COOKIE）。详见 VERIFY_REPORT.md 第 8 节第 4 条。
+        #    这里仍然照发：对当前镜像无害，且万一下游版本支持转发就能用上。
         headers["Cookie"] = cookie
     params = {"sec_user_id": sec_user_id, "max_cursor": 0, "count": max(1, int(limit))}
 

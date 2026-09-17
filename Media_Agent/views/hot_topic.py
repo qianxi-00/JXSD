@@ -19,6 +19,7 @@
     | 操作历史 | `_add_history(...)` 放在渲染分支末尾 | 移到「获取热点选题」按钮分支里 | 同定位页：渲染分支每次 rerun 都会重放，点一下下载就多一条历史 |
     | 按钮/表格宽度 | `use_container_width=True` | `width="stretch"` | Streamlit 1.61 已弃用 `use_container_width`，`st.dataframe` 上会直接弹弃用警告 |
     | 无用 import | `import json`（页面里没用到） | 去掉 | 只留真正用到的 `pandas` |
+    | 热度列 | 表头直接写「热度」 | 「热度(估算)」（表格与下载报告两处同改） | NewsNow 不返回真实热度，`_estimate_heat()` 是按排名估的；不标注会被当成真实热度写进分析结论 |
     | 绝对路径 | 无 | 无 | —— |
 
 踩过的坑
@@ -82,7 +83,7 @@ def _build_report(result: dict, platform: str, field: str, raw_topics: list) -> 
             f"{t.get('platform', '') or t.get('source', '')} | {t.get('heat', '')} |"
             for t in raw_topics
         )
-        table = f"| 排名 | 标题 | 平台 | 热度 |\n|---|---|---|---|\n{rows}\n"
+        table = f"| 排名 | 标题 | 平台 | 热度(估算) |\n|---|---|---|---|\n{rows}\n"
 
     return f"""# 🔥 热点监控报告
 
@@ -155,7 +156,7 @@ def show_hot_topic() -> None:
                     "排名": t.get("rank", ""),
                     "标题": t.get("title", ""),
                     "平台": t.get("platform", "") or t.get("source", ""),
-                    "热度": t.get("heat", ""),
+                    "热度(估算)": t.get("heat", ""),
                     "链接": t.get("url", ""),
                 }
                 for t in raw_topics

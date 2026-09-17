@@ -7,7 +7,7 @@
 不掺 LangGraph / Streamlit 的东西，方便单独测试。
 
     media_tools.py         视频下载 / 音频提取 / 语音合成 / 图片生成 / 文章抓取
-    audio_transcriber.py   语音转文字（百炼 Fun-ASR-Flash，替代课案的本地 FunASR）
+    audio_transcriber.py   语音转文字（百炼 Qwen-Audio-3.0-ASR-Flash，替代课案的本地 FunASR）
     dashscope_upload.py    本地文件 → 百炼临时存储 URL（替代「自己搭对象存储」）
     avatar_client.py       数字人对口型（百炼爱诗 PixVerse，替代课案的本地 HeyGem）
     trend_radar_client.py  多平台热点抓取（TrendRadar / NewsNow 公共 API）

@@ -7,7 +7,7 @@
     | 课案 | 本项目 | 为什么 |
     |---|---|---|
     | 视频下载三级降级 videodl → yt-dlp → stub | 只保留 yt-dlp | 课案自己在 FAQ 里记了 videodl 的 quickjs 编译坑；yt-dlp 已能覆盖抖音/B站/小红书，少一个重依赖 |
-    | 语音识别走本地 FunASR | 走 ``tools/audio_transcriber.py``（百炼 Fun-ASR-Flash） | 本项目不部署本地模型 |
+    | 语音识别走本地 FunASR | 走 ``tools/audio_transcriber.py``（百炼 Qwen-Audio-3.0-ASR-Flash） | 本项目不部署本地模型 |
     | 抓取失败返回「演示文案」 | 返回空串 + 中文提示 | 拿假文案冒充真实文章，会让下游 LLM 一本正经地分析虚构内容 —— 降级要降得诚实 |
     | ``extract_audio_text`` 里两段完全相同的 URL 判断 | 去重 | 课案原样复制粘贴的冗余 |
 
@@ -17,6 +17,7 @@
 """
 
 import asyncio
+import hashlib
 import os
 import re
 import shutil
@@ -207,26 +208,41 @@ def video_to_audio(
     return ""
 
 
+def _transcribe_text(audio_path: str) -> str:
+    """调语音识别取文本；识别失败时把 ``error`` 里的中文原因打印出来。
+
+    ``transcribe()`` 失败时 ``text`` 是空串、真因在 ``error`` 里（未配置
+    ``DASHSCOPE_API_KEY`` / 文件不存在 / 接口报错…）。以前只取 ``["text"]``，
+    于是链路断掉时页面只会说「视频与文章两条路都没拿到文案」，真因只进控制台。
+    **返回 str 的契约不变**，只多一行日志。
+    """
+    from tools.audio_transcriber import transcribe
+
+    res = transcribe(audio_path, want_timestamps=False)
+    if res["error"]:
+        print(f"[提文案] 语音识别失败: {res['error']}")
+    return res["text"]
+
+
 def extract_audio_text(video_path: str) -> str:
     """视频 → 文本（完整流水线）：FFmpeg 抽音频 → 百炼识别。
 
-    课案这里是「FFmpeg + 本地 FunASR」，本项目换成百炼 Fun-ASR-Flash。
+    课案这里是「FFmpeg + 本地 FunASR」，本项目换成百炼 Qwen-Audio-3.0-ASR-Flash
+    （Fun-ASR 家族的云托管版，模型名由 ``MEDIA_ASR_MODEL`` 决定）。
 
     Args:
         video_path: 本地视频/音频路径，或已是公网 URL。
 
     Returns:
-        转写文本；失败返回空串。
+        转写文本；失败返回空串（失败原因见 ``_transcribe_text()`` 打印的日志）。
     """
-    from tools.audio_transcriber import transcribe
-
     if not video_path:
         print("[提文案] 路径为空（上游下载可能失败了）")
         return ""
 
     # 已经是 URL：直接交给识别服务，省掉本地下载
     if video_path.startswith(("http://", "https://", "oss://")):
-        return transcribe(video_path, want_timestamps=False)["text"]
+        return _transcribe_text(video_path)
 
     if not os.path.exists(video_path):
         print(f"[提文案] 文件不存在: {video_path}")
@@ -234,17 +250,17 @@ def extract_audio_text(video_path: str) -> str:
 
     # 已经是音频：直接识别
     if Path(video_path).suffix.lower() in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}:
-        return transcribe(video_path, want_timestamps=False)["text"]
+        return _transcribe_text(video_path)
 
     audio_path = video_to_audio(video_path)
     if audio_path:
-        text = transcribe(audio_path, want_timestamps=False)["text"]
+        text = _transcribe_text(audio_path)
         if text:
             return text
 
     # 兜底：跳过抽音频，让识别服务直接吃视频文件
     print("[提文案] 抽音频失败或识别为空，改让识别服务直接处理视频文件")
-    return transcribe(video_path, want_timestamps=False)["text"]
+    return _transcribe_text(video_path)
 
 
 # ==========================================================================
@@ -293,9 +309,11 @@ def generate_tts(text: str, output_path: str = None, voice: str = None) -> str:
 
     voice = voice or settings.media.tts_fallback_voice
     if output_path is None:
+        # 用 md5 而不是内置 hash()：**字符串 hash 带进程级随机盐**，
+        # 同一段文案每次新进程都会算出不同的文件名 → 缓存只堆积不复用。
         output_path = os.path.join(
             settings.media.get_video_output_dir(),
-            f"tts_{abs(hash(text)) % 100000:05d}.mp3",
+            f"tts_{hashlib.md5(text.encode('utf-8')).hexdigest()[:8]}.mp3",
         )
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
@@ -333,9 +351,10 @@ def generate_image(prompt: str, output_path: str = None, size: str = "1024x1024"
         保存后的图片路径；失败返回空串。
     """
     if output_path is None:
+        # 同上：md5 保证跨进程稳定，同名提示词复用同一张图
         output_path = os.path.join(
             settings.media.get_image_output_dir(),
-            f"img_{abs(hash(prompt)) % 100000:05d}.png",
+            f"img_{hashlib.md5(prompt.encode('utf-8')).hexdigest()[:8]}.png",
         )
 
     if not _image_configured():

@@ -48,6 +48,7 @@
        ``InputRequired: apikey is required!``。见 ``_bind_dashscope_key()``。
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -177,7 +178,8 @@ def _to_wav_16k(source: str) -> str:
 # --------------------------------------------------------------------------
 # 对外接口
 # --------------------------------------------------------------------------
-def clone_voice(source_media: str, prefix: str = "mediaclone", use_cache: bool = True) -> dict:
+def clone_voice(source_media: str, prefix: str = "mediaclone", use_cache: bool = True,
+                lang: str = "zh") -> dict:
     """从一段音频/视频里克隆音色，返回 ``voice_id``。
 
     对应课案的 ``heygem_voice_clone()``。
@@ -186,6 +188,9 @@ def clone_voice(source_media: str, prefix: str = "mediaclone", use_cache: bool =
         source_media: 模特视频或音频的本地路径（课案传的是模特视频）。
         prefix: 音色名前缀，只允许数字和英文字母，≤10 字符。
         use_cache: 是否复用缓存（默认 True，强烈建议保持 True —— 音色有配额）。
+        lang: 参考音频的语言提示，课案支持 ``zh`` / ``en`` / ``ja`` / ``ko``
+            （``heygem_voice_clone(source_video, lang="zh")``）。不传时与旧行为
+            完全一致 —— 以前这里把 ``["zh"]`` 写死了，英文/日文素材没法声明。
 
     Returns:
         ``{"success": bool, "voice_id": str, "from_cache": bool, "message": str}``
@@ -251,7 +256,9 @@ def clone_voice(source_media: str, prefix: str = "mediaclone", use_cache: bool =
             target_model=settings.media.tts_model,
             prefix=prefix,
             url=ref_url,
-            language_hints=["zh"],
+            # language_hints 是 create_voice 的正式形参，不是靠 **kwargs 蒙进去的
+            # （dashscope 1.27.4，inspect.signature 核实）
+            language_hints=[lang],
         )
     except Exception as exc:  # noqa: BLE001 —— 配额/网络/参数错都收成中文提示
         result["message"] = (
@@ -365,9 +372,11 @@ def tts_with_cloned_voice(text: str, voice_id: str, output_path: str = None,
 
     suffix = ".mp3" if audio_format == "mp3" else ".wav"
     if output_path is None:
+        # 用 md5 而非内置 hash()：hash() 每进程随机加盐，同一文本换进程会得到不同文件名
+        digest = hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
         output_path = os.path.join(
             settings.media.get_video_output_dir(),
-            f"voice_cloned_{abs(hash(text)) % 100000:05d}{suffix}",
+            f"voice_cloned_{digest}{suffix}",
         )
 
     try:

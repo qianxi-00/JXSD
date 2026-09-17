@@ -350,8 +350,9 @@ class MediaAgentSettings(BaseSettings):
     llm_provider: str = ""
 
     # ---- 语音识别 ASR（替代课案的本地 FunASR）----
-    # 百炼 Fun-ASR-Flash / Qwen-Audio-3.0-ASR-Flash，同一接口同时提供
-    # 纯文本转写与「句级+词级时间戳」，一个接口替掉课案的两个 FunASR 模型。
+    # 百炼的 **qwen-audio-3.0-asr-flash**（Fun-ASR 家族的云托管版），
+    # 同一接口同时提供纯文本转写与「句级+词级时间戳」，一个接口替掉课案的两个 FunASR 模型。
+    # 想换同族的 Fun-ASR-Flash 只改 MEDIA_ASR_MODEL 即可（接口形状一致）。
     asr_model: str = "qwen-audio-3.0-asr-flash"
     # 语种提示（zh / en / ...）。Fun-ASR 系列只取第一个值。
     asr_language: str = "zh"
@@ -369,8 +370,9 @@ class MediaAgentSettings(BaseSettings):
     # 声音克隆的参考音频公网 URL（可选）。
     # ⚠️ 实测：create_voice 只收**真正的 http(s)**，百炼临时存储的 oss:// 会被拒
     #    （400 InvalidParameter: audio url should start with http or https）。
-    # 本项目没有内置公网托管，所以要么在这里给一个已托管好的参考音频 URL，
-    # 要么不启用声音克隆（会自动降级到 edge-tts 通用音色 / PixVerse 内置 TTS）。
+    # 参考音频怎么来，按优先级：① 本项填一个已托管好的 URL；
+    # ② 不填则走内置托管 `tools/asset_host.py`（scp + nginx，用下面的 MEDIA_ASSET_* 三项）；
+    # ③ 两者都没有才不启用声音克隆（自动降级 edge-tts 通用音色 / PixVerse 内置 TTS）。
     voice_ref_url: str = ""
 
     # ---- 数字人对口型（替代课案的本地 HeyGem）----
@@ -379,11 +381,13 @@ class MediaAgentSettings(BaseSettings):
     # 数字人任务最长等待秒数（异步任务，官方说 1~5 分钟）。
     avatar_timeout: int = 900
 
-    # ---- 公网素材托管（声音克隆 / 数字人的硬前提，见 tools/asset_host.py）----
+    # ---- 公网素材托管（**只有声音克隆需要**，见 tools/asset_host.py）----
     # 为什么需要：百炼的 CosyVoice 声音复刻**不收 oss:// 临时存储**（实测 400），
-    # 只认真正的 http(s)；PixVerse 的 video_url/audio_url 同样要求公网 URL。
+    # 只认真正的 http(s)。
+    # ⚠️ 数字人**不需要**这一套：实测 PixVerse 的 video_url/audio_url 直接吃
+    #    tools/dashscope_upload 换来的 oss://，走临时存储即可（详见 VERIFY_REPORT.md 5.11）。
     # 做法：把本地素材 scp 到自己的服务器静态目录，nginx 只读分发。
-    # 三项齐备 is_configured() 才为真；不配则声音克隆自动降级到 edge-tts。
+    # 三项齐备 asset_host.is_configured() 才为真；不配则声音克隆自动降级到 edge-tts。
     asset_ssh: str = ""                                    # 形如 ubuntu@1.2.3.4
     asset_remote_dir: str = "/var/www/media-assets"        # 服务器上的静态目录
     asset_base_url: str = ""                               # 形如 http://1.2.3.4/media-assets
@@ -444,7 +448,13 @@ class MediaAgentSettings(BaseSettings):
     # （详见 VERIFY_REPORT.md 5.9④）。
     # 关掉后 agent 直接用 moviepy 生成动画素材 —— 这正是 SKILL.md 里写明的降级分支。
     # 换到浏览器链路正常的机器上，把它设成 true 即可恢复课案原方案。
-    use_hyperframes: bool = False
+    #
+    # ⚠️ 字段名必须带 `mashup_` 前缀：env_prefix="MEDIA_" 决定键名是
+    #    MEDIA_ + 字段名大写 = MEDIA_MASHUP_USE_HYPERFRAMES。
+    #    曾写成 `use_hyperframes`，于是文档与 .env 里写的
+    #    MEDIA_MASHUP_USE_HYPERFRAMES 根本读不到，只有代码默认值 false 在生效 ——
+    #    用户设 true 想恢复课案方案时静默失效。与下面这节的 mashup_work_dir 保持同名法。
+    mashup_use_hyperframes: bool = False
 
     def get_avatar_input_dir(self) -> str:
         return self._resolve(self.avatar_input_dir or ".cache/avatars", MEDIA_AGENT_DIR)

@@ -11,7 +11,7 @@
 与课案的差异
     | 课案 | 本项目 |
     |---|---|
-    | 转写：agent 自己写脚本调本地 funasr | 走项目自带的 ``tools.audio_transcriber``（百炼 Fun-ASR-Flash 云端） |
+    | 转写：agent 自己写脚本调本地 funasr | 走项目自带的 ``tools.audio_transcriber``（百炼 ``qwen-audio-3.0-asr-flash``，Fun-ASR 家族的云托管版） |
     | 默认 BGM：硬编码 ``C:\\Users\\13261\\Pictures\\风格\\...wav`` | ``MEDIA_BGM_PATH``；留空则不混音 |
     | 沙箱目录：``.cache/videos`` | ``MEDIA_MASHUP_WORK_DIR``（``.cache/mashup``）——课案两个文件的 CACHE_DIR 不一致，兜底查找扫不到，已统一 |
     | 无步数上限 | 加 ``recursion_limit`` + 兜住 ``GraphRecursionError`` |
@@ -29,7 +29,7 @@
        ``/c/Users/...`` 当虚拟路径拼到沙箱下面，必须在解析前先清洗
     6. 给子进程注入 ``CHROMIUM_PATH``（HyperFrames 渲染要浏览器）
 
-本仓库实测补的两条（**课案没有，不加会翻车**）
+本仓库实测补的四条（**课案没有，不加会翻车**）
     7. **把当前 venv 的 Scripts 目录顶到 PATH 最前面**：
        本机 PATH 里的 ``python`` 是 Windows Store 占位符，执行后**静默无输出**。
        不让 ``python`` 指向 ``.venv\\Scripts\\python.exe``，
@@ -53,6 +53,7 @@
         判超时（见下方 `_patched_run`）。
 """
 
+import asyncio
 import json
 import os
 import re
@@ -346,7 +347,7 @@ def _build_editor_system_prompt(work_dir_env: str = "videos") -> str:
             "  实测反面教材：为了排查 hyperframes 去翻 npm 缓存目录、读 renderSetupWorker.js、\n"
             "  查浏览器路径、装 gsap、试 CDN —— 31 步全耗在这上面，最后一步剪辑都没做，\n"
             "  任务直接撞步数上限失败。**上述任何一件事都不要做。**\n"
-            if settings.media.use_hyperframes
+            if settings.media.mashup_use_hyperframes
             # ---- 降级方案（默认）：直接用 moviepy 画动画素材 ----
             else
             "=== ⚠️ 动画素材一律用 moviepy 画，禁止碰 HyperFrames（本机已关掉） ===\n"
@@ -407,6 +408,31 @@ def _build_editor_system_prompt(work_dir_env: str = "videos") -> str:
     )
 
 
+def _material_howto() -> str:
+    """「动画素材怎么生成」这段话 —— 任务提示与 system_prompt 必须**同源同开关**。
+
+    为什么单拎出来：曾经只把 system_prompt 按 ``MEDIA_MASHUP_USE_HYPERFRAMES``
+    切了分支，任务提示里却还留着课案原文「先用 HyperFrames 生成…」。
+    同一次调用里模型同时收到「禁止碰 HyperFrames」和「先用 HyperFrames」两条
+    相反指令，而任务提示更具体、位置更靠后 —— 实测 agent 仍去试 ``npx``，
+    一路撞到 300 秒超时（见 VERIFY_REPORT.md 5.9②）。
+
+    单拎成函数还有个好处：自检可以直接调用它断言，不必去拼整条 prompt。
+    """
+    if settings.media.mashup_use_hyperframes:
+        return (
+            "先用 HyperFrames 生成至少 6~10 个动画素材（绝对不少于 6 个，越多越好），\n"
+            "注意要指明字体防止中文乱码。"
+        )
+    return (
+        "用 moviepy 直接生成至少 6~10 个动画素材（绝对不少于 6 个，越多越好）。\n"
+        "**不要执行任何 hyperframes 命令、也不要去看它的文档或源码**"
+        "（本机已关掉，理由见系统提示）。\n"
+        "用 ColorClip + TextClip + with_position 画；中文字体给字体文件路径、"
+        "不要写字族名。"
+    )
+
+
 class _ToolErrorToMessage(AgentMiddleware):
     """把工具异常转成「回给模型的错误消息」，而不是抛出去终结整轮任务。
 
@@ -419,20 +445,35 @@ class _ToolErrorToMessage(AgentMiddleware):
     （例如改用 ``execute('type ...')`` 读沙箱外的文件）。
 
     注意只吞 ``Exception``：``KeyboardInterrupt`` / ``SystemExit`` 仍然透传。
+
+    ⚠️ 同步与异步**两个钩子都要实现**：本模块现在走 ``agent.stream()``（同步），
+    但基类 AgentMiddleware 的 ``awrap_tool_call`` 默认实现是抛 ``NotImplementedError``，
+    只写同步版的话，哪天有人把这里改成 ``astream``，上面那个「工具异常终结整轮」的
+    老 bug 会原样回来，而且报错点变成中间件里的 NotImplementedError，极难联想到。
     """
+
+    _HINT = "请换一种方式重试，不要重复同样的调用。"
+
+    @classmethod
+    def _as_message(cls, request, exc: Exception) -> ToolMessage:
+        return ToolMessage(
+            content=f"[工具执行出错] {type(exc).__name__}: {exc}\n{cls._HINT}",
+            tool_call_id=request.tool_call["id"],
+            status="error",
+        )
 
     def wrap_tool_call(self, request, handler):
         try:
             return handler(request)
         except Exception as exc:  # noqa: BLE001 —— 故意的：工具失败不该终结整轮
-            return ToolMessage(
-                content=(
-                    f"[工具执行出错] {type(exc).__name__}: {exc}\n"
-                    "请换一种方式重试，不要重复同样的调用。"
-                ),
-                tool_call_id=request.tool_call["id"],
-                status="error",
-            )
+            return self._as_message(request, exc)
+
+    async def awrap_tool_call(self, request, handler):
+        """异步版（与同步版同逻辑，只是 await）。见类 docstring 里为什么必须写。"""
+        try:
+            return await handler(request)
+        except Exception as exc:  # noqa: BLE001 —— 同同步版
+            return self._as_message(request, exc)
 
 
 def _get_editor_agent():
@@ -581,8 +622,7 @@ def node_edit_video(state: MashupState) -> dict:
 ### 用户要求
 {extra_req if extra_req else "完整剪辑（始终保持和原视频像素一致）：转录 → 动画素材 → 排布穿插 → BGM → 字幕 → 渲染"}
 
-先用 HyperFrames 生成至少 6~10 个动画素材（绝对不少于 6 个，越多越好），
-注意要指明字体防止中文乱码。
+{_material_howto()}
 开头素材是在最上的图层、与原视频像素一致；其他素材高度需要是 1/3，放在原视频下面。
 根据口播内容节奏在不同时间点穿插素材，有的上下排布：上边用原来的口播视频，
 下边用生成的素材（覆盖口播视频下部分，空素材的地方要全屏用原视频，不能黑屏）。
@@ -704,6 +744,13 @@ video_clip 不要调用 .resized((w, h)) 改尺寸，保持原始分辨率，避
             "edit_start": edit_start,
         }
 
+    # ---- 收尾：把沙箱里散落的中间文件收进 _scratch/ ----
+    # 放在「解析输出路径」之前：收纳只动 _scratch/ 与那批中间文件通配，
+    # 不碰 *.mp4 成品，所以不会把下面要找的输出挪走。
+    tidy_steps = _tidy_work_dir()
+    _warn_stray_outside()
+    steps_log.extend(f"[tidy] {n}" for n in tidy_steps)
+
     # ---- 从最后一条消息里解析输出路径 ----
     output_video = ""
     last_msg = ""
@@ -742,6 +789,74 @@ video_clip 不要调用 .resized((w, h)) 改尺寸，保持原始分辨率，避
 
 
 # ==========================================================================
+# 收尾：清理散落的中间文件（课案 3520-3532 做的是同一件事）
+# ==========================================================================
+# agent 的 execute 跑的是真实 cmd，能用任意绝对路径；它很容易在中转时把
+# .wav / .txt / concat_list.txt / speedup_*.mp4 之类丢在沙箱根。
+# 课案的做法是把它们搬进 CACHE_DIR —— 但课案的 CACHE_DIR 就是沙箱根，
+# 等于原地搬，所以本项目按「搬进沙箱内的 _scratch/ 子目录」实现。
+#
+# ⚠️ 只动沙箱根（MEDIA_MASHUP_WORK_DIR）：它是本项目自己的运行时目录、
+#    已被 .gitignore 覆盖，搬动零风险。
+#    沙箱**外面**（仓库根、Media_Agent/）一律不碰 —— 那里的 `*.txt` 通配会误伤
+#    `docs/课案全文提取.txt` 这类真文件。对外面只打印一行提醒，让人自己决定。
+_STRAY_PATTERNS = ("*.wav", "*.txt", "concat_list*", "speedup*", "assembled*",
+                   "final_with_bgm*", "temp_*", "tmp_*")
+# 这些是流程产物，不是"散落文件"，不能收走
+_STRAY_KEEP = {"mashup_final.mp4", "final_with_bgm.mp4"}
+
+
+def _tidy_work_dir() -> list:
+    """把沙箱根上散落的中间文件收进 ``<work_dir>/_scratch/``。
+
+    只搬、**绝不删除** —— 万一是要紧东西，搬进工作目录里也还能找回来。
+
+    Returns:
+        被搬走的文件名列表（供日志与自检使用）。
+    """
+    import glob as _glob
+    import shutil
+
+    cache_dir = settings.media.get_mashup_work_dir()
+    scratch = os.path.join(cache_dir, "_scratch")
+    moved = []
+    for pattern in _STRAY_PATTERNS:
+        for path in _glob.glob(os.path.join(cache_dir, pattern)):
+            if not os.path.isfile(path) or os.path.basename(path) in _STRAY_KEEP:
+                continue
+            try:
+                os.makedirs(scratch, exist_ok=True)
+                dest = os.path.join(scratch, os.path.basename(path))
+                if os.path.exists(dest):
+                    dest = f"{dest}.{int(time.time())}"
+                shutil.move(path, dest)
+                moved.append(os.path.basename(path))
+            except OSError as exc:  # noqa: BLE001 —— 收尾失败不该影响交付
+                print(f"[剪辑] 收尾跳过 {os.path.basename(path)}: {exc}")
+    if moved:
+        print(f"[剪辑] 已收纳 {len(moved)} 个散落中间文件 → {scratch}")
+    return moved
+
+
+def _warn_stray_outside() -> list:
+    """沙箱**外面**散落的中间文件只提醒、不动手。返回文件名列表。"""
+    import glob as _glob
+
+    found = []
+    for base in (os.path.dirname(_PROJECT_ROOT.rstrip("\\/")), _PROJECT_ROOT):
+        for pattern in ("*.wav", "concat_list*", "speedup*", "assembled*"):
+            for path in _glob.glob(os.path.join(base, pattern)):
+                if os.path.isfile(path):
+                    found.append(path)
+    if found:
+        print(
+            "[剪辑] ⚠️ 沙箱外发现疑似散落中间文件（**未自动清理**，请自行确认后删除）：\n"
+            + "\n".join(f"        {p}" for p in found[:10])
+        )
+    return found
+
+
+# ==========================================================================
 # 节点 2：兜底查找（agent 没报告路径时，按约定位置找）
 # ==========================================================================
 def node_find_output(state: MashupState) -> dict:
@@ -768,10 +883,17 @@ def node_find_output(state: MashupState) -> dict:
         if os.path.isfile(cand) and safe_abspath(cand) != inp:
             return {"output_video": safe_abspath(cand)}
 
-    # 最后再按修改时间扫一遍目录
+    # 最后再按修改时间扫一遍目录。
+    # ⚠️ 限深度 3：上面三条候选已覆盖已知落点，这里是**超额兜底**。
+    #    无限制递归会把 .cache/mashup/** 里任意层级的 ≥100KB mp4 都当成品
+    #    （包括 agent 自己放的中转文件、甚至被复制进沙箱的源视频），反而更容易选错。
+    _MAX_DEPTH = 3
+    _base_depth = cache_dir.rstrip("\\/").count(os.sep)
     newest = ""
     newest_mtime = 0.0
-    for root, _dirs, files in os.walk(cache_dir):
+    for root, dirs, files in os.walk(cache_dir):
+        if root.rstrip("\\/").count(os.sep) - _base_depth >= _MAX_DEPTH:
+            dirs[:] = []          # 到了深度上限就不再往下走
         for f in files:
             if not f.lower().endswith(".mp4"):
                 continue
@@ -901,13 +1023,21 @@ if __name__ == "__main__":
         assert _TC(text="中文", font=_f, font_size=52, color="white",
                    size=(400, None), method="caption").size[0] == 400
         print(f"  中文字体（字体文件）        OK  ({_f})")
-    # 素材生成方式必须跟着配置走，否则关掉 HyperFrames 也白关
-    if settings.media.use_hyperframes:
+    # 素材生成方式必须跟着配置走，否则关掉 HyperFrames 也白关。
+    # ⚠️ 两条路径都要断言：system_prompt **和任务提示**（后者见 node_edit_video）。
+    #    曾经只切了 system_prompt，任务提示仍写「先用 HyperFrames…」，
+    #    同一次调用里两条相反指令打架 —— 实测导致 agent 白试 npx 到 300s 超时。
+    if settings.media.mashup_use_hyperframes:
         assert "HyperFrames 的时间预算" in sp, "开着 HyperFrames 却没给时间预算约束"
+        assert "先用 HyperFrames" in _material_howto(), \
+            "MEDIA_MASHUP_USE_HYPERFRAMES=true 但任务提示没让用 HyperFrames"
     else:
         assert "禁止碰 HyperFrames" in sp, \
             "MEDIA_MASHUP_USE_HYPERFRAMES=false 但 system_prompt 没关掉 HyperFrames"
-    print(f"  system_prompt 关键约束     OK  (HyperFrames={'on' if settings.media.use_hyperframes else 'off'})")
+        assert "先用 HyperFrames" not in _material_howto(), \
+            "MEDIA_MASHUP_USE_HYPERFRAMES=false 但任务提示仍要求先用 HyperFrames（与 system_prompt 打架）"
+        assert "moviepy" in _material_howto(), "关闭 HyperFrames 后任务提示没说改用 moviepy"
+    print(f"  system_prompt 关键约束     OK  (HyperFrames={'on' if settings.media.mashup_use_hyperframes else 'off'})")
 
     # 6) 技能目录的后端接线 —— 这条是**真实踩过的崩溃**，必须有回归用例。
     #    症状：skills= 传绝对路径时 SkillsMiddleware 加载即抛
@@ -958,13 +1088,62 @@ if __name__ == "__main__":
     def _boom(_req):
         raise ValueError("Path:X outside root directory: Y")
 
+    async def _aboom(_req):
+        raise ValueError("Path:X outside root directory: Y")
+
+    async def _aok(_req):
+        return "ok"
+
     _msg = _mw.wrap_tool_call(_Req(), _boom)
     assert isinstance(_msg, ToolMessage), f"工具异常没有被转成 ToolMessage: {type(_msg)}"
     assert _msg.tool_call_id == "call_probe", _msg
     assert "outside root directory" in _msg.content, _msg.content
     # 正常返回不能被改动
     assert _mw.wrap_tool_call(_Req(), lambda _r: "ok") == "ok"
-    print("  工具异常不致命             OK")
+    # ⚠️ 异步钩子也必须在：基类的 awrap_tool_call 默认抛 NotImplementedError，
+    #    只写同步版的话，改成 astream 就会让「工具异常终结整轮」原样回来。
+    assert type(_mw).awrap_tool_call is not AgentMiddleware.awrap_tool_call, \
+        "中间件没实现 awrap_tool_call —— 改成 astream 后工具异常又会终结整轮"
+    _amsg = asyncio.run(_mw.awrap_tool_call(_Req(), _aboom))
+    assert isinstance(_amsg, ToolMessage), f"异步路径没转成 ToolMessage: {type(_amsg)}"
+    assert "outside root directory" in _amsg.content, _amsg.content
+    assert asyncio.run(_mw.awrap_tool_call(_Req(), _aok)) == "ok"
+    print("  工具异常不致命             OK（同步 + 异步两条钩子）")
+
+    # 9) 收尾清理：散落中间文件要收进 _scratch/，而**成品不能被收走**。
+    #    课案 3520-3532 有这段清理，本项目原先漏了。
+    _work = settings.media.get_mashup_work_dir()
+    os.makedirs(_work, exist_ok=True)
+    _stray = os.path.join(_work, f"selfcheck_stray_{os.getpid()}.txt")
+    _keep = os.path.join(_work, "mashup_final.mp4")
+    _keep_existed = os.path.exists(_keep)
+    try:
+        with open(_stray, "w", encoding="utf-8") as f:
+            f.write("stray")
+        if not _keep_existed:
+            with open(_keep, "wb") as f:
+                f.write(b"\0" * 1024)          # 内容不重要，只看会不会被搬走
+        _moved = _tidy_work_dir()
+        assert os.path.basename(_stray) in _moved, f"散落文件没被收纳: {_moved}"
+        assert not os.path.exists(_stray), "收纳后原位置不该还在"
+        assert os.path.exists(os.path.join(_work, "_scratch", os.path.basename(_stray))), \
+            "收纳后的文件没出现在 _scratch/"
+        assert os.path.exists(_keep), "成品 mashup_final.mp4 被误收走了（它不在通配里，不该动）"
+        print(f"  收尾清理                   OK  (收纳 {len(_moved)} 个)")
+    finally:
+        # 自检不留垃圾
+        import shutil as _shutil
+
+        for p in (_stray,
+                  os.path.join(_work, "_scratch", os.path.basename(_stray)),
+                  *( [] if _keep_existed else [_keep] )):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        _sc = os.path.join(_work, "_scratch")
+        if os.path.isdir(_sc) and not os.listdir(_sc):
+            _shutil.rmtree(_sc, ignore_errors=True)
 
     print(f"\n  沙箱目录: {settings.media.get_mashup_work_dir()}")
     print(f"  BGM: {settings.media.bgm_path or '（未配置，将不混音）'}")

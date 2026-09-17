@@ -35,6 +35,7 @@ _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+import hashlib  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
 import subprocess  # noqa: E402
@@ -323,7 +324,7 @@ def _render_cookie_panel() -> None:
 
         col_auto, col_tip = st.columns([1, 3])
         with col_auto:
-            if st.button("🔍 从 Edge 浏览器获取", use_container_width=True,
+            if st.button("🔍 从 Edge 浏览器获取", width="stretch",
                          help="自动读取 Edge 里已登录的抖音 Cookie（走 CDP，不需要解密）"):
                 cookie_str, err = _read_edge_cookies()
                 if err:
@@ -344,7 +345,7 @@ def _render_cookie_panel() -> None:
         )
         col_save, col_clear = st.columns([1, 1])
         with col_save:
-            if st.button("💾 使用这份 Cookie", use_container_width=True):
+            if st.button("💾 使用这份 Cookie", width="stretch"):
                 if not cookie_input.strip():
                     st.warning("请先粘贴 Cookie")
                 else:
@@ -352,7 +353,7 @@ def _render_cookie_panel() -> None:
                     st.success("Cookie 已生效（仅本次会话）")
                     st.rerun()
         with col_clear:
-            if st.button("♻️ 恢复 .env 配置", use_container_width=True,
+            if st.button("♻️ 恢复 .env 配置", width="stretch",
                          help="丢掉本次会话里粘贴的 Cookie，回到根 .env 的 MEDIA_DOUYIN_COOKIE"):
                 _clear_douyin_cookie()
                 st.rerun()
@@ -373,7 +374,7 @@ def _render_manual_entry() -> None:
             key="review_manual_input",
             placeholder=SAMPLE_MANUAL_JSON,
         )
-        if st.button("📝 用粘贴的数据诊断", use_container_width=True):
+        if st.button("📝 用粘贴的数据诊断", width="stretch"):
             if not raw.strip():
                 st.warning("请先粘贴作品数据")
                 return
@@ -392,6 +393,7 @@ def _render_result(result: dict) -> None:
     error = result.get("error_msg", "")
     if error:
         st.error(error)
+        st.info("可改用上方的「📋 手动粘贴作品数据」降级入口 —— 后面的诊断链路完全一样。")
         return
 
     url = st.session_state.get("review_url", "")
@@ -433,7 +435,7 @@ def _render_result(result: dict) -> None:
 
     # ---- 作品明细 ----
     with st.expander("📋 作品数据明细", expanded=False):
-        st.dataframe(items, use_container_width=True)
+        st.dataframe(items, width="stretch")
 
     # ---- 三段分析 ----
     tab1, tab2, tab3 = st.tabs(["📉 漏斗诊断", "📝 内容评估", "💡 优化策略"])
@@ -452,12 +454,14 @@ def _render_result(result: dict) -> None:
         data=report,
         file_name=f"抖音复盘报告_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
         mime="text/markdown",
-        use_container_width=True,
+        width="stretch",
     )
 
     # ---- 操作历史：同一份结果只记一条 ----
     # 下载按钮每点一次都会 rerun 整页，不设 token 的话历史会被同一次复盘刷屏。
-    token = f"{url}|{len(result.get('video_data', ''))}|{hash(report)}"
+    # 摘要用 md5 而不是内置 hash()：全项目统一，避免误读成"跨进程稳定"的标识。
+    digest = hashlib.md5(report.encode("utf-8")).hexdigest()[:8]
+    token = f"{url}|{len(result.get('video_data', ''))}|{digest}"
     if st.session_state.get("review_history_token") != token:
         st.session_state["review_history_token"] = token
         _add_history("数据复盘", url[:60])
@@ -486,7 +490,7 @@ def show_review() -> None:
         placeholder="https://www.douyin.com/user/xxxxx...",
     )
 
-    if st.button("🔍 获取数据并分析", type="primary", use_container_width=True):
+    if st.button("🔍 获取数据并分析", type="primary", width="stretch"):
         if not url.strip():
             st.warning("请输入抖音主页链接")
         else:

@@ -11,6 +11,7 @@
        ``raw_topics: Annotated[list, operator.add]`` 声明了「这个通道用列表相加合并」，
        所以 5 个抓取节点各写各的，LangGraph 会把它们 ``+`` 到一起。
        没有这个 Annotated，后写的会把先写的**覆盖掉** —— 这是本模块最容易踩的坑。
+       注意 ``operator.add`` **只拼接**：既不排序也不去重，这两件事在 ``node_filter`` 里显式做。
     3. **join 是隐式的**：5 个抓取节点都 `add_edge(..., "filter")`，
        LangGraph 自动等它们全部结束才跑一次 filter（不会跑 5 次）。
        实测确认：filter 看到的 `raw_topics` 已经是合并后的完整列表。
@@ -25,6 +26,7 @@
     | `PLATFORM_SENDS` | `{中文名: [Send(...)]}` | `{中文名: [节点名]}`，Send 在路由里现造 | 课案那份 Send 对象只是拿来读 `.node`，绕了一层；语义完全等价 |
     | 节点容错 | 每个 fetch 有 try（好），filter/suggest 没有 | 四个环节全部 try（含 filter/suggest） | 与其余模块统一：失败写进 state 让链路走完 |
     | 无数据处理 | filter 已判空 | 同左（保留课案的判定字符串） | 课案这里是对的：无数据就不该白烧 LLM 额度 |
+    | 合并结果 | 课案:310 称 `operator.add` 合并时「去重 + 按热度降序」 | `node_filter` 里显式按 heat 降序 + 按 title 保序去重 | `operator.add` 只拼接；排序只在 `tools/trend_radar_client.py` 的 `fetch_for_workflow()`，工作流走 `fetch_platform_hot` 不经过它；同名热搜重复进 prompt 白烧 token |
     | 自检 | 无 | 末尾 `__main__` 离线自检（打桩抓取 + LLM） | 验证并行合并、单平台路由、平台挂掉不影响整体 |
     | 平台清单 | 图里 5 个平台 | 同左 | 与课案一致 |
 
@@ -167,6 +169,19 @@ def node_filter(state: HotTopicState) -> dict:
         if not topics:
             print("[热点] 没有抓到任何热点，跳过 LLM 筛选")
             return {"filtered": _NO_TOPIC_HINT}
+
+        # ① 降序：operator.add 合并出来的顺序是「哪支并行分支先回来」，不是热度序 ——
+        #    降序排序只存在于 tools/trend_radar_client.py 的 fetch_for_workflow()，
+        #    而工作流走的是 fetch_platform_hot（见上面的抓取节点），不经过那条路。
+        #    所以在送进 LLM 之前在这里补一次，让模型先看到最热的热点。
+        topics = sorted(topics, key=lambda t: t.get("heat") or 0, reverse=True)
+        # ② 去重：同一条热搜常常同时挂在多个平台，重复送进 prompt 就是白烧 token。
+        #    按 title 保序去重（setdefault 只认第一次出现），上一步已降序，
+        #    因此留下的那一条天然就是同名里 heat 最大的那条。
+        unique: dict = {}
+        for t in topics:
+            unique.setdefault(t.get("title", ""), t)
+        topics = list(unique.values())
 
         topics_json = json.dumps(topics, ensure_ascii=False)
         account_field = state.get("account_field", "") or ""

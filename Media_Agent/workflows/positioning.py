@@ -183,13 +183,17 @@ def run_positioning(user_info: str) -> dict:
 
     Returns:
         ``{"user_info","profile","competitors","plan"}``。
-        即使 LLM 全失败也会返回这四个键（值是中文提示文本，不会抛异常）。
+        即使 LLM 全失败也会返回这四个键（值是中文提示文本，不会抛异常）；
+        图级异常时三个产出字段都回填 ``[工作流执行失败: ...]``，四个键依然齐全。
     """
     try:
         result = positioning_graph.invoke({"user_info": user_info or ""})
     except Exception as exc:  # noqa: BLE001 —— 图本身出错也不往上抛
         print(f"[账号定位] 工作流执行失败: {exc}")
-        result = {}
+        # 不能只留空串：页面把空串渲染成「分析中...」，用户分不清「在跑」和「挂了」。
+        # 三个产出字段统一回填失败文案，前端 `_FAIL_PREFIXES` 才认得出、才弹红条。
+        failed = f"[工作流执行失败: {exc}]"
+        result = {"profile": failed, "competitors": failed, "plan": failed}
 
     return {
         "user_info": result.get("user_info", user_info or ""),
@@ -298,6 +302,27 @@ if __name__ == "__main__":
     assert list(bad_result) == ["user_info", "profile", "competitors", "plan"], list(bad_result)
     assert bad_result["plan"].startswith("[LLM调用失败"), bad_result["plan"]
     print("  ✓ LLM 失败时仍返回完整四字段")
+
+    # ---- 6) 图级异常：三个产出字段必须回填失败文案，不能是空串 ----
+    # 空串会被页面渲染成「分析中...」，用户分不清「在跑」和「挂了」。
+    class _BoomGraph:
+        """假的图对象：invoke 必抛异常。"""
+
+        def invoke(self, *args, **kwargs):
+            raise RuntimeError("模拟图构造失败")
+
+    _real_graph = positioning_graph
+    positioning_graph = _BoomGraph()  # noqa: F841 —— 故意覆盖模块全局，给 run_positioning 用
+    try:
+        boom_result = run_positioning("职业：测试工程师")
+    finally:
+        positioning_graph = _real_graph
+
+    assert list(boom_result) == ["user_info", "profile", "competitors", "plan"], list(boom_result)
+    assert boom_result["profile"].startswith("[工作流执行失败"), boom_result["profile"]
+    assert boom_result["profile"] == boom_result["competitors"] == boom_result["plan"]
+    assert boom_result["user_info"] == "职业：测试工程师", boom_result["user_info"]
+    print("  ✓ 图级异常时回填失败文案，不再是三个空串")
 
     print("\n全部自检通过")
 

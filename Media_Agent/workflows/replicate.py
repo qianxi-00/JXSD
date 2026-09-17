@@ -14,6 +14,9 @@
        照样把空串喂给三个 LLM，模型会一本正经地分析不存在的文案（幻觉）。
        本实现加了短路：拿不到文案就写一句中文提示，后面三个节点逐级跳过，
        **一次 LLM 都不调**，前端能直接看出「链路断在第 1 步」。
+       短路判据同样要认「LLM 调用失败」—— ``llm_call`` 失败时返回的是
+       ``[LLM调用失败: …]`` / ``[LLM未配置] …``，那也不是正文，
+       不能拿去继续拆解/仿写（否则报错串会被当成文案，还白烧两次 LLM）。
     4. 视频链路之外还有**文章兜底**：课案的流程图写的是「下载视频/抓取文章」，
        但代码只实现了视频那一半。抖音/B站下载失败时改用 ``fetch_article()`` 抓正文，
        知乎/公众号这类图文链接也能走完整条链路。
@@ -22,7 +25,8 @@
     | 项 | 课案原文 | 本实现 | 原因 |
     |---|---|---|---|
     | 提取节点 | `download_video` → `extract_audio_text`，不判空 | 先 `extract_url` 洗一遍链接，视频链路失败改走 `fetch_article` | 课案流程图本来就写了「下载视频/抓取文章」；下载失败时纯视频链路必然得到空串 |
-    | 空文案 | 不判空，直接喂 LLM ×3 | 短路 + 中文提示，逐级跳过 | 否则模型会为「空文案」编出一篇爆款拆解，前端看起来像成功了 |
+    | 空文案 | 不判空，直接喂 LLM ×3 | 短路 + 中文提示，逐级跳过（判据见 `_is_usable`） | 否则模型会为「空文案」编出一篇爆款拆解，前端看起来像成功了 |
+    | LLM 失败串 | 无此概念（课案直接 `ChatOpenAI(...).invoke`） | `[LLM调用失败]` / `[LLM未配置]` 同样算「不可用」，后续节点短路 | 本项目 `llm_call` 不抛异常、把异常收成提示文本，不认它就等于把报错当正文 |
     | 节点容错 | 无 try | 四个节点全部 try/except | 与其余模块统一：失败写进 state 让链路走完 |
     | 温度 | 0.6 / 0.8 / 0.8 | 同左 | 拆解要稳、仿写要活，课案这个取值是对的 |
     | prompt | 见课案 | **逐字保留**（仅在前面加了短路判断） | 拆解维度是这个模块的核心资产 |
@@ -87,11 +91,27 @@ _TEMP_CREATIVE = 0.8
 # 链路中断的标记：统一前缀，方便下游判断「这一步没有可分析的东西」
 _SKIP_MARK = "⚠️"
 
+# LLM 调用的失败串前缀 —— 见 ``workflows/__init__.py`` 的 ``llm_call``：
+# 它**绝不抛异常**，失败时返回 ``[LLM调用失败: …]`` / ``[LLM未配置] …`` 两种提示文本。
+# 这两种串不是正文：当成正文往下去，后面两个节点会拿着报错去「仿写」「起标题」，
+# 各烧一次 LLM，最后把看起来像成功的产出渲染到页面上。
+# （触发条件可达：ASR 与 LLM 是两把独立的 key，提取成功但 LLM 未配置/报错是常见组合。）
+_LLM_FAIL_PREFIXES = ("[LLM调用失败", "[LLM未配置")
+
 
 def _is_usable(text: str) -> bool:
-    """判断上游产出能不能继续往下用（空串 / 中断标记都不算）。"""
+    """判断上游产出能不能继续往下用（空串 / 中断标记 / LLM 失败串都不算）。
+
+    这里是链路上**唯一**一道「上游产出能不能用」的闸门：四个节点都先过它，
+    再决定要不要调 LLM。所以判据收在这里、而不是散在每个调用点的
+    ``fallback=`` 上 —— 以后加新节点，只要沿用节点现有的写法，就自动继承
+    「上游不可用就别往下传」；靠每个调用点自己记得传 ``fallback=_SKIP_MARK``
+    更脆，新增一处忘了传就重新踩同一个坑。
+    """
     value = (text or "").strip()
-    return bool(value) and not value.startswith(_SKIP_MARK)
+    if not value or value.startswith(_SKIP_MARK):
+        return False
+    return not value.startswith(_LLM_FAIL_PREFIXES)
 
 
 class ReplicateState(TypedDict):
@@ -259,7 +279,10 @@ def run_replicate(url: str) -> dict:
 
     Returns:
         ``{"source_url","original_text","viral_analysis","rewritten","titles"}``。
-        链路中断时对应字段以 ``⚠️`` 开头并说明卡在哪一步，不会抛异常。
+        链路中断时对应字段以 ``⚠️`` 开头并说明卡在哪一步，不会抛异常
+        （例外：中断的正是某一步的 LLM 调用时，该字段保留 ``[LLM调用失败: …]`` /
+        ``[LLM未配置] …`` 原文 —— 报错原文比 ``⚠️`` 更能说明问题，
+        而它后面的字段照旧以 ``⚠️`` 短路）。
     """
     try:
         result = replicate_graph.invoke({"source_url": url or ""})
@@ -430,6 +453,37 @@ if __name__ == "__main__":
         assert empty_result["original_text"].startswith(_SKIP_MARK)
         assert calls["llm"] == []
         print("  ✓ 空链接不会崩（download_video/fetch_article 都白名单拒了空串）")
+
+        # 3f) LLM 失败串不是正文：extract 成功、但 analyze 那次 LLM 报错 / 没配 key 时，
+        #     rewrite 与 titles 必须短路 —— 否则会拿着报错去编仿写，还白烧 2 次 LLM。
+        #     （两把 key 相互独立，「ASR 配了、LLM 没配」是可达组合。）
+        def _make_fail_llm(text: str, counter: list):
+            """造一个「一调就返回失败串」的 llm_call 桩（两种失败串复用同一份）。"""
+            def _stub(prompt: str, temperature: float = 0.5, fallback: str = "") -> str:
+                counter.append((prompt, temperature))
+                return text
+
+            return _stub
+
+        for label, fail_text in (
+            ("调用失败", "[LLM调用失败: boom]"),
+            ("未配置", "[LLM未配置] 根目录 .env 里没有 API_KEY。"),
+        ):
+            clear_calls()
+            wire("C:/fake/demo.mp4", "大家好，今天讲三个提升效率的AI工具。", "")
+            fail_calls: list = []
+
+            llm_call = _make_fail_llm(fail_text, fail_calls)  # noqa: F841
+            fail_result = run_replicate("https://www.bilibili.com/video/BV1xx")
+
+            assert fail_result["original_text"].startswith("大家好"), fail_result["original_text"]
+            assert fail_result["viral_analysis"] == fail_text, fail_result["viral_analysis"]
+            assert len(fail_calls) == 1, (
+                f"LLM 失败串被当成正文了：后续节点又调了 {len(fail_calls) - 1} 次 LLM"
+            )
+            assert fail_result["rewritten"].startswith(_SKIP_MARK), fail_result["rewritten"]
+            assert fail_result["titles"].startswith(_SKIP_MARK), fail_result["titles"]
+            print(f"  ✓ LLM {label}串不算正文：只调 1 次 LLM，后续 2 个节点逐级短路")
     finally:
         reset_globals()
         llm_call = _real_llm

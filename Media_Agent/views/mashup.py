@@ -17,6 +17,7 @@
     · 剪辑日志折叠展示，成品可预览可下载
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -85,7 +86,7 @@ def show_mashup() -> None:
     video_path = ""
     if video_file:
         suffix = Path(video_file.name).suffix
-        saved = CACHE_DIR / f"input_{abs(hash(video_file.name)) % 100000:05d}{suffix}"
+        saved = CACHE_DIR / f"input_{hashlib.md5(video_file.name.encode('utf-8')).hexdigest()[:8]}{suffix}"
         saved.write_bytes(video_file.getvalue())
         video_path = str(saved)
         st.video(video_file)
@@ -175,7 +176,7 @@ def show_mashup() -> None:
     )
 
     # ---------------- 开始剪辑 ----------------
-    if st.button("🎬 开始剪辑", type="primary", use_container_width=True):
+    if st.button("🎬 开始剪辑", type="primary", width="stretch"):
         if not video_path:
             st.warning("请先上传口播视频或输入视频路径")
             return
@@ -208,7 +209,7 @@ def show_mashup() -> None:
             "steps": result.get("steps", ""),
         }
         st.session_state["mashup_input"] = video_path
-        st.session_state.history.append({
+        st.session_state.setdefault("history", []).append({
             "time": datetime.now().strftime("%H:%M"),
             "action": "视频剪辑",
             "summary": Path(video_path).name,
