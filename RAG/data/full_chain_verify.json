@@ -5,7 +5,8 @@
   "environment": {
     "docker_services": "MySQL/PostgreSQL/Redis/Milvus(standalone)/Neo4j/Langfuse(web+worker+clickhouse+db+redis+minio) 全部 Up",
     "llm": "生成 deepseek-flash / 评判 deepseek-chat",
-    "embedding_rerank": "BAAI/bge-m3(1024) / BAAI/bge-reranker-v2-m3"
+    "embedding_rerank": "BAAI/bge-m3(1024) / BAAI/bge-reranker-v2-m3",
+    "llm_note": "DeepSeek 官方账号于 2026-09-17 22:28 起余额耗尽（402）；图谱续跑与换模型实测走 .env 里 OPENAI_* 那组网关凭据（grok-4.6），.env 本身未改"
   },
   "commits": {
     "code_commit_at_run": "f9218e2",
@@ -167,6 +168,32 @@
       }
     },
     {
+      "stage": "图谱全量重建（300 篇，batch 模式）",
+      "command": "python RAG/script/build_finance_graph.py --limit 300 --mode batch",
+      "pass": "partial_then_resumed",
+      "readings": {
+        "抽取阶段": "20:45:25 → 22:18:45（93 分 20 秒）：LLM 抽出 4696 条实体 / 5020 条关系（含重复名）",
+        "落库": "create_graph 22:18:45 → 22:28:30：图上 2434 个去重实体 / 4649 条关系；Louvain 16 个社区",
+        "中断": "22:28:31 社区摘要首次调用即 DeepSeek 402 Insufficient Balance（重试 3 次全失败）⇒ Community 节点 0 个、报告未写、进程 exit 1",
+        "续跑": "22:35:19 → 22:44:20（8 分 38 秒）：LLM 进程级切到网关 https://qianxi7988.me/v1 的 grok-4.6（.env 未改）⇒ 16 条社区摘要（141~237 字）+ 16 条摘要向量",
+        "健康度": "孤点 1（0.04%）/ 归一化重名 8 / 未分配社区 0",
+        "检索演示": "命中社区 [5, 12]、子图 8 节点 / 12 关系",
+        "换模型后新图实测": "graph「刘凤英的航班是从哪到哪的？」→ 天柱山机场→咸阳机场（对）；graph「宋红 与哪些实体有关联？」→ 票号/航班 H01058/座位 23E/登机口 G20（对）；basic 票号对照答对"
+      },
+      "data_findings": [
+        "最高度数实体是 8762369777769（度 176）—— 18 条 OCR 失败机票共用同一票号，被数据缺陷顶成假枢纽",
+        "train / invoice / flight（ticket_type 的值）、来源文件(151) / 文件(81) 也被抽成实体，属抽取噪音"
+      ],
+      "new_defect_found": {
+        "id": "N23（已登记进 README §8）",
+        "symptom": "fusion「黄帅今年高铁票一共报销了多少钱？」—— DeepSeek 答 1691 元、grok 答 162.2 元",
+        "ground_truth_by_data": "G626=162.2 元（高铁）、Z766=1528.8 元（直达特快）⇒ 问\"高铁票\"的正解是 162.2；1691 错",
+        "root_cause": "PG tickets 表没有车次字段（ticket_no/person/ticket_type/date_int/amount_fen/route），两张票 ticket_type 都是 train ⇒ 按类型求和只能是 1691；\"高铁\"只存在于 OCR 正文",
+        "acceptance_lesson": "acceptance_4routes.py 早先对这条判 [OK]，判据只查\"没报错+有 SQL+答案非空\"、不查语义 ⇒ 错答案照样过。已在脚本说明里补上\"必须与数据级 ground truth 对照\""
+      },
+      "caveat": "本节所有真机答案产生于 grok-4.6（DeepSeek 官方账号余额耗尽），与 §7.1 里 DeepSeek 口径的指标不可直接比较"
+    },
+    {
       "stage": "评估闭环 · Langfuse 全量 36 条实验",
       "command": "python RAG/script/langfuse_evaluation.py --run-name fullchain-36-20260917 --max-concurrency 2",
       "pass": true,
@@ -267,7 +294,11 @@
     ".dsh_tmp/fullchain_artifacts/graph_rebuild_verify.json",
     ".dsh_tmp/fullchain_artifacts/graph_baseline_before_rebuild.json",
     ".dsh_tmp/fullchain_artifacts/stage_eval_report.json",
-    ".dsh_tmp/fullchain_artifacts/tick_extract_report.json"
+    ".dsh_tmp/fullchain_artifacts/tick_extract_report.json",
+    ".dsh_tmp/fullchain_artifacts/graph_full300_partial.json（402 中断时的实体/关系保底导出）",
+    ".dsh_tmp/fullchain_artifacts/graph_full300_final.json（续跑完成后的全量图快照：2434 实体/4649 关系/16 社区摘要，1331 KB）",
+    ".dsh_tmp/graph_full300_report.json（续跑报告：路由/前后状态/摘要/检索演示/答案）",
+    ".dsh_tmp/graph_full300.log + .dsh_tmp/resume.log（两段原始日志，含 402 报错原文）"
   ],
   "tracked_artifacts_restored": [
     "RAG/data/tick_extract_report.json（重跑后 25 个叶子字段零差异，纯键序 churn）",
@@ -275,8 +306,8 @@
   ],
   "not_covered": [
     "① OCR 本地复跑（模型在远端 GPU）",
-    "图谱全量重建（300 篇 × 1 次 LLM 抽取，本轮按 --limit 3 与基线同口径）",
     "Chainlit 页面的人工交互（本机不起真 Edge）",
-    "固定同一批 evidence 的受控对比（判断 Ragas 三项小降是采样噪声还是真退化需要它）"
+    "固定同一批 evidence 的受控对比（判断 Ragas 三项小降是采样噪声还是真退化需要它）",
+    "本轮的 LLM 相关结论都在 grok-4.6 上取得（DeepSeek 402）—— 换回 DeepSeek 后需复跑才算同口径"
   ]
 }

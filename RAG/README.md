@@ -1297,6 +1297,42 @@ Invoke-RestMethod -Uri http://127.0.0.1:8099/api/chat -Method Post -ContentType 
 - 固定同一批 evidence 的**受控对比**（要判断本次 Ragas 三项小降是采样噪声还是真退化，需要它；本轮只做了同口径复跑）；
 - Chainlit 页面的人工交互（本机不起真 Edge，按约定只做无头/HTTP 层）。
 
+#### 补做：300 篇全量建图（同一晚，含一次真实中断与续跑）
+
+`--limit 3` 的冒烟图只是"通不通"，这轮把**全量 300 篇**真建了一遍。过程与读数：
+
+| 阶段 | 时间 | 结果 |
+|---|---|---|
+| 抽取（`--limit 300 --mode batch`） | 20:45:25 → 22:18:45（**93 分 20 秒**） | LLM 抽出 **4696** 条实体、**5020** 条关系（含重复名） |
+| `create_graph` 落库 | 22:18:45 → 22:28:30（9 分 45 秒） | 图上 **2434** 个去重实体 / **4649** 条关系；Louvain 分 **16** 个社区 |
+| 社区摘要 | 22:28:31 **中断** | 首次调用即 **DeepSeek 402 Insufficient Balance**，重试 3 次全失败 ⇒ `Community` 节点 0 个、报告未写 |
+| 续跑社区摘要 | 22:35:19 → 22:44:20（8 分 38 秒） | LLM 进程级切到网关 `https://qianxi7988.me/v1` 的 `grok-4.6`（**`.env` 未改**）⇒ 16 条摘要（141~237 字）+ 16 条摘要向量；检索演示命中社区 `[5, 12]`、子图 8 节点 / 12 关系 |
+
+**健康度**（`graph_rag/quality.py` 口径）：孤点 **1**（0.04%）、归一化重名 **8**、未分配社区 **0**。
+
+**这张图暴露的数据问题**：度数最高的实体是 `8762369777769`（**度 176**）—— 那 18 条 OCR 失败的机票
+共用同一个票号，于是被数据缺陷顶成了整张图的**假枢纽**；`train` / `invoice` / `flight`（`ticket_type` 的值）
+与「来源文件」(151) / 「文件」(81) 也被当成实体抽了出来。
+
+**换模型后在新图上的实测**（全部走 8099 真接口，LLM = grok-4.6）：
+`graph` 线路「刘凤英的航班是从哪到哪的？」→ **天柱山机场 → 咸阳机场**（对，与社区摘要一致）；
+「宋红 与哪些实体有关联？」→ 给出票号 / 航班 H01058 / 座位 23E / 登机口 G20 的关系链（对）；
+`basic` 线路「何海燕的火车票票号是多少？」→ 与 DeepSeek 口径同一答案（对）做对照。
+
+**⚠️ 换模型暴露出的真缺陷（已登记为 N23）**：`fusion` 线路问「黄帅今年高铁票一共报销了多少钱？」——
+**DeepSeek 答 1691 元、grok 答 162.2 元**。查数据判定：黄帅两张票是 **G626（高铁，162.2 元）** 与
+**Z766（直达特快，1528.8 元）**，问题问的是"**高铁票**" ⇒ **162.2 元才对，1691 元是错的**。
+根因不在模型：PG `tickets` 表**没有车次字段**（只有 `ticket_no/person/ticket_type/date_int/amount_fen/route`），
+两张票的 `ticket_type` 都是 `train`，任何按类型的 SQL 求和都只能得 1691；"高铁"只存在于 OCR 正文里。
+
+**验收判据的教训（我自己的）**：早先 `acceptance_4routes.py` 对这条 fusion 用例判了 `[OK]`，
+而它只检查了"没报错 + 有 SQL + 答案非空"，**没检查语义**，所以 1691（错答案）照样过。
+判据已在 `script/acceptance_4routes.py` 的说明里补了这句：**要判对错必须与数据级 ground truth 对照**，
+不能只看链路有没有跑完。
+
+> 口径提醒：本节所有真机答案都产生于 **grok-4.6**（DeepSeek 官方账号当时余额耗尽），
+> 与 §7.1 里 DeepSeek 口径的指标**不可直接比较**。
+
 ## 八、已知差异与坑
 
 ### 8.1 本机环境与配置类
@@ -1394,6 +1430,7 @@ Invoke-RestMethod -Uri http://127.0.0.1:8099/api/chat -Method Post -ContentType 
 | N20 | 中 | `data_process/build_ocr_json.py` | `ocr_model` 恒为空串、`ocr_engine` 写死 ⇒ 产物里丢失"这份文本是哪个模型产的"，换模型后新旧数据无法区分 | 待修（写入 `settings.paddleocr.model`） |
 | N21 | 中 | `data_process/tick_extract.py` | 建集合的 `dim=1024` 与 `settings.embedding.embedding_size` 是**两处真值来源**；换 embedding 模型且维度变化时只改一处必炸（Milvus 维度与索引绑死，必须重建集合） | 待修（schema 读配置 + 一致性断言） |
 | N22 | 中 | `data_process/embed_tickets.py`、`script/build_eval_set.py` 等 3 处 | `limit=10000` 硬上限**静默截断**（超过就永久搜不到），且 `ticket_type` 白名单外的记录永不向量化（SQL 查得到、向量查不到） | 待修（分页 + 告警） |
+| N23 | 中 | `data_process/tick_extract.py` + PG `tickets` 表 | **票据没有"车次"字段** ⇒ "高铁票"类问题只能按 `ticket_type='train'` 求和，会把 Z/T/K 字头普通列车算进高铁：实测黄帅 G626=162.2 元（高铁）+ Z766=1528.8 元（直达特快），按类型求和得 **1691 元**，而问题问"高铁票"的正确答案是 **162.2 元**（DeepSeek 那轮就答了 1691，grok 那轮读正文才答对） | 待修（抽 `train_no` 进结构化字段，SQL 侧按 G/D/C 前缀过滤） |
 | N23 | 中 | 8 个 `script/*.py` | 模块说明字符串写在 `import` **之后** ⇒ 不是真 docstring，`__doc__` 为 `None`，`help()`/Sphinx 抓不到 | 待修（挪到首行） |
 | N24 | 中 | `core/cache.py` `_ensure_preset_loaded` | 进程内矩阵**不跟随 Redis 变化**：`seed_preset(force=True)` 后运行中的进程仍用旧矩阵，须重启才生效；Redis 键被清掉时 `json.loads(None)` 抛异常又被 `lookup` 吞掉 ⇒ 表现为"FAQ 层静默失效" | 待修 |
 | N25 | 低 | `data_process/paddle_ocr.py` `poll_job` | 云 API 返回未列出的新状态（如 `queued`）会空转到 10 分钟超时，报 TimeoutError 而不是"未知状态" | 待修 |
