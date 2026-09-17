@@ -79,9 +79,9 @@ class GraphEntity(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    name: str = ""
-    entity_type: str = ""
-    description: str = ""
+    name: str
+    entity_type: str | None = None
+    description: str | None = None
     community_id: int | None = None
 
 
@@ -90,9 +90,9 @@ class GraphRelationship(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    source: str = ""
-    relation: str = ""
-    target: str = ""
+    source: str | None = None
+    relation: str | None = None
+    target: str | None = None
 
 
 class GraphCommunity(BaseModel):
@@ -101,7 +101,7 @@ class GraphCommunity(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     community_id: int | None = None
-    summary: str = ""
+    summary: str | None = None
     score: float | None = None
 
 
@@ -132,7 +132,7 @@ class GraphQueryResponse(BaseModel):
     subgraph: GraphSubgraph = Field(..., description="本次检索到的子图（三种方式的字段见 GraphSubgraph）")
 
 
-@app.post("/api/graph_rag/query", response_model=GraphQueryResponse)
+@app.post("/api/graph_rag/query", response_model=GraphQueryResponse, response_model_exclude_none=True)
 def graph_rag_query(req: GraphQueryRequest) -> dict:
     """GraphRAG 问答接口：检索子图 → 拼提示词 → LLM 生成回答。
 
