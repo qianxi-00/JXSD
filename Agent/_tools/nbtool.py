@@ -513,7 +513,19 @@ def cmd_coverage(args: argparse.Namespace) -> int:
         rows.append((src_rel, nb_rel, len(lines), ratio, note))
 
     worst = sorted((r for r in rows if r[4]), key=lambda r: r[3])[:25]
-    if worst:
+    if args.filter:
+        # 指定了过滤词就只列匹配的行，且**不受「最差 25 个」限制** ——
+        # 否则 subagent 查自己那几个文件时，它们常常不在最差 25 里，
+        # 看不到数字就只能自己重写一遍覆盖率脚本（实测发生过）。
+        picked = [r for r in rows if args.filter in r[0].replace("\\", "/")]
+        if not picked:
+            print(f"没有匹配 {args.filter!r} 的源文件")
+        else:
+            print(f"匹配 {args.filter!r} 的源文件（{len(picked)} 个）：")
+            print("  {:<50} {:<40} {:>6} {:>7}".format("源文件", "目标 notebook", "代码行", "覆盖"))
+            for src_rel, nb_rel, n, ratio, note in sorted(picked, key=lambda r: r[3]):
+                print(f"  {src_rel:<50} {nb_rel:<40} {n:>6} {ratio:>6.1%} {note}")
+    elif worst:
         print("覆盖率最低的 25 个源文件：")
         print("  {:<50} {:<40} {:>6} {:>7}".format("源文件", "目标 notebook", "代码行", "覆盖"))
         for src_rel, nb_rel, n, ratio, note in worst:
@@ -577,6 +589,8 @@ def main() -> int:
     p5 = sub.add_parser("coverage", help="覆盖率审计")
     p5.add_argument("--fail-under", type=float, default=0.95,
                     help="单个源文件的代码行覆盖率阈值（默认 0.95）")
+    p5.add_argument("--filter", default="",
+                    help="只看路径包含该子串的源文件（如 03_deepagents），会列出全部匹配项而不是最差 25 个")
     p5.set_defaults(func=cmd_coverage)
 
     args = ap.parse_args()
