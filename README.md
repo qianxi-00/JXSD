@@ -14,6 +14,7 @@
 | `Machine_Learning/` | 机器学习课案实现（sklearn / 集成学习 / 无监督 / 评估与保存） |
 | `Deep_Learning/` | 深度学习课案实现（PyTorch / CNN / RNN / Attention / Transformer / 训练组件） |
 | `Front_End/` | 前端课案实现（HTML / CSS / JavaScript / Streamlit 共 18 个应用） |
+| `Media_Agent/` | 自媒体 AI 创作平台（Streamlit + LangGraph + DeepAgents，六大模块全链路） |
 | `Crawler/` `Data_Analysis/` `Data_Structure/` `Py_Advanced/` | 其他学习项目 |
 
 ## 环境准备
@@ -99,3 +100,25 @@ uv run python Agent/03_deepagents/01_智能体.py    # DeepAgents 示例
 章节：`01_langgraph` / `02_langchain` / `03_deepagents` / `04_function_call` /
 `05_mcp` / `06_langfuse` / `07_protocols`，每个文件头部有详细说明与运行方式。
 沙箱示例（`08_后端_Sandbox.py`）需 LangSmith 或 Opensandbox 服务端。
+
+## 自媒体 Agent（Media_Agent）
+
+「3.自媒体Agent」课案的落地实现：Streamlit + LangGraph + DeepAgents，
+六大模块（账号定位 / 热点监控 / 内容复刻 / 口播视频 / 视频剪辑 / 数据复盘）
+全部打通，三层结构 `views/` → `workflows/` → `tools/` 与课案一致。
+
+```powershell
+# 启动（推荐从仓库根目录，与其它课案目录一致）
+& 'F:\ProGram\Python_Base\.venv\Scripts\python.exe' -m streamlit run Media_Agent/main.py
+
+# 离线全量自检（零密钥也必须全绿 —— 这是本项目的验收底线）
+& 'F:\ProGram\Python_Base\.venv\Scripts\python.exe' Media_Agent/verify_all.py
+```
+
+配置项全部是 `MEDIA_*` 前缀、写在根 `.env`（模板见 `.env.example`），
+不额外维护配置类。与课案最大的差异是**三个本地模型换成百炼托管 API**：
+FunASR → `qwen-audio-3.0-asr-flash`、Fish-Speech → CosyVoice 声音复刻、
+HeyGem → `pixverse/pixverse-lipsync` 对口型；还有抖音采集的自托管服务与手动粘贴降级入口。
+
+细节、踩坑与实测记录见 `Media_Agent/README.md`（知识点索引）与
+`Media_Agent/VERIFY_REPORT.md`。

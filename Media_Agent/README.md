@@ -107,14 +107,17 @@ npm install --cache .npm-cache hyperframes
 
 ```powershell
 # 方式一：从仓库根目录启动（推荐，与其它课案目录一致）
-uv run streamlit run Media_Agent/main.py
+& 'F:\ProGram\Python_Base\.venv\Scripts\python.exe' -m streamlit run Media_Agent/main.py
 
 # 方式二：进入子项目目录启动（与课案原文一致）
 cd Media_Agent
-uv run streamlit run main.py
+& 'F:\ProGram\Python_Base\.venv\Scripts\python.exe' -m streamlit run main.py
 ```
 
 打开 <http://localhost:8501>。
+
+> 不写 `uv run`：本机解释器固定用 `.venv\Scripts\python.exe`，
+> PATH 里的 `python` 是 Windows Store 占位符（执行后静默无输出）。
 
 ### 4. 自检
 
