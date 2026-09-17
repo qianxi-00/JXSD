@@ -75,6 +75,7 @@
 | 改提示词 | `core/prompts.py` | 改完跑 `run_stage_eval.py` 看路由准确率有没有退化 |
 | 加数据（新票据） | 二 步骤 ①~⑦ | OCR → JSON → 抽字段 → 向量 → （可选）PG / Neo4j |
 | 看生产版 Agent 的审批怎么走 | 5.2 安全保障 | `uv run python RAG/script/hitl_demo.py` |
+| 查图谱有没有退化 / 把孤点连回图 | 4.12 | `graph_health.py`（体检，只读）→ `graph_completion.py --dry-run`（看规模）→ `graph_completion.py review-list`（人工审核） |
 | 看一次真实的实验对比 | 5.3 | `uv run python RAG/script/langfuse_evaluation.py --run-name <名字>` |
 | 出问题了先查什么 | 八 | 8.1 环境类（沙箱/服务）/ 8.2 数据口径类 / 8.3 已知欠账 |
 
@@ -206,10 +207,10 @@ L2 是课案要求的进阶能力，L3 是数据与工具（改了才需要读�
 | L1 | `core/prompts.py` + `llm/chat.py` | 全部提示词 + 路由/改写/流式生成 | 换了模型却不知道为什么路由退化成默认值 | ~700 |
 | **L2 进阶能力**（课案优化篇） | `agentic/finance_agent.py` | DeepAgent 组装：检索工具、证据分析子代理、上下文/重试/审批中间件、Langfuse 追踪 | 无法解释"生产版 Agent 为什么比主链路准" | ~834 |
 | L2 | `agentic/text_to_sql.py` | 金额汇总/精确筛选走结构化查询（单条 SELECT + 黑名单 + 行数上限 + 五态返回） | 汇总类问题靠向量召回会漏票 | ~509 |
-| L2 | `graph_rag/`（5 个文件） | 知识图谱：抽取→入图→Louvain 社区摘要→三种检索→FastAPI 接口 | 多实体关联问题答不好 | ~1573 |
+| L2 | `graph_rag/`（7 个文件） | 知识图谱：抽取→入图→Louvain 社区摘要→三种检索→FastAPI 接口；外加健康度指标与链接补全审核 | 多实体关联问题答不好 / 图谱退化看不见 | ~1573 |
 | L2 | `evaluation/`（9 个文件） | 评估体系：样本构造、分阶段指标、排序指标、阈值标定、Ragas 评判 | 改完不知道是变好还是变差 | ~1610 |
 | **L3 数据与工具**（要改数据才读） | `data_process/`（6 个文件） | 图片→OCR→Markdown→JSON→字段抽取→入库→向量回填；预设问答分层灌缓存 | 数据不可复现（换机就跑不出同一份索引） | ~1246 |
-| L3 | `script/`（11 个文件） | 评估闭环、阈值标定、导入 PG、建图、HITL 演示、样本生成 | 不知道怎么重新标阈值 / 复跑实验 | ~2249 |
+| L3 | `script/`（21 个 .py） | 评估闭环、阈值标定、导入 PG、建图、图谱体检与补全审核、HITL 演示、样本生成 | 不知道怎么重新标阈值 / 复跑实验 / 查图谱退化 | ~2249 |
 | L3 | `app/`（3 个文件） | FastAPI + Chainlit 前端 | 改了接口没人知道 | ~382 |
 | L3 | `data/` | 票据图片、OCR 产物、评估集、阈值结果、图谱报告等**产物**（多数可重建） | —— | —— |
 | **L4 工程与验证**（出问题才翻） | `tests/`（37 个文件） | 离线用例为主 + `@integration` 真服务用例；`service_probe.py` 是服务探针 | 改坏了不知道 | ~4970 |
@@ -268,6 +269,8 @@ RAG/
 │   ├── models.py            Neo4j 节点与关系(Entity/Community/RELATES_TO + 向量索引)
 │   ├── builder.py           建图:NER+关系抽取、社区检测(Louvain)、社区摘要、增量入库
 │   ├── retriever.py         分层检索:社区摘要召回 → 社区内实体检索 → 多跳遍历
+│   ├── quality.py           健康度指标(纯函数):孤点率/归一化重名率/链接准确率+误建重复率
+│   ├── completion.py        链接补全闭环:孤点→候选→LLM 提议→落库/人工审核队列
 │   └── service.py           FastAPI 接口 /api/graph_rag/query
 │
 ├── evaluation/              评估体系(纯逻辑,全部离线可测)
@@ -280,7 +283,7 @@ RAG/
 │   ├── sample_gen.py        样本生成质量审核解析(兼容 JSON 与文本两种输出)
 │   └── llm_judge.py         按课案评分细则给最终回答打 1~5 分
 │
-├── script/                  可执行脚本(评估闭环 / 导入 / 建图 / 样本生成)
+├── script/                  可执行脚本(评估闭环 / 导入 / 建图 / 图谱体检与补全审核 / 样本生成)
 │   ├── build_eval_set.py          从 Milvus 确定性生成 data/eval_set.jsonl
 │   ├── upload_langfuse_dataset.py 上传为 Langfuse 数据集(支持 --rebuild)
 │   ├── langfuse_evaluation.py     Langfuse 实验:Recall@K + Ragas 四指标 + 批次聚合
@@ -330,7 +333,7 @@ RAG/
 
 ## 四、架构图
 
-一共 **11 张 mermaid 图**，都用**本项目自己的模块名与真实参数**画（不是课案图），按需跳读：
+一共 **13 张 mermaid 图**，都用**本项目自己的模块名与真实参数**画（不是课案图），按需跳读：
 
 | 图 | 看它回答什么问题 |
 |---|---|
@@ -344,11 +347,12 @@ RAG/
 | 4.8 评估闭环 | 样本怎么来、指标怎么算、怎么用 Langfuse 按 run 对比 |
 | **4.10 四条 RAG 线路** | 前端能选哪四条线、各条适合什么问、④ 的内部流程怎么走 |
 | **4.11 融合架构全景** | 三条线路的长处分别进了哪一层、横切能力（缓存/多轮/降级）挂在哪 |
+| **4.12 图谱健康度与补全闭环** | 三指标怎么算、孤点怎么连回图、哪一步必须人工审核（T6） |
 | 4.9 阶段输入输出表 | 排障用：每段的输入/输出/异常行为与代码位置（不是图，是表） |
 
 > 图能不能画出来是**真渲染验证过**的，不是"写了就算"：`RAG/script/check_mermaid.py`
 > 把本文件的 mermaid 块全抽出来生成一个校验页，用浏览器真渲染一遍 —— 最近一次结果
-> **渲染成功 11/11 张**（mermaid 语法错在 Markdown 预览里往往只表现为"这块不显示"，
+> **渲染成功 13/13 张**（mermaid 语法错在 Markdown 预览里往往只表现为"这块不显示"，
 > 不真渲染很难发现；本项目实测踩过：标签里混 `**` 加粗会原样显示成星号、
 > 标签里出现裸的 ASCII 双引号会把标签截断、子图连子图会把布局撑成一整块空白）。
 
@@ -804,6 +808,72 @@ flowchart TB
 
 ---
 
+### 4.12 图谱健康度与链接补全闭环（T6）
+
+课案（优化篇「孤立节点的处理」）要的是两件事：用**孤立节点率**监控图谱健康度（突增说明抽取或
+匹配环节退化），以及用**定期链接补全任务**把孤点连回图中（过置信度阈值的落库，存疑的进人工审核）。
+本项目把这条闭环落在 3 个脚本 + 2 个模块上，图比文字好读：
+
+```mermaid
+flowchart TB
+    A["Neo4j 全图<br/>节点名 + 关系端点"] --> B["quality.isolated_node_rate<br/>孤点数 / 总节点数（自环算孤点）"]
+    A --> C["quality.normalized_duplicate_rate<br/>归一化重名率（代理指标）"]
+    B --> D["script/graph_health.py<br/>报告 + 与上次报告对比"]
+    C --> D
+    D -->|"孤点率 / 重复率 +≥5pp"| E["⚠ 告警<br/>退出码 2（定时任务据此发通知）"]
+    D -->|"孤点名单"| F["graph_completion.run_completion<br/>scan：扫孤点"]
+    F --> G["candidate_pool<br/>同类型优先 → 向量余弦降序"]
+    G -->|"没候选就跳过<br/>（不花钱）"| F
+    G --> H["LLM 提议候选关系<br/>只认候选池里的名字，编造的丢掉"]
+    H --> I{"confidence"}
+    I -->|">= 0.8"| J["builder.upsert_relation<br/>直接落库"]
+    I -->|"0.5 ~ 0.8"| K["审核队列 JSONL<br/>data/graph_review_queue.jsonl"]
+    I -->|"< 0.5"| L["丢弃（计数留痕，便于归因）"]
+    K --> M["review-list / review-ok / review-no"]
+    M -->|"批准"| J
+    M -->|"驳回"| N["只记状态，不碰图"]
+    P["script/eval_graph_linking.py<br/>标注集上跑产线的 match_entity"] -.->|"只读评估，不改图"| A
+```
+
+**三条诚实边界**（都是本轮实测得到的，不是推测 —— 别把这张图当成"监考到位了"）：
+
+1. **孤点率 0 不等于图谱健康**。课案原话：源文档本身没提供关系时，孤点说明"证据还没到位"，
+   属于正常状态，不强行造边。所以这个数字**只能看趋势**，单次 0 不能证明没退化 ——
+   本项目真机基线恰好就是 `0/51`，也就是说这条监控目前**没有过任何真实告警**。
+2. **重复率抓不到近义实体**。它算的是"归一化重名"（大小写/空白/全半角/标点），
+   实测：把 `员工培训费用` 插进已有 `员工培训费` 的图里，孤点率如实变成 `1/52 = 1.92%`，
+   而**重复率仍是 `0/52`**。近义重复要靠标注集上的链接准确率（`eval_graph_linking.py`），
+   或者上游做 alias 消歧（本项目**尚未实现** alias，见 §5.4 台账）。
+3. **0.8 这个自动落库阈值偏宽松**。同一次真跑里，LLM 还给出
+   `员工培训费用 -单价-> 1,631.37 CNY（conf 0.85）` 与 `-数量-> 28（conf 0.85）` ——
+   那其实是"这张发票上写着单价/数量"，不是实体之间的语义关系，但 0.85 ≥ 0.8 会被直接落库。
+   把 `--auto-confidence` 提到 0.9 后这两条就落进审核队列、可人工驳回。
+   **阈值要按自己图的抽取口径重标**，别照抄默认值。
+
+用法（在 Python_Base 目录下执行）：
+
+```powershell
+# 体检（只读，不花钱）：报告落 RAG/data/graph_health.json，第二次跑自动与它对比
+uv run python RAG/script/graph_health.py
+
+# 补全：先空跑看规模（每个有候选的孤点花 1 次 LLM 调用），再决定动不动图
+uv run python RAG/script/graph_completion.py --dry-run --limit 3
+uv run python RAG/script/graph_completion.py --limit 3
+
+# 人工审核（队列是本地运行文件，不入库）
+uv run python RAG/script/graph_completion.py review-list
+uv run python RAG/script/graph_completion.py review-ok <id>
+uv run python RAG/script/graph_completion.py review-no <id>
+
+# 链接准确率：需要**人工确认**的标注集（格式见脚本 docstring）
+uv run python RAG/script/eval_graph_linking.py --labels RAG/data/graph_linking_labels.jsonl
+```
+
+> 为什么人工审核用队列文件而不是 langgraph 的 `interrupt`：补全任务是离线批处理，
+> 审核可能发生在几小时甚至几天之后、也可能换人做，而 `interrupt` 的恢复点是**进程内**的
+> checkpoint，跨不了这段时间。agent 会话里的 HITL 仍然走 langgraph（`script/hitl_demo.py`），
+> 两者审的不是同一种东西。
+
 ## 五、与课案的对齐情况
 
 ### 5.1 基础篇
@@ -994,7 +1064,7 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | T3 | 中 | 优化篇 40-43 / 106-109（评估钩子） | `register_evidence_hook` 生产侧已接线（`answer_financial_question` 每轮召回后回调），但**全仓无调用方注册** ⇒ `_evidence_hook` 恒为 None；原 docstring 把"评估脚本用钩子取证据"写成事实 | ✅ 注释已修（模块 docstring 与函数 docstring 都改为如实描述：钩子是对外扩展点、当前无内部调用方，评估实际走 `last_retrieval()`）。**语义层面仍算欠账**——要真用需外部评估器自己注册 |
 | T4 | 中 | 优化篇 788（评估模型与生成模型分开配置） | 原先 `langfuse_evaluation.py` 的 Ragas 评判与 `evaluation/llm_judge.py` 用的就是 `settings.llm.model`（与线上生成同一个） | ✅ **本轮已修**：`config.py` 新增 `EvalLLMSettings`（`EVAL_LLM_*`）+ **共用**的回退解析 `eval_llm_target()`；Ragas 与 llm_judge 两处都改成走它。本机实测：生成 `deepseek-flash` / 评判 **`deepseek-chat`**（`from_fallback=False`），一次真实评分返回 score=5；未配置 `EVAL_LLM_MODEL` 时回退生成模型并打 WARNING，不让"评判就是生成模型"这件事静默 |
 | T5 | 中 | 优化篇 791 / 1178（成本要和质量一起看） | 实验脚本全文 **0 处** `usage`/`total_tokens`/`cost` | 回答不了"Top-K 调大后成本是否可接受" |
-| T6 | 中 | 优化篇 2238-2239（图谱健康度三指标 + 补全与人工审核闭环） | grep `孤立节点率/重复节点率/链接准确率/链接补全/人工审核` **全部 0 命中** | 抽取/消歧退化会**静默污染图谱且没有可观测量**（现在孤点 0 ≠ 有监控） |
+| T6 | 中 | 优化篇 2238-2239（图谱健康度三指标 + 补全与人工审核闭环） | ✅ **本轮已修**：① 三指标落地为纯函数（`graph_rag/quality.py`）—— `isolated_node_rate`（孤点/总数，**自环仍算孤点**）、`normalized_duplicate_rate`（归一化重名的**代理**指标）、`link_decision_metrics`（标注集上的**链接准确率** + **误建重复节点率**，按课案口径区分 `false_create`/`false_link`/`target_mismatch`）；② `script/graph_health.py` 真库采集 + 与上次报告对比，孤点率/重复率 **+5 个百分点**即告警并以退出码 2 表达；③ `graph_rag/completion.py` + `script/graph_completion.py` 实现补全闭环：扫孤点 → 同类型优先 + 向量余弦挑候选 → LLM 提议（**只认候选池里的名字**）→ ≥0.8 直接落库 / 0.5~0.8 进 `RAG/data/graph_review_queue.jsonl` / <0.5 丢弃并计数；④ `review-list` / `review-ok` / `review-no` 人工裁决，批准才落库；⑤ `script/eval_graph_linking.py` 用**产线的** `builder.match_entity` 在人工标注集上算链接准确率。**三条诚实边界写进 README §4.12**：孤点率只能看趋势（真机基线就是 0/51，0 不等于健康）、重复率抓不到近义实体、0.8 这个自动阈值偏宽松 |
 | T7 | 中 | 优化篇 2495-2497（`QueryResponse` + `response_model`） | `graph_rag/service.py` 返回裸 dict；grep `QueryResponse` 0 命中 | OpenAPI 没有响应结构，接口契约退化 |
 | T8 | 中 | 基础篇「接口职责」（`GET /api/health`、`WS /api/ws`、`QueryRequest.history`、`QA_CACHE_ENABLED`） | ✅ **本轮已修**：① `GET /api/health`（四依赖各探一次，**每个探针 3 秒上限**，任一失败只标 `degraded` 不返 5xx）；② `WS /api/ws`（与 SSE 同一套事件流，一条连接可连续多轮）；③ `ChatRequest.history`（四线路统一入口，①③ 单轮线路会忽略）；④ **`QA_CACHE_ENABLED` 总开关**（`config.py::QaCacheSettings`，一个开关管住四条线路：①透传 `run_and_collect(use_cache=)`、②叠加 `not history and cache_enabled()`、③④进 `_cached_route`）；⑤ SSE 每条载荷加 `query_type`（cache/faq/rag/rag_rejected/llm）与收尾帧 `processing_time`；⑥ CORS（**仅在配了 `APP_CORS_ORIGINS` 时挂**，默认不开放跨域）；⑦ 启动预热（`APP_WARMUP`，用 `AnswerCache.warmup()` 把**进程内预设矩阵**也载入，只播种 Redis 不算预热）。真机：`/api/health` 1.01s 四依赖全 ok；SSE 20 帧 token 全带 `query_type`、收尾 `processing_time=2.655s`；WS 一条连接连问两轮（第 2 轮 0.001s 命中缓存） |
 | T9 | 中 | 基础篇 1812-2274（12 字段口径） | `semantic_text` = 清洗后 OCR 全文，未采用课案三套摘要模板 | 召回语义依赖 OCR 原文措辞；若改模板，必须先保证证据文本取 `ocr_text`（已改） |
@@ -1134,6 +1204,7 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | **导入幂等（本轮）** | `tick_extract.py --insert` 重跑一次：`count(*)` **300 → 300**、**有向量 282 → 282**（一条没丢）；同主键 `insert` 两次在一次性集合上实测是 **2 行**（旧实现的问题） |
 | **token 用量采集（本轮）** | 真机一串 Agentic 问答：**9 次 LLM 调用 / 输入 41,092 / 输出 7,643 / 合计 48,735 token，其中 34,559 命中提示缓存**（`cached_input_tokens`，DeepSeek 的 `prompt_cache_hit_tokens`）；未填单价时 `cost=None` ⇒ 评估报告里不出成本指标（不把"没算"报成 0） |
 | **接口层补齐（本轮，T8）** | `/api/health` 真机 **1.01s** 返回四依赖全 ok（redis/milvus/postgres/neo4j）；SSE 20 帧 token **每帧带 `query_type`**、收尾帧 `processing_time=2.655s`；`WS /api/ws` 一条连接连问两轮（第 2 轮 **0.001s** 命中缓存）；启动日志 `[预热] FAQ 相似度层 5 条 / 预设矩阵已载入 5 行` + `BM25 语料索引已加载` |
+| **图谱健康度与补全闭环（本轮，T6）** | 真机基线（先量再动）：`51 实体 / 66 关系 / 6 社区 / 孤点 0 / 归一化重名 0`，`graph_health.py` 读数与独立只读 Cypher 一致。**闭环真跑**：临时插入一个"像别名"的孤点 `员工培训费用`（图上已有 `员工培训费`）→ 体检立刻报 `孤点 1/52 = 1.92%`，而**重复率仍是 0%**（证明代理指标的盲区，见 §4.12）→ `graph_completion.py --dry-run` 提议 `同义 conf=0.95` 且未写库 → 真跑（`--auto-confidence 0.9`）落库 1 条、入队 2 条 → `review-ok` 批准的那条真进了图、`review-no` 驳回的没进 → 清理探针后回到 `51/66`、队列文件删除。**真跑抓到一个真 bug**：`review-ok` 崩在 `No Neo4j connection has been configured`（审核路径只读队列、没人建连接），修在 `apply_review` 并留了一条盯 `models.connect()` 的用例。链接评估：标注 2 条（真别名 + 虚构名）→ `builder.match_entity` 判出 **链接准确率 100%、误建重复率 0%、吞节点 0、连错 0** |
 
 ### 7.2 真机端到端复跑清单（改完链路**必须**跑一遍）
 
