@@ -75,6 +75,8 @@ def upload_file(file_path: str, model: str) -> str:
         打印一行中文原因 + **返回空串**，绝不抛异常。调用它的两条链路分别在 LangGraph
         节点与 Streamlit 回调里，异常会把整条图/整个页面带崩；所以调用方只需要判空串，
         然后走自己的降级分支（ASR 报「音频过大且上传失败」、数字人退回内置 TTS）。
+        失败包括：文件不存在 / 没配密钥 / 没传 model / 上传抛异常 /
+        **返回形态异常**（不是本机这版 SDK 的 2 元组）/ 返回的不是 ``oss://``。
     """
     # 三类前置校验都收成「打印 + 返回空串」。刻意保持「文件 → 密钥 → model」这个顺序：
     # 先确认文件真的存在，免得把「路径写错」误报成「密钥没配」而查错方向。
@@ -109,14 +111,18 @@ def upload_file(file_path: str, model: str) -> str:
         print(f"[临时存储] 上传失败: {exc}")
         return ""
 
-    # 实测返回 (oss_url, certificate)；这里对两种形态都做兼容，
-    # 免得 dashscope 后续版本改成只返回字符串时静默失效。
-    # （1.27.4 源码确认：`return "oss://" + form_data["key"], upload_info` 是 2 元组。）
-    oss_url = ""
-    if isinstance(result, (tuple, list)) and result:
-        oss_url = str(result[0] or "")
-    elif isinstance(result, str):
-        oss_url = result
+    # 形状校验（**这是防御，不是兼容分支**）：本机 dashscope 1.27.4 实测返回 2 元组
+    # `(oss_url, 上传凭证信息)`，源码里就是
+    # `return "oss://" + form_data["key"], upload_info` —— 所以早先那个
+    # `elif isinstance(result, str)` 在这版 SDK 上**永远走不到**（读起来像死代码）。
+    # 现在只校验「长度恰为 2 的序列」：形状不对（SDK 升级改成返回 dict / 单串 / None）
+    # 就判失败，并把实际类型与原值打进日志 —— 在这里报出来，好过把它当 URL
+    # 一路带到模型调用那一步才报「文件不可用」。
+    if not (isinstance(result, (tuple, list)) and len(result) == 2):
+        print(f"[临时存储] upload 返回形态异常（期望 2 元组 (oss_url, 凭证)，实际 "
+              f"{type(result).__name__}）: {result!r} —— 可能是 dashscope 改了返回形态")
+        return ""
+    oss_url = str(result[0] or "")
 
     # 形态兜底：拿到个非 oss 的字符串就当失败。放过去的话，下游会把它当普通公网 URL
     # 直接调模型，报错要等到那一步才出现，日志里看不到「上传其实没成功」这个根因。

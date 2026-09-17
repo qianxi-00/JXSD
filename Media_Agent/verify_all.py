@@ -10,13 +10,16 @@
         每个承担实际功能的模块（``tools/*.py`` 与 ``workflows/*.py``；
         ``tools/__init__.py``、``workflows/__init__.py`` 两个包入口除外）
         末尾都有一个 ``if __name__ == "__main__":`` 自检块（纯逻辑断言，不联网）。
-        这里用子进程逐个跑，验证三件事：
-            · 解释器能导入该模块的全部依赖；
-            · 自检断言全过（退出码 0）；
-            · 输出里没有 Traceback。
-              （真正被断言的只有退出码：未捕获的 Traceback 会把退出码顶成非 0，
-                而模块自己 catch 住又打印出来的 Traceback 不算失败 ——
-                见 ``run_script()``，它只比 ``proc.returncode == 0``。）
+        这里用子进程逐个跑它，能证明的其实只有一件事：**退出码为 0**。
+
+        ⚠️ **判据只有退出码**（``run_script()`` 的比较条件就是 ``proc.returncode == 0``，
+        此外不看输出内容）：子进程内部自己 ``except`` 住、又把 Traceback 打印出来的
+        情况，退出码仍是 0，这里**不会判红**。这类「报错但没红」只能靠各模块自己的
+        断言兜住 —— 所以自检里的失败必须用 ``assert`` / ``raise`` 表达，
+        只 ``print`` 一句是不算数的。
+
+        退出码为 0 同时说明：解释器能把这个模块连同它的依赖 import 起来，
+        且自检断言全过（未捕获的异常会把退出码顶成非 0，藏不住）。
 
     第 2 层 · 视图导入检查
         ``views/*.py`` 不能"直接运行"（要 Streamlit 运行时才成立），
@@ -38,9 +41,23 @@
 
 **为什么用子进程而不是 import？**
     与 ``Back_End/verify_all.py`` 同一理由：每个模块都是"独立程序"，
-    子进程运行能同时验证「路径计算不依赖当前工作目录」和「退出码为 0」。
+    子进程运行拿到的是它**真实的退出码**，与在终端里手敲
+    ``python workflows/xxx.py`` 等价。
     另外本项目的模块会在 import 时读 ``config``（进而读根 ``.env``），
     子进程隔离能避免相互污染。
+
+    ⚠️ **别再说这层验证了「路径计算不依赖当前工作目录」**：``run_script()``
+    把子进程的 ``cwd`` 钉死成 ``HERE``、并通过 ``_child_env()`` 注入 ``PYTHONPATH``，
+    cwd 依赖在这个前提下本来就测不出来。实测（清空 ``PYTHONPATH``，cwd 分别取
+    ``Media_Agent`` / 仓库根 / ``C:\\Windows``，跑 ``tools/audio_transcriber.py``
+    与 ``workflows/video.py``）三次都是 rc=0 —— 真正让模块能直接跑起来的是
+    **模块侧**的两条机制，不是本脚本：
+        · 仓库根的 ``config.py`` 在任何 cwd 下都能 import，是因为 ``.venv`` 里的
+          ``python_base_root.pth`` 已经把仓库根挂进 ``sys.path``；
+        · ``workflows/*.py`` 顶部自带 ``_PROJECT_ROOT`` 引导，解决「直接跑时
+          ``sys.path[0]`` 是 ``workflows/``、``from workflows import ...`` 会失败」。
+    本机制固定 ``cwd`` 只为一件事：让子进程可能写出的**相对路径产物**落在
+    ``Media_Agent`` 目录内，而不是调用者当时所在的目录。
 
 **离线 vs 联网**
     默认**完全离线**，零密钥状态下也必须全绿 —— 这是本项目的验收底线。
@@ -88,7 +105,7 @@
     | 自检清单 | 正文只给「各模块自己带 ``__main__`` 自检」这套思路，没有可运行的一键脚本 | ``MODULE_SELF_CHECKS`` 表驱动 + 三层汇总 | 把「哪些模块要跑」变成一张可读的表，加模块只改一行 |
     | 场景覆盖 | 无 ``--live`` 概念 | 默认离线全绿 + ``--live`` 另跑真实调用 | 验收要在零密钥 / CI 环境里也能跑通，不能强制联网 |
     | 环境契约 | 无 | 第 3 层 6 组契约（含 ``.env.example`` 键名护栏） | 「升级依赖后静默失效」与「文档键名读不到」这两类问题**不报错、只是行为不对**，只能靠护栏提前钉住 |
-    | 路径约定 | 依赖当前工作目录 | 全部按 ``__file__`` 推算 ``HERE`` / ``ROOT``，子进程再钉死 ``cwd`` | 从任意目录调用结果都一样 |
+    | 路径约定 | 依赖当前工作目录 | ``verify_all.py`` 自己按 ``__file__`` 推算 ``HERE`` / ``ROOT``，子进程的 ``cwd`` 钉在 ``HERE`` | 从任意目录调用**本脚本**结果都一样；「子进程能不能直接在任意目录跑起来」另靠 ``.pth`` 与模块自己的引导（见上文），**不是**本机制证明的 |
     | 文档键名契约 | 无 | 见第 3 层第 6 组 | 实测踩到过两次：字段名与文档键名对不上时，用户照文档改 ``.env`` **静默无效**，而默认值恰好又等于期望值，表面完全看不出问题 |
     | 绝对路径 | 无 | 无 | —— |
 
@@ -102,7 +119,10 @@
       看起来还像全绿。
     · **``_child_env()`` 要注入 ``PYTHONPATH``**：``workflows/*.py`` 直接跑时
       ``sys.path[0]`` 是 ``workflows/``，``from workflows import ...`` 会
-      ModuleNotFoundError；注入之后「模块自带路径引导」和「外层注入」两条路才都成立。
+      ModuleNotFoundError；而 ``.venv`` 的 ``python_base_root.pth`` 只把**仓库根**
+      挂进 ``sys.path``（``config.py`` 靠它），``Media_Agent`` 目录不在其中 ——
+      所以这层注入与「模块顶部自带的路径引导」是两条并行的路：``tools/*.py``
+      顶部就没写引导，靠的就是本条（它们的 ``from tools.xxx import`` 都是函数内延迟导入）。
     · **不要用 f-string 拼那三段内联脚本**：脚本里到处都是 ``{}``，
       f-string 会把它们当占位符吃掉；``%HERE%`` / ``%MODS%`` 占位 + ``.replace()``
       才是对的写法。
@@ -173,7 +193,9 @@ def _child_env() -> dict:
     env["PYTHONUTF8"] = "1"
     # 让子脚本能 `from tools.xxx import ...` / `from workflows.xxx import ...`
     # 前置自己的目录：workflows/*.py 直接跑时 sys.path[0] 是 workflows/，
-    # 光靠模块自带的路径引导还不够稳（有的模块没写）。
+    # 而 .venv 的 python_base_root.pth 只挂了仓库根（config.py 靠它），
+    # Media_Agent 目录不在里面 —— 这里注入是「外层兜底」，与模块顶部自带的
+    # _PROJECT_ROOT 引导并存（tools/*.py 顶部没写引导，靠的就是本条）。
     env["PYTHONPATH"] = str(HERE) + os.pathsep + env.get("PYTHONPATH", "")
     return env
 
@@ -204,7 +226,9 @@ def run_script(rel_path: str, extra_args: list[str] | None = None) -> dict:
             # errors="replace" 保证子进程混进非 UTF-8 字节时不至于让整轮检查崩掉 ——
             # 少一个字符远比丢掉全部结果划算。
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            # cwd 钉在 HERE：让结果与「调用本脚本时人在哪个目录」无关。
+            # cwd 钉在 HERE：让子进程可能写出的相对路径产物落在项目内，
+            # 而不是调用者当时所在的目录。**这不能用来证明「路径计算不依赖 cwd」**
+            # —— 那件事由模块侧机制保证，见文件头「为什么用子进程而不是 import？」。
             timeout=PER_SCRIPT_TIMEOUT, cwd=str(HERE), env=_child_env(),
         )
         return {
@@ -463,7 +487,33 @@ else:
         print(f"  （提示）{len(undocumented)} 个字段未在 .env.example 出现: "
               + ", ".join(undocumented))
 
-# ---- 7. 语言提示：不要误报 ----
+# ---- 7. 跨层契约：页面给的平台选项必须都能被工作流路由到 ----
+# 这两张表在**两个层**里各写了一份：
+#   · 页面 `views/hot_topic.py` 的 `PLATFORM_OPTIONS` —— 决定用户能选什么；
+#   · 工作流 `workflows/hot_topic.py` 的 `PLATFORM_SENDS` —— 决定选中的名字路由到哪几支。
+# `route_fetch()` 对**不认识**的平台名是「回退到抖音」（课案行为，注释里写明
+# 「宁可给一份不相关的热榜，也不要给用户一片空白」）—— 于是只在页面上加一个
+# 平台名、忘了加进路由表，用户选「今日头条」会拿到抖音热榜，而报告抬头照写
+# 「今日头条」。**静默给错数据**比报错难查得多，所以在这里钉死：
+# 页面选项（去掉「全部」）必须与路由表的键集**完全相等**。
+try:
+    from views.hot_topic import PLATFORM_OPTIONS
+    from workflows.hot_topic import PLATFORM_SENDS
+
+    page_choices = set(PLATFORM_OPTIONS) - {"全部"}
+    routable = set(PLATFORM_SENDS)
+    if page_choices != routable:
+        problems.append(
+            "页面平台选项与工作流路由表不一致："
+            f"只在页面有 {sorted(page_choices - routable)}；"
+            f"只在路由表有 {sorted(routable - page_choices)}。"
+            "只在页面有的那些会被静默回退成抖音热榜 —— "
+            "加平台要同时改 workflows/hot_topic.py 的 FETCH_SOURCES 与 PLATFORM_SENDS。"
+        )
+except Exception as exc:
+    problems.append(f"平台选项/路由表契约检查异常: {type(exc).__name__}: {exc}")
+
+# ---- 8. 语言提示：不要误报 ----
 print(f"文本模型: {settings.media_llm_model()}")
 print(f"编排模型: {settings.media_deepagent_model()}")
 print(f"百炼端点: {settings.dashscope_api_endpoint}")

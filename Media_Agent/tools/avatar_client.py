@@ -57,6 +57,8 @@
       （页面提示「约 2~5 分钟」，等待上限见 ``MEDIA_AVATAR_TIMEOUT``，默认 900 秒）。
       所以 ``submit_lipsync()`` 拿到 ``task_id`` 就返回、**绝不在这里阻塞** ——
       页面把 task_id 显示给用户，隔一会儿点「刷新进度」再走 ``query_task()``。
+      等不到结果的两条早退路径见 ``wait_task()``：等满超时（``timed_out``），
+      或**查询本身连续失败 3 次**（``aborted``，不再干等 900 秒）。
 
 内置音色
     ``PIXVERSE_SPEAKERS`` 共 14 个（含 ``auto`` = 随机）。TTS 文本驱动只能用它，
@@ -302,6 +304,13 @@ def submit_lipsync(
 # --------------------------------------------------------------------------
 # 查询进度
 # --------------------------------------------------------------------------
+# 连续查询失败多少次就放弃等待（`wait_task()` 的早退阈值）。
+# 取 3 的依据：轮询间隔默认 15 秒（官方建议的下限），3 × 15 = 45 秒 ——
+# 公网抖动**连续三次**都失败的概率极低；真连续三次，说明服务端或网络已经不可用，
+# 而按老的写法（只等 900 秒超时）用户就是一分钟一分钟地干等，还看不到失败原因。
+_MAX_CONSECUTIVE_QUERY_ERRORS = 3
+
+
 def query_task(task_id: str) -> dict:
     """查询任务进度。
 
@@ -313,16 +322,23 @@ def query_task(task_id: str) -> dict:
 
     Returns:
         ``{"status": str, "finished": bool, "success": bool,
-           "video_url": str, "message": str}`` —— 绝不抛异常。
+           "video_url": str, "message": str, "error": bool}`` —— 绝不抛异常。
 
         三态语义（页面按它决定是「继续等」还是「收摊」）：
-        · ``finished=False`` —— PENDING / RUNNING，**不是错误**，接着等；
+        · ``finished=False, error=False`` —— PENDING / RUNNING，**不是错误**，接着等；
         · ``finished=True, success=True`` —— 出片了，``video_url`` 可直接下载；
         · ``finished=True, success=False`` —— FAILED / CANCELED / UNKNOWN，别等了。
+
+        ``error`` 是**新增键**（不动其它键的语义）：它标记的是「**这次查询动作本身**
+        失败」（网络抖动 / task_id 查不动等走 except 的那一支），与任务状态无关。
+        那一支刻意**不置 finished**（一次查询失败不代表任务真的挂了），代价是调用方
+        光看 ``finished`` 分不清「还在跑」和「查不动」—— ``wait_task()`` 就是靠累计
+        它来提前收摊的（见 ``_MAX_CONSECUTIVE_QUERY_ERRORS``）。
+        查询成功时（哪怕 ``status`` 是空串）``error`` 一定是 False。
     """
     result = {
         "status": "", "finished": False, "success": False,
-        "video_url": "", "message": "",
+        "video_url": "", "message": "", "error": False,
     }
 
     if not task_id:
@@ -342,6 +358,9 @@ def query_task(task_id: str) -> dict:
         # 网络抖动 / task_id 不存在都会抛。这里**不置 finished** ——
         # 让 `wait_task()` 的超时机制去收尾，比在这里判定「永久失败」更稳
         # （一次查询失败不代表任务真的挂了）。
+        # 但要置 `error=True`：不暴露「这次查询没成功」的话，`wait_task()` 只能一路
+        # 轮询到 900 秒超时 —— 服务端持续报错时用户就是干等 900 秒且看不到原因。
+        result["error"] = True
         result["message"] = f"查询异常: {exc}"
         print(f"[数字人] {result['message']}")
         return result
@@ -378,7 +397,7 @@ def query_task(task_id: str) -> dict:
 
 
 def wait_task(task_id: str, timeout: int = None, interval: int = 15) -> dict:
-    """轮询直到任务结束（或超时）。
+    """轮询直到任务结束（或超时 / 查询持续失败）。
 
     官方建议轮询间隔 ≥15 秒（查询接口默认 RPS 20）。
 
@@ -389,28 +408,74 @@ def wait_task(task_id: str, timeout: int = None, interval: int = 15) -> dict:
         interval: 两次查询之间的间隔秒数，默认 15（官方建议的下限）。
 
     Returns:
-        与 ``query_task()`` 同构，多一个 ``"timed_out": bool``。
-        超时时 ``timed_out=True``、``finished`` 仍为 False，
-        ``message`` 里带上超时秒数与最后一次查到的状态。
+        与 ``query_task()`` 同构，多两个键：
+
+        · ``"timed_out": bool`` —— 等满 ``timeout`` 秒仍未到终态；
+        · ``"aborted": bool`` —— 提前收摊，两种情况：
+          ① **连续 ``_MAX_CONSECUTIVE_QUERY_ERRORS`` 次** ``query_task()``
+          返回 ``error=True``；
+          ② ``task_id`` 为空 —— 这种情况一次查询都不会发（原因见函数内注释）。
+
+        三条早退路径**互斥且可区分**：超时是 ``timed_out=True, aborted=False``；
+        查询持续失败与空 task_id 都是 ``aborted=True, timed_out=False``
+        （``message`` 里写明是哪一种）；正常拿到终态时两个都是 False。
+        三条路径都**不动 ``finished`` / ``success``** —— 超时不算任务失败，查询失败
+        也不算：任务在服务端可能还在跑，用户之后仍可点「刷新进度」再查一次。
+
+        ⚠️ 多出的 ``"error"`` 键是从 ``query_task()`` 原样带过来的，
+        ``wait_task`` 自己不改它。
     """
     timeout = timeout or settings.media.avatar_timeout
     deadline = time.time() + timeout
     # 先摆一个「还没开始查」的默认值：循环一次都没跑成（timeout<=0）时也有返回值，
     # 不至于把 last 留成未定义。
     last = {"status": "", "finished": False, "success": False,
-            "video_url": "", "message": "未开始", "timed_out": False}
+            "video_url": "", "message": "未开始", "error": False,
+            "timed_out": False, "aborted": False}
 
+    if not task_id:
+        # 空 task_id 必须在**进循环之前**就拦掉：`query_task("")` 走的是它自己的
+        # 「任务编号为空」前置校验支路，那条路返回 `finished=False, error=False`，
+        # 既不是终态也不算查询失败 —— 于是外层会一路轮询到 900 秒才靠超时收摊。
+        # 这里直接收摊，标记成 aborted（与「查询持续失败」同一类：都是没等到结果、
+        # 但**任务本身未必失败**，所以不动 finished / success）。
+        last["aborted"] = True
+        last["message"] = "任务编号为空，未开始轮询"
+        print(f"[数字人] {last['message']}")
+        return last
+
+    # 只数**连续**失败：中间只要有一次查询成功（无论 status 是 PENDING/RUNNING
+    # 还是终态）就清零，偶发一次网络抖动不该累积到阈值上。
+    consecutive_errors = 0
     while time.time() < deadline:
         last = query_task(task_id)
-        if last["finished"]:
-            # 明确的终态（成功或失败）就不再循环；同时把 timed_out 显式置 False，
-            # 让调用方只读这一个键就能区分「等到了结果」和「等超时了」。
-            last["timed_out"] = False
-            return last
+        if last.get("error"):
+            consecutive_errors += 1
+            if consecutive_errors >= _MAX_CONSECUTIVE_QUERY_ERRORS:
+                last["timed_out"] = False
+                last["aborted"] = True
+                # message 里带失败次数 + 最后一次的原始异常文本
+                # （`query_task()` 的 message 就是「查询异常: <原文>」），
+                # 否则用户只知道「提前结束了」，不知道到底报了什么。
+                last["message"] = (
+                    f"连续 {consecutive_errors} 次查询失败，已提前结束等待"
+                    f"（每 {interval} 秒查一次）：{last.get('message', '')}"
+                )
+                print(f"[数字人] {last['message']}")
+                return last
+        else:
+            consecutive_errors = 0
+            if last["finished"]:
+                # 明确的终态（成功或失败）就不再循环；同时把两个早退标记显式置 False，
+                # 让调用方只读这两个键就能区分「等到了结果」「等超时了」「查询持续失败」。
+                last["timed_out"] = False
+                last["aborted"] = False
+                return last
         # 睡在每次查询之后：第一查立即执行（刚提交的任务也该马上看一次状态）。
         time.sleep(interval)
 
     last["timed_out"] = True
+    last["aborted"] = False
     # 超时**不算任务失败**：任务在服务端可能还在跑，用户之后仍可点「刷新进度」再查一次
     # （页面就是这么用的）。所以这里只改 message，不动 success / finished。
     last["message"] = f"等待超时（{timeout} 秒），最后状态: {last.get('status') or '未知'}"
@@ -551,7 +616,53 @@ if __name__ == "__main__":
     # 空 task_id / 空 URL 都在各函数最前面那两道校验里直接返回，
     # 所以下面几条断言既不联网、也不需要密钥。
     assert query_task("")["finished"] is False
+    # 新增的 `error` 键在前置校验分支上必须是 False：它不是「没查到」的标记，
+    # 只标记「本次查询抛异常」那一支（见 query_task 的三态说明）。
+    assert query_task("")["error"] is False
     print("  query_task 失败路径        OK")
+
+    # 查询持续失败必须**早退**，而不是一路轮询到 900 秒超时。
+    # 打桩顶掉模块全局名 `query_task`（wait_task 内部查的就是它），interval=0 秒回。
+    _real_query = query_task
+
+    def _always_error(_task_id: str) -> dict:
+        return {"status": "", "finished": False, "success": False, "video_url": "",
+                "message": "查询异常: 打桩的假异常", "error": True}
+
+    try:
+        query_task = _always_error  # noqa: F811 —— 本节自检就是要有意顶掉它
+        aborted = wait_task("stub-task", timeout=9999, interval=0)
+    finally:
+        query_task = _real_query
+    assert aborted["aborted"] is True and aborted["timed_out"] is False, aborted
+    assert str(_MAX_CONSECUTIVE_QUERY_ERRORS) in aborted["message"], aborted
+    # 早退同样不改「任务失败」语义：任务在服务端可能还在跑，用户还能手动刷新
+    assert aborted["finished"] is False and aborted["success"] is False, aborted
+    print(f"  wait_task 连续失败早退      OK  阈值 {_MAX_CONSECUTIVE_QUERY_ERRORS} 次")
+
+    # 空 task_id：`query_task("")` 自己的前置校验支路返回的是
+    # `finished=False, error=False`，既不是终态也不算查询失败 —— 不在这里拦掉的话，
+    # 外层会一路轮询到 timeout（默认 900 秒）才靠超时收摊。
+    # 断言「一次查询都没发」才是关键：只断言 aborted=True 的话，
+    # 把它当成超时路径实现（等满 deadline 再返回）也照样能通过。
+    _calls = []
+
+    def _counting_query(task_id: str) -> dict:
+        _calls.append(task_id)
+        return {"status": "", "finished": False, "success": False, "video_url": "",
+                "message": "任务编号为空", "error": False}
+
+    try:
+        query_task = _counting_query  # noqa: F811 —— 同上，有意顶掉
+        # `timeout=1`（而不是 9999）：万一守卫被删掉，这里也只空转 1 秒就返回，
+        # 断言照样能红，不会把自检挂住 9999 秒。
+        empty = wait_task("", timeout=1, interval=0)
+    finally:
+        query_task = _real_query
+    assert _calls == [], f"空 task_id 不该发出任何查询，实际发了 {len(_calls)} 次"
+    assert empty["aborted"] is True and empty["timed_out"] is False, empty
+    assert empty["finished"] is False and empty["success"] is False, empty
+    print("  wait_task 空 task_id 即退   OK  0 次查询")
 
     assert download_result("") == ""
     print("  download_result 失败路径   OK")

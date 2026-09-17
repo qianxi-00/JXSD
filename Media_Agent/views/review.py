@@ -12,7 +12,7 @@
     | 项 | 课案 | 本项目 |
     |---|---|---|
     | Cookie 存取 | 读写本地 douyin 项目的 ``C:/Users/13261/.../config/settings.json``（硬编码） | 读 ``settings.media.douyin_cookie``；页面里粘的 Cookie 存**本次运行时覆写**（``os.environ[MEDIA_DOUYIN_COOKIE]``），因为契约不允许改 ``config.py`` / ``.env`` |
-    | Cookie 自动获取 | ``_read_edge_cookies()`` 走 CDP 读 Edge | **原样保留**（v20 之后本地 Cookies 库解不开，走浏览器自己的 API 才是正解） |
+    | Cookie 自动获取 | ``_read_edge_cookies()`` 走 CDP 读 Edge | 同思路（v20 之后本地 Cookies 库解不开，走浏览器自己的 API 才是正解），但**必须连页级目标** —— ``Network`` 是页级域，课案连的 browser 级目标上没这个方法 |
     | 采集触发 | 本地爬虫 | 自托管 REST 服务；**服务不可达时页面自动提示降级入口** |
     | 降级入口 | 无 | 新增「📋 手动粘贴作品数据」文本框 → ``run_review_from_json()``，跑同一套三节点诊断 |
     | 作品明细 | 无播放量时 5 列卡片 | 同（沿用课案的 ``has_plays`` 判断） |
@@ -23,6 +23,14 @@
       触发整页 rerun，不缓存结果的话页面会当场变空白（课案反复强调的坑）。
     · ``_add_history`` 如果直接在渲染路径里调用，下载按钮的每次 rerun 都会重复记录，
       所以用 ``review_history_token`` 去重。
+    · **CDP 取 Cookie 必须连页级目标**：``/json/version`` 给的是 **browser 级**地址，
+      在它上面调 ``Network.getCookies`` 会回 ``-32601 "'Network.getCookies' wasn't found"``
+      （本机 Edge 153 实测），Cookie 恒为空 —— 已登录的用户也会被告知「请先登录」。
+      正确做法是从 ``/json/list`` 挑 ``type == "page"`` 的目标。
+    · **握手必须去掉 Origin 头**：``websocket-client`` 默认带一个从 URL 推出的 ``Origin``，
+      而 Edge 对带 Origin 的 CDP WebSocket 一律回 ``403 Forbidden``（同机实测）。
+      连页级目标解决了方法不存在的问题，但光换目标仍会卡在这一步 —— 两处都得对
+      （见 ``_cdp_connect()``）。
     · 直接 ``python views/review.py`` 时 ``sys.path[0]`` 是 ``views/`` 目录，
       所以路径引导必须在文件顶部、项目内 import 之前。
 
@@ -162,11 +170,127 @@ def _launch_edge(port: int):
     return None
 
 
+# 抖音的三个域名：主站、一级域、以及分享/移动域。
+# 一次全传给 ``Network.getCookies`` 的 ``urls``，不再「一个域名问一次」——
+# ``domain`` 不是 CDP 的合法参数，传了会被静默忽略，那三次调用拿到的其实是同一批。
+_DOUYIN_COOKIE_URLS = (
+    "https://www.douyin.com/",
+    "https://douyin.com/",
+    "https://www.iesdouyin.com/",
+)
+
+
+def _cdp_json(debug_port: int, path: str, timeout: float = 5):
+    """读一个 CDP 的 HTTP 端点（``/json/version``、``/json/list``）并解析成 JSON。"""
+    resp = urllib.request.urlopen(f"http://127.0.0.1:{debug_port}{path}", timeout=timeout)
+    return json.loads(resp.read().decode())
+
+
+def _cdp_connect(ws_url: str, timeout: float = 10):
+    """连 CDP 的 WebSocket —— **必须**带 ``suppress_origin=True``，否则现代 Edge 回 403。
+
+    websocket-client 默认会按 URL 造一个 ``Origin`` 头，而 Chromium/Edge 对**带 Origin** 的
+    CDP WebSocket 连接一律拒绝（本机 Edge 153 + websocket-client 1.9.0 实测）::
+
+        Handshake status 403 Forbidden
+        Rejected an incoming WebSocket connection from the http://127.0.0.1:9223 origin.
+
+    为什么在客户端去掉 Origin、而不是给 Edge 加 ``--remote-allow-origins``：
+    ``_find_debug_port()`` 的设计意图就是**复用用户自己已经开着的**那个带调试端口的 Edge
+    （只有它带着登录态），而那种进程没法事后补命令行开关。本地工具不需要 Origin，
+    Chromium 对**没有** Origin 的连接是放行的 —— 客户端这一改两种情况都成立。
+
+    Args:
+        ws_url: 目标（页级或 browser 级）的 ``webSocketDebuggerUrl``。
+        timeout: 握手超时（秒）。
+
+    Note:
+        ``suppress_origin`` 不在 ``create_connection()`` 的具名签名里（1.9.0 的签名是
+        ``(url, timeout=None, class_=WebSocket, **options)``），它经 ``**options`` 传给
+        ``WebSocket``；实测生效，别照签名把它当无效参数删掉。
+    """
+    from websocket import create_connection
+
+    return create_connection(ws_url, timeout=timeout, suppress_origin=True)
+
+
+def _pick_page_target(targets: list) -> str:
+    """从 ``/json/list`` 的目标列表里挑一个**页级**目标的 WebSocket 调试地址。
+
+    为什么不能用 ``/json/version`` 返回的那个地址：那是 **browser 级**目标，
+    而 ``Network`` 是页级域 —— 连上去调 ``Network.getCookies`` 会直接回
+    ``-32601 "'Network.getCookies' wasn't found"``（本机 Edge 153 实测），
+    一个 Cookie 都取不到，最终表现成「已经登录的用户被告知请先登录」。
+
+    优先挑 url 里含 ``douyin`` 的页面（通常是用户刚登录过的那个标签页），
+    没有再退化成第一个页级目标 —— Cookie 罐是**浏览器级**的，跟当前页面停在哪个
+    站点无关：实测页面停在 ``edge://sync-confirmation-dialog/`` 时照样能取到
+    抖音的 ttwid / sessionid_probe。
+
+    Args:
+        targets: ``/json/list`` 返回的 JSON 数组。
+
+    Returns:
+        ``webSocketDebuggerUrl``；没有「带地址的 ``type == "page"`` 目标」时返回空串。
+    """
+    pages = [
+        t for t in targets or []
+        if t.get("type") == "page" and t.get("webSocketDebuggerUrl")
+    ]
+    if not pages:
+        return ""
+    for target in pages:
+        if "douyin" in str(target.get("url", "")).lower():
+            return target["webSocketDebuggerUrl"]
+    return pages[0]["webSocketDebuggerUrl"]
+
+
+def _create_blank_page_target(debug_port: int) -> str:
+    """一个页级目标都没有时，用 browser 级连接造一个 ``about:blank`` 页并返回它的地址。
+
+    ``Target`` 域在 browser 级目标是**可用**的（本机实测 ``Target.getTargets`` /
+    ``Target.createTarget`` 都正常），所以「无头 Edge 起完一个 page 都没有」这种
+    边界情况还能救回来；救不回来（拿不到 browser 地址 / 建不出目标）就返回空串，
+    由调用方给一句明确的中文错误。
+
+    新目标要重新列一次 ``/json/list`` 才会带 ``webSocketDebuggerUrl``，而且刚建好的
+    一瞬间可能还没注册完，所以这里轮询几次而不是只查一遍。
+    """
+    try:
+        browser_ws = _cdp_json(debug_port, "/json/version").get("webSocketDebuggerUrl", "")
+        if not browser_ws:
+            return ""
+        ws = _cdp_connect(browser_ws)
+        try:
+            ws.send(json.dumps({
+                "id": 1,
+                "method": "Target.createTarget",
+                "params": {"url": "about:blank"},
+            }))
+            ws.recv()
+        finally:
+            ws.close()
+    except Exception:  # noqa: BLE001 —— 兜底路径失败就返回空串，由调用方统一给中文错误
+        return ""
+
+    # 最多等 2 秒（4 × 0.5）：目标是本机进程内建的，正常一次就能列到
+    for _ in range(4):
+        ws_url = _pick_page_target(_cdp_json(debug_port, "/json/list"))
+        if ws_url:
+            return ws_url
+        time.sleep(0.5)
+    return ""
+
+
 def _read_edge_cookies() -> tuple[str, "str | None"]:
     """通过 CDP（Chrome DevTools Protocol）从 Edge 直接读取 douyin.com Cookie。
 
     课案原样保留这套做法：**走浏览器自己的 Network.getCookies 接口**，
     自动跨过 Edge 的 v20 加密与文件锁定，不需要解密本地 Cookies 数据库。
+
+    与课案的差异：必须连**页级**目标（``/json/list`` 里 ``type == "page"`` 的那个），
+    不能用 ``/json/version`` 给的 browser 级地址 —— ``Network`` 是页级域，
+    在 browser 级目标上这个方法根本不存在，Cookie 恒为空。
 
     Returns:
         ``(cookie_string, error_message)`` —— 成功时 error 为 None。
@@ -192,42 +316,49 @@ def _read_edge_cookies() -> tuple[str, "str | None"]:
             )
 
     try:
-        # Step 1: 拿 WebSocket 端点
-        resp = urllib.request.urlopen(
-            f"http://127.0.0.1:{debug_port}/json/version", timeout=5
-        )
-        ws_url = json.loads(resp.read().decode()).get("webSocketDebuggerUrl", "")
-        if not ws_url:
-            return "", "无法获取 Edge CDP WebSocket URL"
-
-        # Step 2: 用 websocket-client 连上去，按域名问 Cookie
+        # 存在性检查：真正的连接走 `_cdp_connect()`（那里统一带 suppress_origin=True）；
+        # 缺库时给的是「装什么」，而不是让它退化成一个含义模糊的握手失败
         try:
-            from websocket import create_connection
+            import websocket  # noqa: F401
         except ImportError:
             return "", "缺少 websocket-client 库，请执行: uv add websocket-client"
 
-        ws = create_connection(ws_url, timeout=10)
+        # Step 1: 拿**页级**目标的 WebSocket 端点。
+        # ⚠️ 不能用 /json/version 里的那个：那是 browser 级目标，而 `Network` 是页级域，
+        #    在它上面调 Network.getCookies 会回 -32601（本机 Edge 153 实测）——
+        #    Cookie 恒为空，已登录的用户也会被下面那条文案劝去登录。
+        ws_url = _pick_page_target(_cdp_json(debug_port, "/json/list"))
+        if not ws_url:
+            # 兜底：无头 Edge 可能一个 page 目标都没有。browser 级目标上 `Target.*`
+            # 是可用的，所以还能现造一个 about:blank 页出来救场。
+            ws_url = _create_blank_page_target(debug_port)
+        if not ws_url:
+            return "", (
+                "Edge 里没有可用的页级调试目标（连新建 about:blank 页也失败了）。\n"
+                "请手动关掉所有 Edge 窗口后重试。"
+            )
+
+        # Step 2: 连上去，按 URL 问 Cookie（`_cdp_connect` 负责去掉 Origin 头，见那里的说明）
+        ws = _cdp_connect(ws_url)
         try:
-            all_cookies = []
-            # 三个域名各问一次再合并：主站、一级域、以及抖音的分享/移动域。
-            # ⚠️ 注意 `domain` 并不是 CDP 的合法参数（`Network.getCookies` 只认 `urls`），
-            # 实测传一个不存在的域名照样能取到 Cookie —— 也就是说这个按域名过滤
-            # 实际没起作用，三次调用拿到的是同一批，真正生效的是下面的按名去重。
-            # 同时，CDP 是「发一条收一条」的同步协议，所以固定用 "id": 1
-            for domain in ("www.douyin.com", ".douyin.com", ".iesdouyin.com"):
-                ws.send(json.dumps({
-                    "id": 1,
-                    "method": "Network.getCookies",
-                    "params": {"domain": domain},
-                }))
-                payload = json.loads(ws.recv())
-                all_cookies.extend(payload.get("result", {}).get("cookies", []))
+            # `urls` 一次传齐三个抖音域名：Network.getCookies 只认 `urls`（`domain`
+            # 会被静默忽略），而且这个参数是**真的在过滤** —— 反向对照传 example.com
+            # 实测返回 0 个。Cookie 罐是浏览器级的，跟当前页面停在哪个站点无关。
+            # CDP 是「发一条收一条」的同步协议，所以三条 URL 也只发一帧，固定 "id": 1
+            ws.send(json.dumps({
+                "id": 1,
+                "method": "Network.getCookies",
+                "params": {"urls": list(_DOUYIN_COOKIE_URLS)},
+            }))
+            payload = json.loads(ws.recv())
+            all_cookies = payload.get("result", {}).get("cookies", []) or []
         finally:
             ws.close()
 
         if not all_cookies:
             # 库里没有抖音 Cookie = 用户没在 Edge 里登录过：
-            # 错误文案直接给出下一步动作（先登录，再回来点这个按钮）
+            # 错误文案直接给出下一步动作（先登录，再回来点这个按钮）。
+            # 修掉「连错目标」那个 bug 之后，这条分支才是**真的只在没登录时**成立。
             return "", (
                 "Edge 中未找到 douyin.com 的 Cookie。\n"
                 "请先在 Edge 浏览器里打开 douyin.com 并登录，再回来点这个按钮。"
@@ -419,6 +550,15 @@ def _render_cookie_panel() -> None:
     with st.expander("🍪 抖音 Cookie 配置", expanded=False):
         st.caption("两种方式：① 点按钮自动从 Edge 读取　② 手动复制粘贴。"
                    "本次会话内生效，重启后回到根目录 .env 的配置。")
+        # ⚠️ 必须在按钮**旁边**先说清楚这个副作用：`_launch_edge()` 在
+        # 9222~9225 都没有监听时会 `taskkill /f /im msedge.exe` 再自己起一个 ——
+        # 也就是**会关掉用户当前打开的所有 Edge 窗口**（课案原有做法，为了拿到
+        # 那个带登录态的 user-data-dir；用户自己开着的 Edge 是补不了
+        # --remote-debugging-port 的）。标签页通常能被 Edge 恢复，但不该让人
+        # 点完才发现，所以这里明写。
+        st.caption("⚠️ 点这个按钮时，若检测不到已开启的调试端口，程序会**重启 Edge**"
+                   "（你当前打开的所有 Edge 窗口会被关掉，标签页一般可由 Edge 自行恢复）。"
+                   "不想被打扰时请改用下面的手动粘贴。")
 
         # 1:3 的宽度比：左边按钮窄，右边那行提示文字长
         col_auto, col_tip = st.columns([1, 3])
@@ -770,5 +910,23 @@ if __name__ == "__main__":
     assert resolve_cookie() == "sessionid=test"
     os.environ.pop(COOKIE_ENV_KEY, None)
     print("  Cookie 覆写键             OK  env 覆写能被 resolve_cookie() 读到")
+
+    # 7) `_pick_page_target`：只用真 CDP 的字段形状，覆盖三种输入
+    #    （有 douyin 页 / 只有非 douyin 页 / 一个 page 都没有）。
+    #    这条是「连错目标」那个 bug 的回归闸门：改成连 browser 级目标的话，
+    #    第 3 个用例会期望落空。
+    assert _pick_page_target([
+        {"type": "page", "url": "edge://newtab/", "webSocketDebuggerUrl": "ws://x/page/1"},
+        {"type": "page", "url": "https://www.douyin.com/", "webSocketDebuggerUrl": "ws://x/page/2"},
+    ]) == "ws://x/page/2"
+    assert _pick_page_target([
+        {"type": "page", "url": "edge://newtab/", "webSocketDebuggerUrl": "ws://x/page/1"},
+    ]) == "ws://x/page/1"
+    assert _pick_page_target([
+        {"type": "service_worker", "url": "https://www.douyin.com/sw.js",
+         "webSocketDebuggerUrl": "ws://x/sw/1"},
+        {"type": "page", "url": "edge://newtab/"},
+    ]) == ""
+    print("  _pick_page_target        OK  优先 douyin 页级目标，挑不到就退化/返空")
 
     print("\n自检完成")

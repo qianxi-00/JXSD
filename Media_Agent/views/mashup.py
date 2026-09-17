@@ -14,7 +14,7 @@
        自动带出（没记录过才用 ``MEDIA_BGM_PATH``）。文件不存在时页面**提前**说
        「本次将不混音」，而不是等剪辑跑完才发现没音乐。
     4. **日志与工具调用轨迹分两个折叠面板**：agent 的决定过程全在日志里，
-       页面只做截断展示（前 3000 字符 / 前 80 条），方便出错时排查。
+       页面只做截断展示（剪到与上游同一口径的 2000 字符 / 前 80 条），方便出错时排查。
 
 与课案的差异
     | 课案 | 本项目 |
@@ -32,13 +32,18 @@
 踩过的坑
     · **页面不能提前 import `workflows.mashup`**：那个模块在导入时就 monkey-patch 了
       ``subprocess.Popen`` / ``subprocess.run``（把 agent 起子进程的工作目录圈进沙箱）。
-      所以本页把 ``from workflows.mashup import mashup_graph`` 放在按钮分支里，
+      所以本页把 ``from workflows.mashup import run_mashup`` 放在按钮分支里，
       等真正要剪辑时才加载。
-    · **清空 BGM 输入框要下一轮 rerun 才生效**：``current_bgm`` 是本轮开头从
-      ``bgm.json`` 读到的旧值，而 ``bgm_path = bgm_input or current_bgm`` 会先回落到它；
-      真正生效要等 ``bgm.json`` 被写空之后的下一次 rerun。
-    · **上传 BGM 后必须 rerun**：输入框的 ``value`` 只在构建控件时生效，
-      不 rerun 的话框里还显示旧路径，和实际用的文件对不上。
+    · **BGM 以输入框为准，不回落到旧值**：``current_bgm`` 是本轮开头从 ``bgm.json``
+      读到的旧值，早先 ``bgm_path = bgm_input or current_bgm`` 会在用户清空输入框时
+      回落到它 —— 于是那一轮 ``bgm.json`` 已经写空，页面却还显示「✅ BGM: xxx.wav」
+      并拿旧路径去剪辑。控件带 ``key``，``bgm_input`` 本身就是框里此刻的值，直接用即可。
+    · **上传 BGM 后不能只 rerun**：带 ``key`` 的 ``st.text_input`` 在 rerun 之间由
+      ``st.session_state`` 说了算，``value=`` 只在 key 首次出现时生效（1.61.1 实测），
+      所以：① 首值改用 ``st.session_state.setdefault("bgm_path_input", current_bgm)``，
+      控件不再传 ``value=``；② 上传那轮寄存 ``_bgm_pending``，下一轮构建控件**之前**
+      回填 —— 控件实例化之后再改它的 session_state 会抛 ``StreamlitAPIException``。
+      不这么做的话，上传完框里仍是旧路径，下一轮还会把旧路径写回 ``bgm.json``。
 
 运行方式（由 main.py 侧边栏路由调用）::
 
@@ -68,6 +73,12 @@ BGM_CACHE = CACHE_DIR / "bgm.json"
 
 MEDIA_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".mov", ".avi", ".webm")
 
+# 剪辑日志的字符上限：与 ``workflows/mashup.py`` 正常收尾那处 ``last_msg[:2000]`` 对齐
+# （上游写的是内联字面量、没有可 import 的常量，所以只能对齐数值）。
+# 页面这层只兜住上游**异常回填**那几条路径（源视频不存在 / 初始化失败 / 剪辑出错），
+# 它们回的是很短的失败串 —— 正常收尾的日志在到达这里之前就已经被上游截过一次了。
+_EDITOR_LOG_LIMIT = 2000
+
 
 def _load_bgm_path() -> str:
     """读上次用的 BGM 路径；没记录过就回落到配置里的 MEDIA_BGM_PATH。
@@ -80,8 +91,9 @@ def _load_bgm_path() -> str:
     try:
         if BGM_CACHE.is_file():
             saved = json.loads(BGM_CACHE.read_text(encoding="utf-8")).get("bgm_path", "")
-            # 空串按「没记录」处理：这样用户在页面上清空 BGM 之后，
-            # 下一轮还能回落到 .env 里配的那个默认 BGM，而不是卡在空值
+            # 空串按「没记录」处理：这样本函数仍会把 .env 里的默认 BGM 交出来。
+            # ⚠️ 但页面层的输入框带 key，用户清空之后它一直是空串，所以那个默认值
+            #    只对**新会话的首次渲染**生效 —— 本次会话里清空就是「不混音」。
             if saved:
                 return saved
     # 缓存文件坏了 / 读不了不该影响页面：直接当作「没记录过」，回落到 .env 里的配置
@@ -114,11 +126,14 @@ def show_mashup() -> None:
         · ``st.file_uploader``「上传素材（可多选）」→ 落盘到 ``MATERIALS_DIR``
         · ``st.text_input``「背景音乐路径」+ ``st.file_uploader``「📁 上传」→ BGM
         · ``st.text_area``「补充要求（可选）」→ 进 ``extra_requirements``
-        · ``st.button``「🎬 开始剪辑」→ 调 ``workflows.mashup.mashup_graph.invoke()``
+        · ``st.button``「🎬 开始剪辑」→ 调 ``workflows.mashup.run_mashup()``
+          （与其余 5 个页面一致，图 state 由工作流组装，页面不自己 ``invoke``）
+        · ``st.button``「♻️ 重置剪辑 Agent」→ ``workflows.mashup.reset_editor_agent()``
+          （改完 ``SKILL.md`` / 根 ``.env`` 后让缓存的 agent 失效；不联网，随时可点）
         · ``st.download_button``「⬇️ 下载视频」
 
     数据流
-        三份输入压成一个 JSON 字符串交给图（``edit_requirements``）；返回的
+        三份输入压成一个 JSON 字符串交给 ``run_mashup()``（``edit_requirements``）；返回的
         ``output_video`` / ``editor_log`` / ``steps`` 三个字段存进
         ``st.session_state["mashup_result"]``（只挑渲染要用的字段，不整份 state），
         输入视频路径存 ``["mashup_input"]``，并往 ``st.session_state["history"]``
@@ -225,11 +240,21 @@ def show_mashup() -> None:
     st.markdown("### 🎵 背景音乐")
     current_bgm = _load_bgm_path()
 
+    # 上传要把新路径**回填进输入框**：控件带 key 时 `value=` 只在 key 首次出现时生效，
+    # 后面几轮一律由 `session_state` 说了算（streamlit 1.61.1 实测），所以「首值」改用
+    # 官方那套 `setdefault` 写法，而上传那一轮只寄存一个待填值、在这里（构建控件**之前**）
+    # 兑现 —— 控件实例化之后再改它的 session_state 会抛 StreamlitAPIException。
+    # 顺带避开「同时传 value= 又写 session_state」时 Streamlit 打的那条告警。
+    st.session_state.setdefault("bgm_path_input", current_bgm)
+    pending_bgm = st.session_state.pop("_bgm_pending", "")
+    if pending_bgm:
+        st.session_state["bgm_path_input"] = pending_bgm
+
     # 3:1 的宽度比：左边是要读/要改的长路径，右边只是个上传按钮
     col1, col2 = st.columns([3, 1])
     with col1:
         bgm_input = st.text_input(
-            "背景音乐路径", value=current_bgm,
+            "背景音乐路径",
             placeholder="输入 WAV/MP3 文件路径（留空则不混音）",
             help="没配置就跳过混音，不影响其它剪辑步骤",
             key="bgm_path_input",
@@ -242,16 +267,22 @@ def show_mashup() -> None:
             target = CACHE_DIR / bgm_file.name
             target.write_bytes(bgm_file.getvalue())
             _save_bgm_path(str(target))
+            # 寄存待回填值，让下一轮构建输入框时把框里的旧路径换成这个新路径
+            # （只 rerun 是不够的：带 key 的控件在 rerun 之间由 session_state 说了算）
+            st.session_state["_bgm_pending"] = str(target)
             st.success("已更新")
-            # 必须 rerun：输入框的 value 只在构建控件时生效，
-            # 不重跑一次框里还是旧路径，和实际要用的文件对不上
             st.rerun()
 
     # 没有 on_change 回调时，「输入框的值变了」只能在每次 rerun 时对比着判断；
-    # 注意 current_bgm 是**本轮开头**读到的旧值，所以清空输入框要下一轮才真正生效
+    # current_bgm 是**本轮开头**从 bgm.json 读到的旧值，这里只拿它当「要不要落盘」的比对基准
     if bgm_input != current_bgm:
         _save_bgm_path(bgm_input)
-    bgm_path = bgm_input or current_bgm
+    # 直接取输入框的值，**不再**回落到 current_bgm：控件带 key，`bgm_input` 永远是框里
+    # 此刻显示的值，而 current_bgm 只是本轮开头读到的旧值 —— 回落会让「用户清空输入框」
+    # 那一轮的显示与落盘错位一轮（bgm.json 当轮已写空，页面却还说「✅ BGM: xxx.wav」、
+    # 并用旧路径去剪辑）。首轮那个 `setdefault` 保证框里就是 current_bgm，两者必然相等，
+    # 所以不存在「刚进页面 BGM 就丢了」。
+    bgm_path = bgm_input
 
     # 三种终态都要提前说清楚：文件在 → 确认用的是哪个；
     # 路径填了但文件没了 → 提前告知「本次将不混音」，而不是等剪辑跑完才发现没有音乐
@@ -295,21 +326,16 @@ def show_mashup() -> None:
             # 必须在按钮分支里 import：这个模块导入时会 monkey-patch
             # subprocess.Popen / run（见模块 docstring 的「踩过的坑」），
             # 页面级提前导入会影响到页面上其它功能的子进程行为
-            from workflows.mashup import mashup_graph
+            from workflows.mashup import run_mashup
 
-            # 直接 invoke 图而不是走 run_mashup()：两者等价（后者只是薄封装），
-            # 这里保持课案的写法
-            result = mashup_graph.invoke({
-                "input_video": video_path,
-                # 课案的这个字段没有对应控件，恒为空串；保留键是为了图 state 契约完整
-                "edit_style": "",
-                # state 里只能放字符串，所以三份输入压成 JSON 文本，由工作流侧解析
-                "edit_requirements": json.dumps({
-                    "materials": use_materials,
-                    "bgm_path": bgm_path,
-                    "extra_requirements": requirements,
-                }, ensure_ascii=False),
-            })
+            # 走 run_mashup() 而不是自己 mashup_graph.invoke(...)：另外 5 个模块的页面
+            # 都走 run_xxx()，图 state 的组装归工作流管；页面少一处会漂移的契约副本
+            # （原来这里还手填了一个课案遗留的「剪辑风格」字段，全仓 0 处读取，已随字段删掉）
+            result = run_mashup(video_path, json.dumps({
+                "materials": use_materials,
+                "bgm_path": bgm_path,
+                "extra_requirements": requirements,
+            }, ensure_ascii=False))
 
         # 只挑渲染要用的三个字段存进 session_state（不存整份 state，
         # 里面还有输入路径等大字段，没必要一直占着内存）；
@@ -329,6 +355,27 @@ def show_mashup() -> None:
             "summary": Path(video_path).name,
         })
 
+    # ---------------- 维护：重置剪辑 Agent ----------------
+    # 位置选在主按钮之后、结果区之前：结果区在没有结果时会提前 return，而这个按钮最该
+    # 被按到的时刻恰恰是「刚改完 .env / SKILL.md，还没跑出过成片」—— 放结果区会被吞掉。
+    # 视觉上只是一行说明 + 一个窄按钮，不抢「🎬 开始剪辑」的主位。
+    col_tip, col_reset = st.columns([4, 1])
+    with col_tip:
+        st.caption(
+            "改了 `.skills/video-use/SKILL.md` 或根目录 `.env`（密钥 / 模型名）之后点一下 → "
+            "工作流会丢掉已初始化的剪辑 agent，下次剪辑按新内容重新初始化。"
+        )
+    with col_reset:
+        if st.button("♻️ 重置剪辑 Agent", width="stretch"):
+            # 同样必须在按钮分支里 import：workflows.mashup 导入时会 monkey-patch
+            # subprocess.Popen / run（见模块 docstring 的「踩过的坑」）。
+            # 这个函数只把模块级缓存置空，不联网、也不要求 agent 已经建过 —— 随时可点
+            from workflows.mashup import reset_editor_agent
+
+            reset_editor_agent()
+            # 不 rerun：rerun 会把刚给出的提示一起冲掉，而用户要的正是「确认点成功了」
+            st.success("已重置 —— 下次「开始剪辑」会用新的 SKILL.md / .env 重新初始化 agent。")
+
     # ---------------- 渲染结果 ----------------
     res = st.session_state.get("mashup_result")
     if not res:
@@ -342,9 +389,9 @@ def show_mashup() -> None:
         # 展开条件反着来：有成品时收起日志（用户先看视频），
         # 没成品时默认展开 —— 失败原因就在日志里
         with st.expander("📝 剪辑日志", expanded=not output_video):
-            # 页面侧再截一道（前 3000 字符）：工作流正常收尾时已把 editor_log 截到 2000，
-            # 但异常回填那条路径没截；这个上限保证任何情况下都不会把几万字塞进 DOM
-            st.text(editor_log[:3000])
+            # 上限与上游同口径（见 `_EDITOR_LOG_LIMIT`）：上游正常收尾时已把 editor_log
+            # 截过一次，页面这层只兜住它异常回填那几条没截的路径 —— 早先写 3000 永远碰不到
+            st.text(editor_log[:_EDITOR_LOG_LIMIT])
 
     with st.expander("🔧 工具调用轨迹", expanded=False):
         try:

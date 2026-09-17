@@ -848,4 +848,7 @@ if __name__ == "__main__":
     print("  sentences_to_srt          OK")
 
     print("\n全部自检通过")
-    print("（真实验证请用 --live，需要 DASHSCOPE_API_KEY 与一段音频）")
+    # ⚠️ 这里不要提 `--live`：**本文件没有这个入口**（全文件 ``sys.argv`` 出现 0 次），
+    # 照着敲只会静默无反应。真实识别在 `verify_all.py --live` 那一层（ASR 接线检查），
+    # 真要转写自己的一段音频则直接调 ``transcribe()``（要密钥 + 音频，会计费）。
+    print("（本文件只做离线自检；真实识别请跑 verify_all.py --live 或直接调用 transcribe()）")

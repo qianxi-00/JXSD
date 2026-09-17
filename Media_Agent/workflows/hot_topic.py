@@ -16,6 +16,8 @@
        实测确认：filter 看到的 `raw_topics` 已经是合并后的完整列表。
     4. 抓取是 I/O 密集且经常失败的（公共热榜 API 会限流），
        所以每个抓取节点都单独兜底：**某个平台挂了，其它平台照常出结果**。
+       注意「兜底」与「守卫」是两件事：兜底是**请求失败之后**的善后，
+       守卫是**请求之前**判定这个源已经失效、干脆不发（见下表最后一行）。
     5. 为什么「无数据就短路」写了两处（filter 判 `raw_topics`、suggest 判 `filtered`）：
        热点抓取失败是常态，不能让后面两级白烧 LLM 额度；两处共用常量
        ``_NO_TOPIC_HINT``，改文案时不会只改一半。
@@ -27,6 +29,7 @@
     | `PLATFORM_SENDS` | `{中文名: [Send(...)]}` | `{中文名: [节点名]}`，Send 在路由里现造 | 课案那份 Send 对象只是拿来读 `.node`，绕了一层；语义完全等价 |
     | 节点容错 | 每个 fetch 有 try（好），filter/suggest 没有 | 四个环节全部 try（含 filter/suggest） | 与其余模块统一：失败写进 state 让链路走完 |
     | 无数据处理 | filter 已判空 | 同左（保留课案的判定字符串） | 课案这里是对的：无数据就不该白烧 LLM 额度 |
+    | 失效平台 | 无此概念，5 个源一律发请求 | `_make_fetch_node` 里加守卫：`_platform_unavailable(label)` 命中就返回空列表，**一个请求都不发** | 上游 `xiaohongshu` 实测 HTTP 500，而 `fetch_platform()` 内含 2 次重试 + sleep ⇒ 选默认的「全部」白等 12.0 秒、白发 3 次注定失败的请求；图结构不动（节点照旧注册），守卫在节点函数内部 |
     | 合并结果 | 课案:310 称 `operator.add` 合并时「去重 + 按热度降序」 | `node_filter` 里显式按 heat 降序 + 按 title 保序去重 | `operator.add` 只拼接；排序只在 `tools/trend_radar_client.py` 的 `fetch_for_workflow()`，工作流走 `fetch_platform_hot` 不经过它；同名热搜重复进 prompt 白烧 token |
     | 自检 | 无 | 末尾 `__main__` 离线自检（打桩抓取 + LLM） | 验证并行合并、单平台路由、平台挂掉不影响整体 |
     | 平台清单 | 图里 5 个平台 | 同左 | 与课案一致 |
@@ -103,7 +106,12 @@ if _PROJECT_ROOT not in sys.path:
 from langgraph.graph import END, START, StateGraph  # noqa: E402
 from langgraph.types import Send  # noqa: E402
 
-from tools.trend_radar_client import PLATFORM_IDS, fetch_platform_hot  # noqa: E402
+from tools.trend_radar_client import (  # noqa: E402
+    NAME_TO_IDS,
+    PLATFORM_IDS,
+    UNAVAILABLE_PLATFORMS,
+    fetch_platform_hot,
+)
 from workflows import llm_call  # noqa: E402
 
 # 筛选是判断题（要稳），选题建议是创作题（可以放一点）
@@ -112,6 +120,19 @@ _TEMP_SUGGEST = 0.6
 
 # 课案里那个「没数据就短路」的判定串，filter / suggest 两边要一致，提成常量
 _NO_TOPIC_HINT = "暂无热点数据，请检查网络连接或稍后重试。"
+
+# 「没数据」时 suggest 给出的文案，同样提成常量：节点与自检共用一份，改文案不会只改一处。
+_NO_SUGGEST_HINT = "暂无选题建议，请先确保热点数据获取成功。"
+
+# 「上游产出不可用」的失败前缀 —— 两类都要认，否则 suggest 会拿着报错串白调一次 LLM：
+#   · `llm_call` 的失败提示（口径与 `workflows/replicate.py` 的 `_LLM_FAIL_PREFIXES`
+#     一致，**刻意各留一份**：一个 2 元组不值得为它 import 另一个工作流模块，
+#     真要收口也该落在 `workflows/__init__.py` 那个 `llm_call` 的家）；
+#   · 本模块 `node_filter` 自己出错时回填的 `[热点筛选失败: …]`。
+# 为什么不带 `[热点工作流失败`：那一串是 `run_hot_topic` 在图**外层**兜住异常后写的，
+# 那时图已经停了、suggest 根本没跑，到不了这条判据。
+_FILTER_FAIL_PREFIX = "[热点筛选失败"
+_UPSTREAM_FAIL_PREFIXES = ("[LLM调用失败", "[LLM未配置", _FILTER_FAIL_PREFIX)
 
 
 class HotTopicState(TypedDict):
@@ -159,6 +180,33 @@ FETCH_SOURCES = [
     ("fetch_bilibili", "bilibili-hot-search", "B站"),
 ]
 
+# 本表仍是 5 条（图结构不动），但其中可能有**已失效**的平台 —— 小红书就是：
+# `NAME_TO_IDS["小红书"]` 的 id 列表已被 tools 层清空（上游 `xiaohongshu` HTTP 500），
+# 而 `fetch_platform()` 内部带 2 次重试 + 失败后 sleep，实测白等 12.0 秒才回空列表。
+# 所以守卫必须加在**节点函数里**（见 `_make_fetch_node`），而不是靠"少注册一个节点"：
+# 后者会改图结构，连带打翻图结构断言与 `_fetch_node_names`。
+
+
+def _platform_unavailable(label: str) -> str:
+    """平台当前是否抓不到；返回中文原因，可用时返回空串。
+
+    判据一律取自 tools 层的**单一真源**，本文件不另抄一份平台清单 ——
+    「白等 12 秒」这个坑的成因就是两层各维护一份清单：tools 层把「小红书」摘掉了，
+    工作流层却仍在照着自己的表发请求。
+
+    Args:
+        label: 中文平台名（``FETCH_SOURCES`` 里的第三个元素）。
+
+    Returns:
+        ``UNAVAILABLE_PLATFORMS`` 里登记的原因；没登记但 ``NAME_TO_IDS`` 的 id
+        列表为空的，给一句通用说明；两者都不命中（可抓）时返回空串。
+    """
+    if label in UNAVAILABLE_PLATFORMS:
+        return UNAVAILABLE_PLATFORMS[label]
+    if label in NAME_TO_IDS and not NAME_TO_IDS[label]:
+        return "上游该源当前不可用（tools 层未登记具体原因）"
+    return ""
+
 
 def _make_fetch_node(platform_id: str, label: str):
     """造一个「抓某个平台热榜」的节点函数。
@@ -167,6 +215,7 @@ def _make_fetch_node(platform_id: str, label: str):
     这里收成一张 ``FETCH_SOURCES`` 表 + 一个工厂，节点名与图结构完全不变。
 
     每个节点都自带兜底：抓不到就返回空列表，绝不影响其它并行分支。
+    失效平台（如小红书）在这里就被拦下：**一个请求都不发**（见下方守卫）。
 
     Args:
         platform_id: NewsNow / TrendRadar 的平台 ID，如 ``"douyin"``。
@@ -179,6 +228,14 @@ def _make_fetch_node(platform_id: str, label: str):
     """
 
     def _fetch(state: HotTopicState) -> dict:
+        # ⚠️ 守卫必须在**调 `fetch_platform_hot` 之前**：失效平台的 id 列表是空的，
+        #    放它进工具层虽然「空 id 直接返回空列表、不发请求」，但那只是下游兜底 ——
+        #    本节点照旧会留下一行「抓取完成: 0 条」，把「上游源死了」和「今天没热搜」
+        #    混成一回事。守卫命中只打日志，原因取 tools 层的登记（单一真源）。
+        reason = _platform_unavailable(label)
+        if reason:
+            print(f"[热点] {label} 当前不可用，跳过抓取（不发请求）: {reason}")
+            return {"raw_topics": []}
         try:
             # 工具层 `fetch_platform_hot` 自己就带 2 次重试，失败时**静默返回 []**（不抛）。
             # 所以这里的 `except` 兜的是更外层的意外（连接被拒、import 期错误等），
@@ -271,6 +328,16 @@ def node_filter(state: HotTopicState) -> dict:
     try:
         topics = state.get("raw_topics", []) or []
         if not topics:
+            # 「一条都没抓到」有两种成因，提示要分开：平台本身就失效（如小红书），
+            # 还是网络/上游偶发失败。前者带上 tools 层登记的原因，用户才知道该换平台，
+            # 而不是对着「请检查网络连接」反复重试。
+            # ⚠️ 提示里**必须保留 `_NO_TOPIC_HINT` 这个子串**：`node_suggest` 正是靠
+            #    `_NO_TOPIC_HINT in filtered` 判短路的 —— 换成一句不含它的原因串，
+            #    suggest 会拿着一句「平台不可用」去白调一次 LLM（A3 那类病）。
+            reason = _platform_unavailable(state.get("platform", "") or "")
+            if reason:
+                print(f"[热点] 平台「{state.get('platform')}」当前不可用: {reason}")
+                return {"filtered": f"{_NO_TOPIC_HINT}\n\n原因：{reason}"}
             print("[热点] 没有抓到任何热点，跳过 LLM 筛选")
             return {"filtered": _NO_TOPIC_HINT}
 
@@ -324,21 +391,37 @@ def node_suggest(state: HotTopicState) -> dict:
     读 ``state["filtered"]`` → ``llm_call(temperature=0.6)`` → 写 ``state["suggestions"]``。
 
     短路与兜底：
-        · ``filtered`` 为空或含 ``_NO_TOPIC_HINT`` → 返回中文提示，**不调 LLM**
+        · ``filtered`` 为空或含 ``_NO_TOPIC_HINT`` → 返回「没数据」的中文提示，**不调 LLM**
           （上游已经明确说了"没数据"，再问一次模型只会得到一段凭空编的选题）；
+        · ``filtered`` 以任一 ``_UPSTREAM_FAIL_PREFIXES`` 开头（``node_filter`` 出错回填的
+          ``[热点筛选失败: …]``，或筛选那一步 ``llm_call`` 失败返回的
+          ``[LLM调用失败: …]`` / ``[LLM未配置] …``）→ 同样不调 LLM，但提示要带上
+          **出错原文**：这跟"没数据"是两件事，用户该去查的地方也不同；
         · ``llm_call`` 失败 → 返回 ``[LLM调用失败: ...]`` 文本；
           本节点的 ``except`` 回填 ``[选题建议生成失败: ...]``，两者都不抛异常。
     """
     try:
         filtered = state.get("filtered", "") or ""
-        # 课案的短路判断保留：上游没拿到数据就别再白烧一次额度。
-        # `_NO_TOPIC_HINT in filtered` 用的是**子串**匹配而不是 `startswith`：
-        # filter 可能把提示文案包在自己的输出里。相应地，filter 抛异常时回填的
-        # `[热点筛选失败: ...]` 不含这句提示，这里**不会**短路，仍会白跑一次 LLM ——
-        # 见报告里记的那条发现，本轮不动代码。
+        # 两条短路判据分开放（不是 OR 到一行），因为**提示语必须不同**：
+        # 「没数据」是常态（热榜限流），用户等会儿再试；「筛选出错」是异常，
+        # 用户该去查接口或模型配置。一律回一句"请确保热点数据获取成功"会指错方向。
+        # 「没数据」这条用**子串**匹配（`in`）而不是 `startswith`：`_NO_TOPIC_HINT`
+        # 可能被 filter 包在自己的输出里；而失败前缀只应出现在**开头**，所以用 `startswith`。
         if not filtered or _NO_TOPIC_HINT in filtered:
             print("[热点] 上游没有可用的筛选结果，跳过选题建议")
-            return {"suggestions": "暂无选题建议，请先确保热点数据获取成功。"}
+            return {"suggestions": _NO_SUGGEST_HINT}
+        # ⚠️ 判据里**必须**含 `[热点筛选失败`：`node_filter` 的 except 回填的是它，
+        #    而它不含 `_NO_TOPIC_HINT` —— 修之前这里会放行，suggest 便拿着一整段
+        #    报错去白调一次 LLM 生成选题（错的输入、编出来的输出、还花了额度）。
+        #    `lstrip()` 先吃掉上游可能留下的前导空白，判据用 `startswith` 与
+        #    `workflows/replicate.py` 的 `_is_usable()` 保持同一口径。
+        if filtered.lstrip().startswith(_UPSTREAM_FAIL_PREFIXES):
+            print(f"[热点] 上游筛选失败，跳过选题建议: {filtered[:200]}")
+            return {"suggestions": (
+                "暂无选题建议：热点筛选阶段出错（不是没抓到数据）——"
+                "请检查热榜接口或模型配置后重试。\n"
+                f"原始信息：{filtered.strip()}"
+            )}
 
         prompt = f"""基于筛选出的热点：
 {filtered}
@@ -412,9 +495,8 @@ def run_hot_topic(platform: str, account_field: str) -> dict:
     Raises:
         不抛异常。图级异常会被收成 ``[热点工作流失败: ...]`` 写进 ``filtered`` ——
         Streamlit 页面直接取字段渲染，抛出去就是整页 traceback。
-        ⚠️ ``views/hot_topic.py`` 目前**不识别**这串前缀（它靠
-        ``if not raw_topics`` 提示"没抓到热点"），所以图级失败时页面只会看到
-        一段文本，不会有红条 —— 见报告里的「发现但没改」。
+        ``views/hot_topic.py`` 认得这串前缀（它把前缀收进失败判据、渲染成红条并贴原文），
+        所以图级失败在页面上是看得见的。
     """
     try:
         # 只传两个入口字段：`raw_topics` 由 reducer 从 `[]` 起算，无需初始值。
@@ -545,22 +627,39 @@ if __name__ == "__main__":
 
     llm_call = _stub_llm  # noqa: F841
 
-    # 3a) 全部平台 —— 验的最重要一条：5 支并行写 `raw_topics` 后**没有互相覆盖**
+    # 由 tools 层的真源算出「哪几支真的会发请求」与「哪几支被守卫拦下」——
+    # 不在这里手抄平台清单：抄一份就会漂移，而「白等 12 秒」正是这么来的。
+    _guarded = [(name, pid, label) for name, pid, label in FETCH_SOURCES
+                if _platform_unavailable(label)]
+    _fetchable_ids = {pid for _, pid, label in FETCH_SOURCES
+                      if not _platform_unavailable(label)}
+    for _name, _pid, _label in _guarded:
+        # 守卫命中时节点**连工具函数都不该调**：桩被调到就会记进 `fetched`。
+        fetched.clear()
+        fetch_platform_hot = make_stub_fetch()  # noqa: F841
+        _guard_result = _make_fetch_node(_pid, _label)({"platform": "全部"})
+        assert _guard_result == {"raw_topics": []}, _guard_result
+        assert fetched == [], f"失效平台「{_label}」不该发请求，实际调了 {fetched}"
+    print(f"  ✓ {len(_guarded)} 个失效平台（{', '.join(l for _, _, l in _guarded)}）"
+          f"一个请求都不发")
+
+    # 3a) 全部平台 —— 验的最重要一条：多支并行写 `raw_topics` 后**没有互相覆盖**
     fetch_platform_hot = make_stub_fetch()  # noqa: F841
     try:
         all_result = run_hot_topic("全部", "科技测评")
     finally:
         fetch_platform_hot = _real_fetch
 
-    # 5 条而不是 1 条 ⇒ reducer（operator.add）真的生效了；
+    # 条数 > 1 而不是 1 ⇒ reducer（operator.add）真的生效了；
     # 这一条要是变成 1，说明 `Annotated[list, operator.add]` 被去掉了 —— 而图不会报错。
-    assert len(all_result["raw_topics"]) == 5, len(all_result["raw_topics"])
+    assert len(all_result["raw_topics"]) == len(_fetchable_ids), all_result["raw_topics"]
     # 用集合比 source：并行分支落地顺序不保证，不能假设抖音在第 1 条。
     assert {t["source"] for t in all_result["raw_topics"]} == {
-        "抖音", "微博", "知乎", "小红书", "B站",
+        label for _, _, label in FETCH_SOURCES if not _platform_unavailable(label)
     }, {t["source"] for t in all_result["raw_topics"]}
-    # 「全部」必须把 5 个平台的抓取函数都调到（且只调这 5 个）。
-    assert set(fetched) == {pid for _, pid, _ in FETCH_SOURCES}, fetched
+    # 「全部」必须把**可抓的**平台都调到（且只调这些）—— 失效平台那支一次都没调，
+    # 这正是 B1b 的判据：改前这里会多出 `xiaohongshu`（白等 12 秒、白发 3 次请求）。
+    assert set(fetched) == _fetchable_ids, fetched
     assert all_result["filtered"] == "[STUB-1]"
     assert all_result["suggestions"] == "[STUB-2]"
     assert set(all_result) == {
@@ -604,7 +703,8 @@ if __name__ == "__main__":
 
     # 3d) 某个平台挂了，其它平台照常出结果（并行分支互不影响）
     # 让 weibo 分支抛异常：如果哪个 fetch 节点忘了 try，这里会顺着图冒上来，
-    # 断言就不是「4 条」而是整个 `run_hot_topic` 抛异常 —— 正是要验的东西。
+    # 断言就不是「少一条」而是整个 `run_hot_topic` 抛异常 —— 正是要验的东西。
+    # （条数按 `_fetchable_ids` 减 1 算：失效平台那支本来就不出数据，不能算进来。）
     fetched.clear()
     prompts.clear()
     fetch_platform_hot = make_stub_fetch(fail_ids={"weibo"})  # noqa: F841
@@ -613,10 +713,10 @@ if __name__ == "__main__":
     finally:
         fetch_platform_hot = _real_fetch
 
-    assert len(partial["raw_topics"]) == 4, len(partial["raw_topics"])
+    assert len(partial["raw_topics"]) == len(_fetchable_ids) - 1, partial["raw_topics"]
     assert "微博" not in {t["source"] for t in partial["raw_topics"]}
     assert partial["filtered"] == "[STUB-1]"
-    print("  ✓ 单平台抓取失败不影响其它 4 路")
+    print(f"  ✓ 单平台抓取失败不影响其它 {len(partial['raw_topics'])} 路")
 
     # 3e) 一条都没抓到：不许调 LLM，两级短路都要走通
     # 断言 `prompts == []` 是本用例的核心 —— 它同时验了 filter 层的判空短路
@@ -638,9 +738,65 @@ if __name__ == "__main__":
 
     assert empty_result["raw_topics"] == []
     assert empty_result["filtered"] == _NO_TOPIC_HINT, empty_result["filtered"]
-    assert empty_result["suggestions"] == "暂无选题建议，请先确保热点数据获取成功。"
+    assert empty_result["suggestions"] == _NO_SUGGEST_HINT, empty_result["suggestions"]
     assert prompts == [], f"无数据时不该调 LLM，实际调了 {len(prompts)} 次"
     print("  ✓ 无热点数据时短路：一次 LLM 都没调")
+
+    # 3f) 筛选阶段**出错**时也必须短路（本轮修的 bug：旧判据只认 `_NO_TOPIC_HINT`）
+    #     刻意走真图触发，而不是直接给 `node_suggest` 喂一个假串 ——
+    #     这样连「node_filter 出错时到底往 state 里写了什么」一起验了：
+    #     抓取桩返回一条**带不可 JSON 序列化字段**的热点，`node_filter` 里的
+    #     `json.dumps` 抛 TypeError，被它自己的 except 收成 `[热点筛选失败: …]`。
+    #     改前：这串不含 `_NO_TOPIC_HINT` ⇒ 不短路 ⇒ suggest 拿着报错白调一次 LLM。
+    fetched.clear()
+    prompts.clear()
+    # `llm_call` 必须换成**计数桩**：真身不记调用，用它的话「一次都没调」这条断言
+    # 即使 bug 还在也会通过（那才是真正的假绿）。
+    llm_call = _stub_llm  # noqa: F841
+
+    def _bad_payload_fetch(platform_id: str) -> list:
+        """返回一条 json 序列化不了的记录：``{"坏字段"}`` 是 set，`json.dumps` 必抛。"""
+        return [{"title": f"{platform_id} 的热点", "heat": 1, "url": {"坏字段"}}]
+
+    fetch_platform_hot = _bad_payload_fetch  # noqa: F841
+    try:
+        broken = run_hot_topic("抖音", "科技测评")
+    finally:
+        fetch_platform_hot = _real_fetch
+        llm_call = _real_llm
+
+    assert broken["filtered"].startswith(_FILTER_FAIL_PREFIX), broken["filtered"]
+    # 核心断言：筛选出错时一次 LLM 都不许调 —— 旧代码在这是 1。
+    assert prompts == [], f"筛选出错时不该调 LLM，实际调了 {len(prompts)} 次"
+    assert broken["suggestions"].startswith("暂无选题建议"), broken["suggestions"]
+    # 提示必须与「一条都没抓到」区分开：否则用户会去查网络，而真正的问题在筛选阶段。
+    assert broken["suggestions"] != _NO_SUGGEST_HINT, broken["suggestions"]
+    print("  ✓ 筛选出错时短路：0 次 LLM，提示与「无数据」区分开")
+
+    # 3g) 选中一个**已失效的平台**（小红书）：不发请求、不调 LLM，且提示要说明原因。
+    #     这条是 B1b 的端到端判据：改前「全部」会为它白等约 12 秒（2 次重试 + sleep），
+    #     单点选它更是每次都白等；改后 `_make_fetch_node` 的守卫生效，一支请求都不发。
+    #     用工具层的真源挑出「哪个平台当前失效」，不在自检里手抄平台名。
+    assert _guarded, "没有失效平台可测（tools 层的 UNAVAILABLE_PLATFORMS 变了？）"
+    for _name, _pid, _label in _guarded:
+        fetched.clear()
+        prompts.clear()
+        llm_call = _stub_llm  # noqa: F841
+        fetch_platform_hot = make_stub_fetch()  # noqa: F841
+        try:
+            dead = run_hot_topic(_label, "科技测评")
+        finally:
+            fetch_platform_hot = _real_fetch
+            llm_call = _real_llm
+
+        assert fetched == [], f"「{_label}」已失效，不该发请求，实际调了 {fetched}"
+        assert dead["raw_topics"] == [], dead["raw_topics"]
+        # 提示必须**同时**含 `_NO_TOPIC_HINT`（suggest 靠它短路）与原因（用户靠它换平台）。
+        assert _NO_TOPIC_HINT in dead["filtered"], dead["filtered"]
+        assert "原因：" in dead["filtered"], dead["filtered"]
+        assert prompts == [], f"平台不可用时不该调 LLM，实际调了 {len(prompts)} 次"
+        assert dead["suggestions"] == _NO_SUGGEST_HINT, dead["suggestions"]
+        print(f"  ✓ 失效平台「{_label}」：0 次请求、0 次 LLM，提示带原因")
 
     print("\n全部自检通过")
 

@@ -93,8 +93,15 @@ Set-Location F:\ProGram\Python_Base\Media_Agent
 ```
 
 > 此前本表的粘贴遗漏了 `tools/asset_host.py` 一行（只贴了 13 行），现已按真跑输出补全；
-> 第 1 层共 **15** 个模块（`verify_all.py:118-132` 的清单），三层合计 **17** 项。
+> 第 1 层共 **15** 个模块（`verify_all.py:272-289` 的 `MODULE_SELF_CHECKS` 清单），三层合计 **17** 项
+> —— 本项数字在修复轮改完后重新数过，仍是 15 + 2 = 17（本轮没有增删登记条目）。
 > 各模块耗时每次跑会有零点几秒浮动，行数与结论不受影响。
+>
+> 修复轮新增的自检断言（`views/` 之外的工具与工作流模块里各加了几条，
+> 例如 `tools/trend_radar_client.py` 的「失效平台不发请求」「`UNAVAILABLE_PLATFORMS`
+> 的键都在 `NAME_TO_IDS` 里」）**不改变上面这个计数**：计数按登记的模块算 1 项，
+> 与模块内部断言条数无关。它们的实际运行结果以 `verify_all.py` 的实跑输出为准
+> —— 本轮改后实跑一次：`共 17 项检查，通过 17 项，失败 0 项`（`exit code 0`）。
 
 每个自检都是**纯逻辑断言，不联网、不花钱**，覆盖：
 
@@ -239,6 +246,13 @@ plan        2160 字
   但它没进筛选结果，进的是与「AI工具 / 效率提升」赛道相关的条目。
 
 > ⚠️ 小红书 500 是上游 NewsNow 公共 API 的问题（不是本项目代码问题），已通过重试 + 降级正确处理。
+>
+> **修复轮补记（行为已变；上面那段是当时的真跑记录，保留原文）**：「小红书」现在被明确
+> 标记为**当前不可用**（上游 `xiaohongshu` 已失效）——`NAME_TO_IDS` 里它的 id 列表被清空、
+> 页面下拉显示「小红书（当前不可用）」、显式选中它时页面**直接拦住并给出原因**（不发请求），
+> 选「全部」时工作流的抓取节点在调接口**之前**就跳过它。也就是说那 12 秒的重试等待不会
+> 再出现，「0 条」也被归因到「上游源已失效」而不是「今天没热搜」。代码落点见 README
+> 「热点监控」一节；本条**不代表新的联网实跑**，只是行为口径已同步。
 
 ### 5.3 数据复盘（四节点 LLM 链路，降级入口）
 
@@ -1047,6 +1061,17 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 5. **`_read_edge_cookies()`（从 Edge 读抖音 Cookie）** —— 未实跑。
    它会 `taskkill` 掉所有 Edge 进程再起无头实例，副作用大，不适合在验证阶段触发。
    仅验证了端口探活函数不可达时返回 `False` 且不抛异常。
+
+   > 修复轮补记（**代码已改，本条仍未实跑**）：原先它连的是 `/json/version` 给的
+   > **browser 级** CDP 目标，而 `Network` 是页级域 —— 在那个目标上调
+   > `Network.getCookies` 会直接回 `-32601 "'Network.getCookies' wasn't found"`，
+   > Cookie 恒为空，**已登录的用户也会被劝去登录**（实测记录写在 `views/review.py`
+   > 的文件头 docstring 里，本报告不重复它的运行输出）。现在的做法是从 `/json/list`
+   > 里挑 `type == "page"` 的目标（一个页级目标都没有时用 browser 级的
+   > `Target.createTarget` 造一个 `about:blank` 页兜底），并把三个抖音域名**一次**
+   > 传给 `Network.getCookies` 的 `urls`（`domain` 不是 CDP 的合法参数）。
+   > 自检新增了 `_pick_page_target` 的字段形状回归，但**「真从 Edge 里取到 Cookie」
+   > 仍属未实跑**，别把它当成已验证。
 6. **~~【需要你处理】~~ 百炼账号对计费模型返回 `Arrearage`** —— **已充值解决**。
    本轮实测（同一把 key，`sha256[:12]=b96e9a10cb9f`，len 35）：
 
@@ -1093,7 +1118,7 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 | 项 | 说明 |
 |---|---|
 | Cookie 落点 | 页面上粘贴的抖音 Cookie 存在**运行时会话覆写点** `os.environ["MEDIA_DOUYIN_COOKIE"]`（重启即失效），持久值仍在根 `.env` 的 `MEDIA_DOUYIN_COOKIE`。这是为了让「界面粘 Cookie」这个动作不产生忘记清理的持久凭据。若希望它直接写 `.env`，需要改 `config.py` 加一个写入辅助函数。 |
-| `MEDIA_IMAGE_*` 未配置 | 图片生成走占位图分支（首页环境面板已明示）。 |
+| `MEDIA_IMAGE_*` 未配置 | 图片生成走占位图分支（首页「运行环境」面板已明示）。判据是 `MEDIA_IMAGE_API_KEY` 与 `MEDIA_IMAGE_MODEL` **两项都非空**（`tools/media_tools.py` 的 `_image_configured()`），`MEDIA_IMAGE_BASE_URL` 留空不算未配置 —— 首页卡片现在用的就是同一条判据。 |
 | HyperFrames | 渲染链路不可用（浏览器依赖拉不下来），默认由 `MEDIA_MASHUP_USE_HYPERFRAMES=false` 走 moviepy 分支；换到浏览器链路正常的机器改成 `true` 即恢复课案原方案。 |
-| `docs/` 下的课案提取文件 | 由 `docs/html提取脚本.py` 从课案 HTML 生成，课案更新后可重跑。 |
-| `workflows/base.py` 无调用方 | **全仓 0 引用**：`from workflows.base` / `workflows.base` 在 `views/`、`workflows/` 下均 0 命中，`safe_llm_call()` 也没有任何调用方（模块只被当作课案「工作流基类」这一节的载体保留，纯转发 `workflows/__init__.py` 的实现）。**已补自检**并纳入 `verify_all.py` 第 1 层清单（`verify_all.py:126`，共 15 个模块）：断言转发对象同一性、`safe_llm_call` 签名、模型不可用时返回提示文本而非抛异常、缺密钥降级为 `[LLM未配置]`。留着不删是刻意的——删掉会让课案结构对不上；若将来确认不需要，可直接删文件 + 摘掉那一行清单。 |
+| `docs/` 下的课案提取文件 | 由 `docs/html提取脚本.py` 从课案 HTML 生成，**课案更新后可重跑**（这句话在修复轮才真正成立）。脚本原先直接跑会 `FileNotFoundError`：两个产物路径都在仓库根的 `_html_parse/` 下，而该目录不在 Git 里、写文件前没有 `mkdir` 兜底。现已在写第一份产物前 `os.makedirs(..., exist_ok=True)`，并于修复轮**真跑过一次**：`text chars: 150114 lines: 4786` / `code blocks: 44 code chars: 141432`，`exit code 0`；产物 `_html_parse/courseware.txt` 与 `courseware_code_only.txt` 的 SHA256 与 `docs/` 下那两份存档**逐字节相同**（`FD309A2D…` / `9CDB1AAC…`），说明重跑结果稳定。真正会挡住重跑的只剩 `SRC`（脚本里的本机 DSH 附件绝对路径，附件被清理后要手改）。 |
+| `workflows/base.py` 无调用方 | **全仓 0 引用**：`from workflows.base` / `workflows.base` 在 `views/`、`workflows/` 下均 0 命中，`safe_llm_call()` 也没有任何调用方（模块只被当作课案「工作流基类」这一节的载体保留，纯转发 `workflows/__init__.py` 的实现）。**已补自检**并纳入 `verify_all.py` 第 1 层清单（`verify_all.py:282`，共 15 个模块）：断言转发对象同一性、`safe_llm_call` 签名、模型不可用时返回提示文本而非抛异常、缺密钥降级为 `[LLM未配置]`。留着不删是刻意的——删掉会让课案结构对不上；若将来确认不需要，可直接删文件 + 摘掉那一行清单。 |

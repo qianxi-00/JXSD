@@ -271,17 +271,33 @@ def _to_time_text(value: Any) -> str:
 def _to_duration_text(record: dict) -> str:
     """时长 → ``"45秒"``。
 
-    抖音原始数据里 ``video.duration`` 是毫秒；手动粘贴的数据常直接写秒数
-    （``45`` 或 ``"45秒"``）。这里三种都认：带非数字字符的原样返回，
-    ≥1000 当毫秒，<1000 当秒。
+    **单位优先由「来源」判定，而不是只看数值大小**：
+        · 嵌在 ``video`` 里的 ``duration`` 是抖音原始结构，恒为毫秒；
+        · 键名自带 ``_ms`` 后缀的（``duration_ms``）也恒为毫秒；
+        · 只有「摊平 / 手工粘贴的顶层 ``duration``」单位未知，才退回固定阈值启发式
+          （≥1000 当毫秒，否则当秒）。
+    另外带非数字字符的原样返回（``"1分30秒"`` 这种手写的本来就带单位）。
 
     Returns:
         str: ``"45秒"`` / ``"未知"`` / 原样返回的字符串（如 ``"1分30秒"``）。
+
+    Note:
+        阈值启发式那条路仍有个已知局限：把**顶层的** ``1200`` 当作毫秒会得到
+        ``"1秒"``，而它也可能真是 20 分钟。顶层数值本身不携带单位，没有可靠的
+        判别依据，所以保持课案的固定阈值；能拿到 ``video`` 嵌套结构或 ``_ms``
+        键名的情形已由上面的来源判定兜住，不再受这个局限影响。
     """
-    raw = None
-    # ``video.duration`` 是抖音原始结构，顶层 ``duration`` 是手动粘贴/摊平后的写法，两层都试
-    for container in (_as_dict(record.get("video")), record):
-        raw = _first(container, ("时长", "duration", "duration_ms", "video_duration"))
+    keys = ("时长", "duration", "duration_ms", "video_duration")
+    raw, ms_known = None, False
+    # 不用 `_first()`：这里还需要知道**命中的是哪个键**（`_ms` 后缀决定单位），
+    # 而 `_first()` 只回值不回键。
+    for container, nested in ((_as_dict(record.get("video")), True), (record, False)):
+        for key in keys:
+            value = container.get(key)
+            if value in (None, ""):
+                continue
+            raw, ms_known = value, nested or key.endswith("_ms")
+            break
         if raw is not None:
             break
     if raw is None:
@@ -291,11 +307,9 @@ def _to_duration_text(record: dict) -> str:
     value = _to_int(raw)
     if value <= 0:
         return "未知"
-    # ≥1000 当毫秒（抖音原始就是毫秒，如 45000），否则当秒（手动粘贴常写 45）。
-    # 课案是**无条件 /1000**；这里多出来的「<1000 当秒」分支是为了兼容粘贴数据。
-    # ⚠️ 已知局限：真实时长 ≥1000 秒（16 分 40 秒以上）的视频会被少算 1000 倍 ——
-    #    抖音短视频场景极罕见，两害相权选这个固定阈值，不额外引入分辨逻辑。
-    seconds = value // 1000 if value >= 1000 else value
+    # 单位已知 → 无条件按毫秒算（`video.duration=500` 是 0.5 秒，不是 500 秒）；
+    # 单位未知 → 才用课案的固定阈值。
+    seconds = value // 1000 if (ms_known or value >= 1000) else value
     return f"{seconds}秒"
 
 
@@ -826,5 +840,24 @@ if __name__ == "__main__":
     hint = cookie_hint()
     assert isinstance(hint, str) and hint
     print(f"  cookie_hint()            OK  {hint.splitlines()[0][:40]}")
+
+    # 8) 时长单位：由「来源」判定，不由数值猜。
+    #    每一条都对着一个真实会走到的输入形状；第 2、3 条是修复后才有正确结果
+    #    （修复前 500ms 会被当成 500 秒）。
+    for rec, want, why in (
+        ({"video": {"duration": 45000}}, "45秒", "嵌套 video = 抖音原始毫秒"),
+        ({"video": {"duration": 500}}, "0秒", "嵌套 video 且 <1000：仍是毫秒，不是 500 秒"),
+        ({"duration_ms": 500}, "0秒", "键名带 _ms 后缀：恒为毫秒"),
+        ({"duration_ms": 120000}, "120秒", "带 _ms 的长视频"),
+        ({"duration": 45}, "45秒", "顶层裸 duration：单位未知，按秒"),
+        ({"duration": 45000}, "45秒", "顶层裸 duration ≥1000：按课案的固定阈值当毫秒"),
+        ({"video": {"duration": 1200000}}, "1200秒", "嵌套 video 的 20 分钟视频不被少算"),
+        ({"时长": "1分30秒"}, "1分30秒", "手写带单位的原样返回"),
+        ({"时长": ""}, "未知", "空值算没有"),
+        ({}, "未知", "完全缺字段"),
+    ):
+        got = _to_duration_text(rec)
+        assert got == want, f"{why}: {rec} → 期望 {want}，实际 {got}"
+    print("  时长单位判定             OK  10 种输入形状（嵌套/后缀/裸值/手写）")
 
     print("\n自检完成")

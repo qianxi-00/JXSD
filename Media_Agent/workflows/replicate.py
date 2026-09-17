@@ -186,13 +186,22 @@ def node_extract(state: ReplicateState) -> dict:
             # 转写；本机缺 ffmpeg 时它会退回「让识别服务直接吃视频文件」那条路。
             # 同样以空串表示失败，真因由 tools 层打印（未配 DASHSCOPE_API_KEY 等）。
             text = extract_audio_text(video_path)
+            if not text:
+                # 下载成功、只是没转出文字：真因在 ASR（没配 DASHSCOPE_API_KEY / 视频里
+                # 没人声），此时**不抓正文** —— 同一个视频页 URL 交给 trafilatura 基本
+                # 抓不到东西（B站/抖音页面没有多少可读正文），拿回空串照样短路，
+                # 白花一次网络请求而已。
+                print("[内容复刻] 视频已下载但转写为空，不再走文章兜底（视频页抓不出正文）")
         else:
             print("[内容复刻] 视频下载失败（链接不是视频 / 未装 yt-dlp / 被反爬）")
 
-        # ---- 兜底：当文章抓（图文链接，或视频链路没拿到文案）----
+        # ---- 兜底：**视频拿不到**时才改按文章抓 ----
         # 课案流程图写的是「下载视频 / 抓取文章」二选一，但课案代码只实现了视频那半；
-        # 知乎/公众号这类图文链接本来就没有视频可下，视频链路空手而归时也全靠它救。
-        if not text:
+        # 知乎/公众号这类图文链接本来就没有视频可下，全靠它救。
+        # ⚠️ 判据是「下载就失败」（`not video_path`），**不能**写成「`text` 为空」：
+        #    后者把「下到了视频、只是没转出文字」也算进来，于是又拿视频页 URL 去抓
+        #    一次注定抓不到的正文。课案的本意就是「视频拿不到才退而取正文」。
+        if not video_path:
             print("[内容复刻] 改走文章抓取兜底...")
             text = fetch_article(url)
 
@@ -580,6 +589,20 @@ if __name__ == "__main__":
         assert article_result["original_text"].startswith("这是一篇"), article_result["original_text"]
         assert len(calls["llm"]) == 3, len(calls["llm"])
         print("  ✓ 视频下载失败 → 文章抓取兜底 → 链路走完")
+
+        # 3c2) 视频**下载成功、但转写为空** → 不该再抓正文（本轮收窄的判据）
+        #      改前判据是「`text` 为空」，于是会拿同一个视频页 URL 去 `fetch_article`：
+        #      视频页抓不出正文（拿回空串照样短路，无害），但白花一次网络请求。
+        #      这里的文章桩**故意返回一段正文** —— 真被调到的话，链路会带着这段
+        #      并不存在的"正文"继续跑完 3 次 LLM，下面两条断言都会红。
+        clear_calls()
+        wire("C:/fake/demo.mp4", "", "一篇不该被用到的正文（视频页根本没有正文）")
+        asr_empty = run_replicate("https://www.bilibili.com/video/BV1xx")
+        assert calls["asr"] == ["C:/fake/demo.mp4"], calls["asr"]
+        assert calls["article"] == [], "下载成功但转写为空时不该再抓正文"
+        assert asr_empty["original_text"].startswith(_SKIP_MARK), asr_empty["original_text"]
+        assert calls["llm"] == [], f"没有文案时不该调 LLM，实际调了 {len(calls['llm'])} 次"
+        print("  ✓ 下载成功但转写为空：不再抓正文，0 次 LLM")
 
         # 3d) 两条路都失败 → 短路，一次 LLM 都不调
         clear_calls()

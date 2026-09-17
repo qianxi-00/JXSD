@@ -93,7 +93,7 @@ class VideoState(TypedDict, total=False):
     mode: str                # "teleprompter" | "avatar"
     avatar_path: str         # 数字人模特视频路径（10~30 秒正面说话）
     use_cloned_voice: bool   # True=优先克隆音色（失败降级 edge-tts）；False=直接用内置音色
-    speaker_id: str          # 走 PixVerse 内置 TTS 时的音色 ID（不勾克隆音色时生效）
+    speaker_id: str          # 走 PixVerse 内置 TTS 时的音色 ID（克隆与 edge-tts 双双失败时生效）
 
     teleprompter: str        # 提词器内容 = 用户原文
     audio_path: str          # 生成的配音音频
@@ -437,6 +437,12 @@ def refresh_avatar_task(task_code: str) -> dict:
                 "message": "生成完成，已保存到本地"}
     # 下载失败**不算任务失败**：把 URL 交出去让用户手动打开，
     # 总比只回一句「失败」而把已经花掉额度生成好的成品丢掉强。
+    #
+    # 注意：这里返回 `finished=True` 但页面**不会**清掉 `task_code`，所以用户
+    # 还能再点一次「刷新进度」重试下载 —— 这是有意的（网络抖动重试一次就好了）。
+    # 重复下载不会产生垃圾文件：`download_result()` 的落盘名是 video_url 的 md5，
+    # 同一份成品只会覆盖写同一个路径。代价仅是重试时多一次 `query_task`（RPS 20，
+    # 且 `query_task` 只是取当次快照、不改变任务状态）。
     return {"finished": True, "success": False, "video_path": "",
             "message": f"生成完成但下载失败，可手动访问: {q['video_url']}"}
 

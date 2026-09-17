@@ -54,8 +54,9 @@
 
 本文件在系统里的位置
     「``views/`` → ``workflows/`` → ``tools/``」三层里的中间层。
-    真实入口是 ``views/mashup.py``（它直接 ``mashup_graph.invoke(...)``），
-    本文件对外暴露的是编译好的 ``mashup_graph`` 与包装函数 ``run_mashup()``。
+    真实入口是 ``views/mashup.py``（它调本文件的包装函数 ``run_mashup()``），
+    本文件对外暴露的是 ``run_mashup()`` 与编译好的 ``mashup_graph``
+    （后者是内部契约，页面不该直接 ``invoke``）。
 
 数据流（两个节点一条直线，没有条件边）
     ``node_edit_video``  把整包任务交给 deepagent，产出 ``output_video``；
@@ -289,9 +290,6 @@ class MashupState(TypedDict, total=False):
 
     Attributes:
         input_video: 源口播视频路径。视图层写入，两个节点都读。
-        edit_style: ⚠️ 课案遗留字段 —— 视图层会填一个空串，但全仓**没有任何
-            地方读它**（本文件两个节点都没用）。保留只是为了不偏离课案的
-            State 契约，不要以为改它会影响剪辑风格。
         edit_requirements: 剪辑要求（JSON 字符串或纯文本），``node_edit_video`` 读。
         output_video: 成品路径。``node_edit_video`` 写入（解析不到就是空串），
             ``node_find_output`` 既读又可能覆写它。
@@ -301,7 +299,6 @@ class MashupState(TypedDict, total=False):
     """
 
     input_video: str
-    edit_style: str
     edit_requirements: str
     output_video: str
     editor_log: str
@@ -877,18 +874,22 @@ def node_edit_video(state: MashupState) -> dict:
         ``edit_start``。``output_video`` 为空串即表示本轮没解析到成品。
     """
     # 源视频路径来自表单，同样可能是 /c/Users 这种形态，先清洗再 abspath。
-    video = safe_abspath(state.get("input_video", ""))
+    # ⚠️ **必须先判原始串再 abspath**：`safe_abspath("")` 返回的是**当前工作目录**
+    #    （`os.path.abspath("")` 的语义），永远非空 —— 直接在 abspath 的结果上判空，
+    #    空表单会被当成「源视频 = CWD」，`os.path.exists(CWD)` 为真，于是照常起 agent。
+    raw_video = (state.get("input_video") or "").strip()
+    video = safe_abspath(raw_video) if raw_video else ""
     # 记开始时刻不是为了计时，而是给下面解析输出时当「本轮新产物」的时间基准。
     edit_start = time.time()
 
-    # 源视频不存在就直接返回失败串，**连 agent 都不起**：
+    # 源视频不可用就直接返回失败串，**连 agent 都不起**：
     # 起一次 agent（建客户端、扫技能）的开销远高于一次 os.path.exists。
-    # ⚠️ 但 `not video` 这一半目前**不可能成立**：`safe_abspath("")` 返回的是
-    #    当前工作目录（见它的 docstring），永远是非空串 —— 也就是说
-    #    `input_video` 传空串时，这里会拿 CWD 当源视频继续往下走。
-    #    当前调用方（views/mashup.py）都会先校验视频存在，所以没暴露出来。
-    #    本轮只加注释，不动判据（改判据属于改可执行代码）。
-    if not video or not os.path.exists(video):
+    # 「没给路径」与「路径失效」分开报 —— 前者是用户还没选视频（页面提示他选），
+    # 后者带上是哪条路径（看得出是被删了还是被移走了），处置方式完全不同。
+    if not video:
+        return {"editor_log": "未指定源视频：请先上传或填写源口播视频路径。",
+                "output_video": "", "edit_start": edit_start}
+    if not os.path.exists(video):
         return {"editor_log": f"源视频不存在: {video}", "output_video": "", "edit_start": edit_start}
 
     # ---- 解析剪辑要求 ----
@@ -1269,7 +1270,21 @@ def node_find_output(state: MashupState) -> dict:
         一个都没找到时返回**空字典** —— LangGraph 里空字典表示「本节点不改动
         状态」，不是错误（视图层看到 ``output_video`` 仍为空，才知道这轮没出片）。
     """
-    inp = safe_abspath(state.get("input_video", ""))
+    # 与 `node_edit_video` 同样**先取原始串再 abspath**：`safe_abspath("")` 会返回
+    # 当前工作目录（永远非空），拿它当"源视频路径"去做下面那几处 `!= inp` 比对是错的 ——
+    # 该字段没给时语义应是「不与任何候选相等」，而不是「碰巧等于 CWD 的候选被排除」。
+    _raw_in = (state.get("input_video") or "").strip()
+    inp = safe_abspath(_raw_in) if _raw_in else ""
+
+    # 源视频没给、或给的路径已失效 ⇒ `node_edit_video` 提前退回了，agent 这轮**一步都没跑**。
+    # 但图是直边（edit → find），find 照旧会执行；不在这里拦住的话，它按约定落点一捞
+    # 就会把**上一轮**留在沙箱里的成片当成本轮产物交回去 ——
+    # 用户会同时看到「源视频不存在」的失败日志和一个能下载的视频，分不清哪个是真的。
+    # 注意这只挡「没有有效源视频」这一种情况；源视频有效但 agent 中途失败时，
+    # 下面的约定落点兜底仍然照旧（那是防 agent 忘报路径的有意设计，不能一起关掉）。
+    if not _raw_in or not os.path.isfile(inp):
+        print("[剪辑] 源视频缺失或已失效，跳过产物查找（不拿旧成片顶替）")
+        return {}
 
     out = normalize_path(state.get("output_video", ""))
     # agent 自己报的路径优先采信；`!= inp` 是防它把**源视频**当成品报回来
@@ -1354,15 +1369,17 @@ mashup_graph = builder.compile()
 def run_mashup(input_video: str, edit_requirements: str = "", **_kwargs) -> dict:
     """运行视频剪辑工作流。
 
-    本文件对外的包装入口。⚠️ 当前 ``views/mashup.py`` 是直接
-    ``mashup_graph.invoke(...)`` 的，没走这个函数。
+    本文件对外的包装入口：``views/mashup.py`` 调的就是它（只传 ``input_video``
+    与 ``edit_requirements`` 两个位置参数），页面不必知道 state 里有哪些键名叫什么，
+    也不必自己拼初始 state —— 那是本模块的内部契约。
 
     Args:
         input_video: 源口播视频路径。
         edit_requirements: JSON 字符串，形如
             ``{"materials": [...], "bgm_path": "...", "extra_requirements": "..."}``。
-        **_kwargs: 吞掉多余的具名参数。``main.py`` 派发工作流时统一传
-            ``**kwargs``，视图层将来多传一个也不会 TypeError。
+        **_kwargs: 吞掉多余的具名参数。当前没有任何调用方用到它（页面只传上面两个
+            位置参数）—— 留着是为了改签名时不必同步改调用方：**多传一个具名参数
+            不会 ``TypeError``**，把「调用点崩在签名上」降级成「参数被忽略」。
 
     Returns:
         ``{"input_video","output_video","editor_log","steps",...}``；
@@ -1382,12 +1399,9 @@ if __name__ == "__main__":
     # 自检必须**离线**（不启动 agent、不调 LLM），跑一次约 4 秒，可以随手跑。
     # 覆盖的每一项都是「改坏了会静默出错」的点：路径清洗、失败分支、
     # /skills/ 后端接线，以及两个 monkey-patch 的回归。
-    from pathlib import Path as _P
-
-    _root = str(_P(__file__).resolve().parent.parent)
-    if _root not in sys.path:
-        sys.path.insert(0, _root)
-
+    # ⚠️ 这里**不再**重做 path 引导：模块顶部已用 `_PROJECT_ROOT` 插过 `sys.path`，
+    #    而且本文件的项目内 import 早就在模块级执行完了 —— 再插一次是抄模板留下的冗余，
+    #    删掉不影响任何分支（下面第 4 项仍用模块顶部的 `Path` 与 `_PROJECT_ROOT`）。
     print("=== 视频剪辑工作流自检（离线，不启动 agent）===")
 
     # 0) 图结构：两个节点都在，且确实编译过（编译失败的话 import 就炸了）。
@@ -1420,12 +1434,53 @@ if __name__ == "__main__":
     assert "源视频不存在" in r.get("editor_log", ""), r
     print("  源视频缺失处理             OK")
 
+    # 2b) 空路径**不许**被当成「源视频 = 当前工作目录」（本轮修的 bug）
+    #     改前：`safe_abspath("")` 返回 CWD，`os.path.exists(CWD)` 为真 ⇒ 判据落空、
+    #     照常起 agent 去剪一个目录。所以这条用例的核心不是"返回了提示"，
+    #     而是**根本没去构造 agent**：把 `_get_editor_agent` 换成「一被调就抛」的桩
+    #     （它是本节点唯一的重入口），再断言提示里不出现 CWD。
+    #     ⚠️ 用**临时空目录**当沙箱：本图是 edit → find 一条直线，`node_find_output`
+    #     照着设计会去约定位置捞成品 —— 上轮真跑出来的 `mashup_final.mp4` 会被它捞到，
+    #     `output_video` 就跟本用例无关了。测试不能依赖共享目录的状态（同第 3 项）。
+    #     state 只给 `input_video` 一个键也顺带验了：删掉 `edit_style` 之后，
+    #     `mashup_graph.invoke` 仍能收下这个最小输入（`total=False` 的用处）。
+    import tempfile
+
+    _saved_work_dir = settings.media.mashup_work_dir
+    _real_get_agent = _get_editor_agent
+    _agent_built: list = []
+
+    def _no_agent():
+        """占住 `_get_editor_agent` 的位置：被调到就说明本节点不该往下走。"""
+        _agent_built.append(1)
+        raise AssertionError("空源视频路径时不该构造 agent")
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="mashup_selfcheck_empty_") as _empty_dir:
+            settings.media.mashup_work_dir = _empty_dir
+            _get_editor_agent = _no_agent  # noqa: F841
+            r_empty = mashup_graph.invoke({"input_video": ""})
+    finally:
+        # 无论断言过没过都要还原：改的是全局配置，留着会影响同一进程里的后续用例。
+        settings.media.mashup_work_dir = _saved_work_dir
+        _get_editor_agent = _real_get_agent
+
+    assert _agent_built == [], "空路径时仍然去构造 agent 了（判据没拦住）"
+    assert "未指定源视频" in r_empty.get("editor_log", ""), r_empty
+    assert r_empty.get("output_video", "") == "", r_empty
+    assert os.getcwd() not in r_empty.get("editor_log", ""), r_empty["editor_log"]
+    print("  空源视频路径处理           OK（不构造 agent，也没拿 CWD 当视频）")
+
+    # 2c) State 契约：`edit_style` 是课案遗留的**死字段**（全仓 0 处读），已删除。
+    #     留一条断言钉住：谁再把它加回来（或视图层又按具名传参），这里先红。
+    assert "edit_style" not in MashupState.__annotations__, MashupState.__annotations__
+    print("  MashupState 无 edit_style  OK")
+
     # 3) 兜底查找：目录里没有 mp4 时应返回空而不是报错。
     #    ⚠️ 必须指向一个**临时空目录**：这条用例直接跑在共享沙箱里会翻车 ——
     #    真跑过一次剪辑后沙箱里就躺着 mashup_final.mp4，兜底查找会（正确地）
     #    把它找出来，断言就挂了。测试不应该依赖共享目录的状态。
-    import tempfile
-
+    #    （`tempfile` 在 2b 那条用例里已经 import 过了。）
     _saved_work_dir = settings.media.mashup_work_dir
     try:
         with tempfile.TemporaryDirectory(prefix="mashup_selfcheck_") as _empty:
@@ -1437,9 +1492,38 @@ if __name__ == "__main__":
         settings.media.mashup_work_dir = _saved_work_dir
     print("  兜底查找空目录             OK")
 
+    # 3b) 源视频缺失时**不许**把沙箱里上一轮留下的成片当成本轮产物交回去。
+    #     这条是修完 bug 补的：图是直边 `edit → find`，edit 提前退回了 find 照样跑，
+    #     它会按约定落点捞到旧的 `mashup_final.mp4` —— 页面于是同时显示
+    #     「源视频不存在」和一个能下载的视频，用户分不清哪个是真的。
+    #     ⚠️ 必须**真的放一个旧成片**进去，否则这条与上面的 3) 没有区别、什么都测不出来。
+    _saved_work_dir = settings.media.mashup_work_dir
+    try:
+        with tempfile.TemporaryDirectory(prefix="mashup_selfcheck_stale_") as _stale_dir:
+            _stale_final = os.path.join(_stale_dir, "mashup_final.mp4")
+            _src = os.path.join(_stale_dir, "src.mp4")
+            for _p in (_stale_final, _src):
+                with open(_p, "wb") as _f:
+                    _f.write(b"\x00" * 2048)   # 内容无所谓，只要 `os.path.isfile` 为真
+            settings.media.mashup_work_dir = _stale_dir
+
+            # ① 源视频字段为空、② 源视频路径已失效 —— 两种都算「这轮 agent 一步都没跑」
+            assert node_find_output({"input_video": "", "output_video": ""}) == {}, \
+                "源视频为空时不该交回旧成片"
+            assert node_find_output(
+                {"input_video": os.path.join(_stale_dir, "nope.mp4")}
+            ) == {}, "源视频路径失效时不该交回旧成片"
+            # ③ 源视频有效 → 约定落点的兜底**必须照旧生效**
+            #    （那是防 agent 忘报路径的有意设计，不能连它一起关掉）
+            _got = node_find_output({"input_video": _src, "output_video": ""})
+            assert safe_abspath(_got.get("output_video", "")) == safe_abspath(_stale_final), _got
+    finally:
+        settings.media.mashup_work_dir = _saved_work_dir
+    print("  源视频缺失不交旧成片       OK（有效源视频时兜底照旧）")
+
     # 4) SKILL.md 存在且格式正确（DeepAgents 靠 frontmatter 识别技能）
     #    frontmatter 写坏不会报错，只会让技能静默不生效 —— 所以必须断言。
-    skill = _P(_root) / ".skills" / "video-use" / "SKILL.md"
+    skill = Path(_PROJECT_ROOT) / ".skills" / "video-use" / "SKILL.md"
     assert skill.is_file(), f"技能文件缺失: {skill}"
     head = skill.read_text(encoding="utf-8")[:200]
     assert head.startswith("---"), "SKILL.md 必须以 YAML frontmatter 开头"
@@ -1491,7 +1575,7 @@ if __name__ == "__main__":
 
     _cache = settings.media.get_mashup_work_dir()
     os.makedirs(_cache, exist_ok=True)
-    _skills = os.path.join(_root, ".skills")
+    _skills = os.path.join(_PROJECT_ROOT, ".skills")
     _sandbox = LocalShellBackend(root_dir=_cache, virtual_mode=True)
     _composite = CompositeBackend(
         default=_sandbox,

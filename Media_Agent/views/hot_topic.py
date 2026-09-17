@@ -15,11 +15,13 @@
     | 项 | 课案原文 | 本实现 | 原因 |
     |---|---|---|---|
     | 平台下拉框 | `["抖音", "小红书", "全部"]` 三个 | 六项：全部 / 抖音 / 微博 / 知乎 / 小红书 / B站 | 工作流的 `PLATFORM_SENDS` 本来就支持这 6 个，课案只放开了 3 个，等于把已实现的能力藏起来了 |
+    | 失效平台 | 无（与其它平台无差别，选中后白等一次注定 0 条的抓取） | 下拉项标「（当前不可用）」（只改显示文案，值仍是纯名）；选中即黄条贴出原因且**不调工作流** | 小红书的数据源已失效，工作流侧只收口了「全部」别把死平台算进去那条路；用户显式选中时，页面这一拦才省得下那十几秒 |
     | 报告抬头 | 直接用渲染分支的局部变量 `{platform}` `{field}` | 取 session_state 里的 `ht_platform` / `ht_field` | 课案在 session_state 里存了这两个值却没用于报告：用户改一下下拉框（不点按钮）就会「报告抬头写新平台、表格里是旧数据」 |
     | 操作历史 | `_add_history(...)` 放在渲染分支末尾 | 移到「获取热点选题」按钮分支里 | 同定位页：渲染分支每次 rerun 都会重放，点一下下载就多一条历史 |
     | 按钮/表格宽度 | `use_container_width=True` | `width="stretch"` | Streamlit 1.61 已弃用 `use_container_width`，`st.dataframe` 上会直接弹弃用警告 |
     | 无用 import | `import json`（页面里没用到） | 去掉 | 只留真正用到的 `pandas` |
     | 热度列 | 表头直接写「热度」 | 「热度(估算)」（表格与下载报告两处同改） | NewsNow 不返回真实热度，`_estimate_heat()` 是按排名估的；不标注会被当成真实热度写进分析结论 |
+    | 失败提示 | 无（只判 `raw_topics` 空不空） | 两段结论各自认 `_FAIL_PREFIXES` 前缀 → 红条 + 原文 | 否则「图级崩了」与「一条没抓到」在页面上是同一条黄条，而两者的排查方向完全不同 |
     | 绝对路径 | 无 | 无 | —— |
 
 踩过的坑
@@ -54,8 +56,86 @@ if _PROJECT_ROOT not in sys.path:
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-# 与工作流 PLATFORM_SENDS 对齐；"全部" 走 5 路并行抓取
+# 有平台名、但当前拿不到数据的平台（中文名 → 中文原因），与工作流共用同一张表。
+# 故意不写成 try/except ImportError 兜底：这是同一个仓库内部的契约，真断了就该当场红，
+# 包起来只会把「平台被静默当成能抓」的问题藏到运行时
+from tools.trend_radar_client import UNAVAILABLE_PLATFORMS  # noqa: E402
+
+# 与工作流 PLATFORM_SENDS 对齐；"全部" 走 5 路并行抓取。
+# ⚠️ 这里必须是**纯平台名**：不可用平台只靠 `_platform_label()` 改显示文案，
+#    选项值（也就是传给工作流的值）不能带任何标记，否则 `NAME_TO_IDS` 查不到
 PLATFORM_OPTIONS = ["全部", "抖音", "微博", "知乎", "小红书", "B站"]
+
+
+def _platform_label(name: str) -> str:
+    """下拉里显示的文案：不可用平台带个短标记，**选项值本身仍是纯平台名**。
+
+    标记只写「当前不可用」四个字：完整原因留给选中后的 ``st.warning``，
+    一整句中文塞进下拉项既撑宽度也读不清。
+    """
+    return f"{name}（当前不可用）" if name in UNAVAILABLE_PLATFORMS else name
+
+
+def _platform_block_reason(name: str) -> str:
+    """选中的平台不可用时返回中文原因，可用时返回空串（页面据此「选中即拦」）。
+
+    为什么页面也要拦一道：工作流那边收口的是「选『全部』时别把死平台算进并行分支」，
+    而用户**显式选中**死平台时照样会走一遍抓取 —— 结果注定 0 条，白等十几秒。
+    """
+    return UNAVAILABLE_PLATFORMS.get(name, "")
+
+# 工作流用**回填失败串**表达失败（不抛异常），页面必须认得出这些前缀，
+# 否则一段「模型未配置」的文本会被当成 AI 的正常结论渲染成黑字。
+# 前缀逐条对着 workflows/hot_topic.py 与 workflows/base.py 的 return 抄的：
+_FAIL_PREFIXES = (
+    "[LLM调用失败",        # workflows/base.py 的 llm_call 兜底
+    "[LLM未配置",          # 同上：根 .env 里没配 API_KEY（`[LLM未配置]`，后面没有冒号）
+    "[热点筛选失败",        # workflows/hot_topic.py 节点② 的 except
+    "[选题建议生成失败",    # workflows/hot_topic.py 节点③ 的 except
+    "[热点工作流失败",      # workflows/hot_topic.py 图级 except（回填进 filtered）
+)
+
+
+def _first_fail_prefix(text: str) -> str:
+    """``text`` 是不是工作流回填的失败串；是就返回命中的前缀，否则返回空串。
+
+    用 ``startswith`` 而不是子串匹配：正文里恰好引用到「[LLM调用失败…」这类字样时
+    不该误报（同 ``views/positioning.py``）。
+    """
+    value = text or ""
+    for prefix in _FAIL_PREFIXES:
+        if value.startswith(prefix):
+            return prefix
+    return ""
+
+
+def _topic_state(raw_topics: list, filtered: str, suggestions: str) -> str:
+    """本轮结果是「失败 / 没抓到 / 正常」三态里的哪一态。
+
+    必须分三态的理由：图级失败时 ``raw_topics`` 同样是**空列表**，只按空列表判断
+    就会把「工作流崩了」说成「今天没热点、可能被限流」—— 两者对用户意味着完全
+    不同的处置（一个要查日志/.env，一个只要稍后重试）。
+
+    Returns:
+        ``"failed"``：两段结论里任一命中 ``_FAIL_PREFIXES``；
+        ``"empty"``：没报错，但一条热点都没抓到；
+        ``"ok"``：有原始数据、结论也不是失败串。
+    """
+    if _first_fail_prefix(filtered) or _first_fail_prefix(suggestions):
+        return "failed"
+    if not raw_topics:
+        return "empty"
+    return "ok"
+
+
+def _render_conclusion(title: str, text: str) -> None:
+    """渲染一段 AI 结论；命中失败前缀时走红条 + 原文，不当正常结论展示。"""
+    st.markdown(title)
+    if _first_fail_prefix(text):
+        # 红条里贴**原文**：失败串本身就是工作流写的中文原因，用户看一眼就知道断在哪
+        st.error(f"这一段没有跑成功，工作流返回：\n\n{text}")
+    else:
+        st.markdown(text or "（无）")
 
 
 def _add_history(action: str, summary: str) -> None:
@@ -132,7 +212,9 @@ def show_hot_topic() -> None:
     """热点监控页面（无参，供 main.py 路由调用）。
 
     页面上的控件
-        · ``st.selectbox``「选择平台」→ 六项 ``PLATFORM_OPTIONS``（「全部」= 5 路并行抓取）
+        · ``st.selectbox``「选择平台」→ 六项 ``PLATFORM_OPTIONS``（「全部」= 5 路并行抓取）；
+          不可用平台由 ``format_func=_platform_label`` 标成「（当前不可用）」，选中后
+          被 ``_platform_block_reason()`` 拦下（黄条 + 原因，不调工作流）
         · ``st.text_input``「你的赛道/领域」→ 唯一的必填项
         · ``st.button``「🔍 获取热点选题」→ 调 ``workflows.hot_topic.run_hot_topic()``
         · 折叠面板「📡 采集到的原始数据」里的 ``st.dataframe``（只读）
@@ -147,8 +229,13 @@ def show_hot_topic() -> None:
 
     失败时页面显示什么
         · 赛道为空 → 黄条「请输入你的赛道」，直接 return，不调工作流；
+        · 选中的平台已失效（``UNAVAILABLE_PLATFORMS`` 里有）→ 黄条把原因原样贴出，
+          并点明「不是网络问题、也不是今天没热搜」，同样直接 return，不调工作流；
         · 一条热点都没抓到 → 工作流回填空列表而不是抛异常，页面出黄条说明
           「可能被限流或被墙」，并告知 AI 筛选与选题建议已跳过；
+        · 工作流 / LLM 失败 → `filtered` / `suggestions` 以 `_FAIL_PREFIXES` 开头时
+          各自出红条并贴出原文；图级失败（`[热点工作流失败: …]`）时 `raw_topics`
+          同样是空的，页面给红条说明链路断了，不会误报成「没抓到」；
         · 还没跑过 → 蓝条引导「选择平台、填写赛道后点击…」。
     """
     st.title("🔥 热点监控智能体")
@@ -156,7 +243,8 @@ def show_hot_topic() -> None:
 
     col1, col2 = st.columns(2)
     with col1:
-        platform = st.selectbox("选择平台", PLATFORM_OPTIONS)
+        # format_func 只改**显示文案**：选中不可用平台时返回值仍是纯名「小红书」
+        platform = st.selectbox("选择平台", PLATFORM_OPTIONS, format_func=_platform_label)
     with col2:
         field = st.text_input(
             "你的赛道/领域", placeholder="科技测评 / 职场成长 / 美妆护肤..."
@@ -167,6 +255,17 @@ def show_hot_topic() -> None:
         # 平台有默认值、赛道没有：空赛道时 LLM 没有筛选判据，所以这是唯一的必填项
         if not field:
             st.warning("请输入你的赛道")
+            return
+
+        # 选中已知失效的平台：直接拦住，连那十几秒都别让用户等
+        block_reason = _platform_block_reason(platform)
+        if block_reason:
+            st.warning(
+                f"「{platform}」当前不可用，本轮不发起抓取。\n\n"
+                f"原因：{block_reason}\n\n"
+                "这不是你的网络问题，也不是今天没有热搜 —— 请换一个平台；"
+                "选「全部」时该平台已被自动跳过，不影响其它平台。"
+            )
             return
 
         # 两段耗时分开写（抓取 10~30 秒 / AI 30~90 秒）：用户觉得慢了，
@@ -197,15 +296,13 @@ def show_hot_topic() -> None:
     saved_platform = st.session_state.get("ht_platform", platform)
     saved_field = st.session_state.get("ht_field", field)
     raw_topics = result.get("raw_topics", []) or []
+    filtered = result.get("filtered", "")
+    suggestions = result.get("suggestions", "")
+    # 先算三态再渲染：`raw_topics` 空既可能是「没抓到」也可能是「图级崩了」，
+    # 只看空列表会把后者写成「可能被限流」（见 `_topic_state`）
+    state = _topic_state(raw_topics, filtered, suggestions)
 
-    if not raw_topics:
-        # 一条都没抓到时工作流返回的是**空列表**而不是异常，所以必须在这里显式提示；
-        # 否则页面只剩两段「（无）」，看着像功能没跑而不是数据没来
-        st.warning(
-            "这次一条热点都没抓到（可能是热榜接口限流或被墙）。"
-            "AI 筛选与选题建议已自动跳过，可稍后重试。"
-        )
-    else:
+    if raw_topics:
         st.success(f"✅ 抓到 {len(raw_topics)} 条热点")
         # 默认展开：原始数据一定要露出来 —— AI 筛选是个黑盒，
         # 摊开才能一眼分清「没抓到数据」和「LLM 筛得不好」
@@ -221,14 +318,23 @@ def show_hot_topic() -> None:
                 for t in raw_topics
             ]
             st.dataframe(pd.DataFrame(rows), width="stretch")
+    elif state == "failed":
+        # 图级失败同样是空列表，但原因不是「限流」而是「链路断了」：
+        # 具体原文在下面对应那段的红条里，这里只负责别把它误报成没抓到
+        st.error("本轮热点分析没有跑成功：原始数据为空，失败原因见下方的红条。")
+    else:
+        # 一条都没抓到时工作流返回的是**空列表**而不是异常，所以必须在这里显式提示；
+        # 否则页面只剩两段「（无）」，看着像功能没跑而不是数据没来
+        st.warning(
+            "这次一条热点都没抓到（可能是热榜接口限流或被墙）。"
+            "AI 筛选与选题建议已自动跳过，可稍后重试。"
+        )
 
     st.caption(f"平台：{saved_platform}　赛道：{saved_field}")
 
-    st.markdown("### 📋 赛道相关热点筛选")
-    st.markdown(result.get("filtered", "") or "（无）")
-
-    st.markdown("### 💡 选题创作建议")
-    st.markdown(result.get("suggestions", "") or "（无）")
+    # 两段结论各自判失败：筛选中了、选题没中时也各自显示（部分失败比整页红条更有信息量）
+    _render_conclusion("### 📋 赛道相关热点筛选", filtered)
+    _render_conclusion("### 💡 选题创作建议", suggestions)
 
     # ========== 下载完整报告 ==========
     from datetime import datetime

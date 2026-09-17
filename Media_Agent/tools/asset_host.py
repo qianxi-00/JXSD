@@ -344,11 +344,13 @@ if __name__ == "__main__":
     print("  unpublish 防护         OK  （路径穿越 / 隐藏文件 / 子目录 / shell 元字符 全拒）")
 
     # 4) 文件名白名单本身
-    #    good 里那个 `"素材-1.wav" if False else "abc-1.wav"` 是**有意写的**：
-    #    中文名会被 _SAFE_NAME 拒掉（正则只允许 ASCII），所以不能把「素材-1.wav」
-    #    当正例，这里用条件表达式把它留在原地当反面记录（真放进来断言必红）。
-    for good in ("a.mp4", "1d1801f753ccd9fa.mp4", "素材-1.wav" if False else "abc-1.wav"):
+    #    正例只列真正能过的：白名单是 ASCII 正则，中文名必被拒，不能当正例。
+    for good in ("a.mp4", "1d1801f753ccd9fa.mp4", "abc-1.wav"):
         assert _SAFE_NAME.match(good), good
+    # 反例单独列（早先这里写成 `"素材-1.wav" if False else "abc-1.wav"`，读起来像手误）：
+    # 中文名必须被拒 —— 断言的是「它匹配不上」，所以白名单一旦放宽到 Unicode 这里会红。
+    rejected_by_design = "素材-1.wav"
+    assert not _SAFE_NAME.match(rejected_by_design), rejected_by_design
     for bad in ("..", ".", ".hidden", "a/b", "a b", "a;b", "a'b", "a$b", "", "-x"):
         assert not _SAFE_NAME.match(bad), f"不该通过: {bad!r}"
     print("  _SAFE_NAME 白名单      OK")

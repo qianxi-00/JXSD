@@ -44,6 +44,23 @@ Cookie 的唯一真源是根 ``.env`` 的 ``MEDIA_DOUYIN_COOKIE``，
 导入应用字符串、再建 Server 绑端口（``uvicorn/main.py`` 的 ``run()``），
 所以在导入这一步就倒了，宿主机上不会留下监听的端口。
 本文件因此也不在 ``verify_all.py`` 的模块自检清单里。
+
+**它只能在容器里跑**：``app.main:app`` 与 ``/app/crawlers/douyin/web/config.yaml``
+都是镜像内部的布局，宿主机上没有对应物，所以本机**不存在**可以跑起来的入口。
+
+那「想在本机验证它」该验证什么？——**验证它拉起来的那个服务，而不是它本身**。
+它只做两件事：把 Cookie 写进容器内的爬虫配置、再以 ``reload=False`` 拉起 uvicorn；
+两件事都能在容器起来之后从外面观察（第 1、3 两条在 ``VERIFY_REPORT.md`` 第 8 节
+第 4 条里有实测记录；第 2 条的日志文本就取自本文件 ``inject_cookie()`` 里那行 ``print``）：
+
+1. 服务有没有真起来 —— ``GET http://127.0.0.1:8080/docs`` 返回 **200**；
+2. Cookie 有没有注入成功 —— ``docker logs`` 里出现
+   ``[启动器] ✅ 已注入 Cookie（N 字符）→ /app/crawlers/douyin/web/config.yaml``
+   （没注入时会走上面那个 ⚠️ 分支，日志里同样看得见）；
+3. 注入有没有真生效 —— ``/api/douyin/web/handler_user_profile`` 能返回 200 带真实用户数据，
+   而不是因 Cookie 被拒。
+
+复现命令与容器名见 ``deploy/douyin-api.compose.yml`` 与 ``README.md``「数据复盘」一节。
 """
 import os
 import re
@@ -106,6 +123,9 @@ def inject_cookie() -> None:
 
 
 if __name__ == "__main__":
+    # ⚠️ 这里**不是自检**，别照着别的模块的写法当成自检来跑：
+    #    在容器里跑它 = 常驻前台服务；在宿主机跑它 = ModuleNotFoundError（见文件头）。
+    #    想验证它，请按文件头那三条去查容器里的服务，而不是跑这个文件。
     # 执行顺序不能换：**先注入 Cookie，再起 uvicorn**。
     # 反过来的话服务已经开始接请求（爬虫模块在启动时读配置），注入就晚了。
     inject_cookie()

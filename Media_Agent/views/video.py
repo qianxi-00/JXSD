@@ -22,7 +22,7 @@
     |---|---|
     | 模特管理目录：HeyGem 的 Docker 挂载目录（``c:/duix_avatar_data/face2face``） | ``MEDIA_AVATAR_INPUT_DIR``（项目内 ``.cache/avatars``），不再依赖 Docker |
     | 生成方式：提交 HeyGem，拿 task_code 后点刷新 | 提交 PixVerse 对口型，同样拿 task_code 后点刷新（交互一致） |
-    | 音色：只有「克隆声音」一条路 | 增加「PixVerse 内置音色」下拉 —— 克隆不可用时也能一步出片 |
+    | 音色：只有「克隆声音」一条路 | 增加「PixVerse 内置音色」下拉，且**常驻**显示 —— 不勾克隆时它是主音色（一步出片），勾了则是克隆与 edge-tts 都失败后的兜底音色 |
     | 选中模特的记忆文件 ``.cache/heygem_state.json`` | ``.cache/avatar_state.json`` |
     | 模式名 ``mode="heygem"`` | 改为 ``mode="avatar"``（引擎换了，沿用旧名会误导） |
     | 上传框收「照片或视频」 | **只收视频** —— PixVerse 对口型要视频，照片只能出静态画面（页面文案原本就这么写了） |
@@ -158,7 +158,7 @@ def _list_avatars() -> list:
     这些是流程自己生成的，不该出现在选择列表里。
 
     Returns:
-        ``[{"path","name","type","size_mb"}, ...]``，按文件修改时间**倒序** ——
+        ``[{"path","name","size_mb"}, ...]``，按文件修改时间**倒序** ——
         刚上传的排最前，不用滚到底去找。目录不存在或读不了时返回 ``[]``。
     """
     # 目录取自 config（项目内绝对路径 ``.cache/avatars``），不随启动目录漂移
@@ -196,12 +196,9 @@ def _list_avatars() -> list:
         if name in seen:
             continue
         seen.add(name)
-        # `type` 是课案的遗留字段：上面已按 VIDEO_EXTS 过滤，所以它恒为 "video"
-        # （页面里也已不再读它，保留键只为与课案的结构对齐）
         avatars.append({
             "path": str(full),
             "name": full.name,
-            "type": "video" if ext in VIDEO_EXTS else "image",
             # 换算成 MB 给缩略图下面那行说明用；1024 进制，与文件管理器的口径一致
             "size_mb": full.stat().st_size / 1024 / 1024,
         })
@@ -463,21 +460,29 @@ def show_video() -> None:
         st.markdown("---")
         st.markdown("#### 🔊 配音方式")
         # 默认勾选克隆音色：课案的主线就是「用你自己的声音」；
-        # 取消勾选才暴露 PixVerse 内置音色这条更省事、但音色不属于你的路
+        # 取消勾选就走 PixVerse 内置音色这条更省事、但音色不属于你的路
         use_cloned_voice = st.checkbox(
             "优先使用克隆音色（CosyVoice 声音复刻）", value=True,
-            help="从模特视频里克隆声音来配台词。失败会自动降级为 edge-tts 通用音色。",
+            help="从模特视频里克隆声音来配台词。失败会自动降级为 edge-tts 通用音色；"
+                 "再失败才退回下面选的那个 PixVerse 内置音色。",
         )
-        if not use_cloned_voice:
-            # 推迟到这里才 import：只有真的要选内置音色时才加载这个客户端模块；
-            # 选项也直接来自它的 PIXVERSE_SPEAKERS，不在页面里手写一份副本
-            from tools.avatar_client import PIXVERSE_SPEAKERS
 
-            # 显示成「id - 中文名」方便挑，回传工作流的只取 id；
-            # 分隔符必须与下面 split 里的 " - " 保持一致
-            labels = [f"{k} - {v}" for k, v in PIXVERSE_SPEAKERS.items()]
-            pick = st.selectbox("PixVerse 内置音色", labels, index=0)
-            speaker_id = pick.split(" - ")[0]
+        # 音色下拉**常驻**，不再只在取消勾选时才渲染：`workflows/video.py` 的降级链是
+        # 「克隆 → edge-tts → PixVerse 内置 TTS」，勾着克隆时 `speaker_id` 照样会被用到
+        # （前两级双双失败的那一刻）。早先只在未勾选时渲染，勾选状态下 `speaker_id` 恒为
+        # "auto" —— 用户以为自己的声音在跑，实际拿到的是平台**随机分配**的嗓音，且没得选。
+        # 推迟到这里才 import：提词器模式整段不进这个分支，用不上这个客户端模块；
+        # 选项也直接来自它的 PIXVERSE_SPEAKERS，不在页面里手写一份副本
+        from tools.avatar_client import PIXVERSE_SPEAKERS
+
+        # 显示成「id - 中文名」方便挑，回传工作流的只取 id；
+        # 分隔符必须与下面 split 里的 " - " 保持一致。默认仍是第 1 项 `auto - 随机`
+        labels = [f"{k} - {v}" for k, v in PIXVERSE_SPEAKERS.items()]
+        pick = st.selectbox("PixVerse 内置音色", labels, index=0)
+        speaker_id = pick.split(" - ")[0]
+        if use_cloned_voice:
+            st.caption("上面这个只在克隆与 edge-tts 都失败时兜底；正常情况下用的是你自己的声音。")
+        else:
             st.caption("内置音色由 PixVerse 直接合成语音，一步出片，但无法使用你自己的声音。")
 
     # ---------------- 开始生成 ----------------

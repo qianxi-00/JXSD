@@ -13,10 +13,11 @@
     | 输出 1 | `OUT`：可读全文（标题转 `#`、代码转围栏、表格转竖线分隔的行） |
     | 输出 2 | `OUTC`：只留代码块，供 grep 配置项 / 环境变量 / API 形状 |
 
-⚠️ **本脚本现在直接跑不起来**：两个输出路径都在仓库根的 ``_html_parse/`` 下，
-而该目录**当前不存在**（产物已被移进 ``docs/``），
-两次 ``open(OUT, "w")`` 没有 ``mkdir`` 兜底 ⇒ 会以 ``FileNotFoundError`` 结束。
-要重跑就先建目录，或把 OUT / OUTC 指到你要的位置（`SRC` 本机目前还在）。
+产物目录 ``_html_parse/`` **在跑之前会把这一级建出来**
+（写文件前 ``os.makedirs(..., exist_ok=True)``）—— 它是仓库根下的运行时产物、
+不入 Git，删过之后重跑也不会再以 ``FileNotFoundError`` 结束。
+⚠️ 真正会挡住重跑的是 `SRC`：那是本机 DSH 附件目录里的固定绝对路径，
+附件被清理或换机器后必须先改成你手头那份 HTML 的实际路径。
 
 已保留的原始说明（英文 docstring 原文）
     Extract readable text + code from the Typora-exported HTML courseware (v2).
@@ -36,6 +37,7 @@
     · **导入即执行**：本文件是脚本式写法，顶层就跑 `walk()` 并写文件，
       没有 ``if __name__ == "__main__"`` 保护，也没有自检 —— 别 import 它。
 """
+import os
 import re
 from lxml import html as LH
 
@@ -44,8 +46,8 @@ from lxml import html as LH
 #    重新跑之前先把 SRC 改成你手头那份 HTML 的实际路径。
 SRC = r"F:\ProGramApp\DSH\attachments\v1\files\e3\e30e09c2e27346090d8d2c3fdfaaea807072e0f2f53db596bb278907e067bedd\自媒体Agent.html"
 # 产物落在仓库根的 _html_parse/ 下（不是 docs/；docs/ 里那两份是改过名的副本）。
-# ⚠️ **该目录当前不存在**，而这两次 open() 没有 mkdir 兜底 —— 直接跑会
-#    FileNotFoundError。重跑前先建目录，或把这两个常量指到别处。
+# 该目录是运行时产物、不在 Git 里，所以写文件前先把它建出来（见下面的 makedirs）——
+# 否则首次跑或删过之后跑会直接 FileNotFoundError。想换个落点就改这两个常量。
 OUT = r"F:\ProGram\Python_Base\_html_parse\courseware.txt"
 OUTC = r"F:\ProGram\Python_Base\_html_parse\courseware_code_only.txt"
 
@@ -223,6 +225,10 @@ walk(root)
 # 压掉 3 个以上连续换行：上面每条规则都在自己前后补空行，
 # 叠起来会产出大片空行，让产物行数与课案行号对不上
 res = re.sub(r"\n{3,}", "\n\n", "\n".join(lines))
+# 产物目录不在 Git 里，可能压根不存在（产物早先被移进了 docs/）——
+# 先把它建出来；OUT 与 OUTC 同目录，建一次就够，下面两次 open(..., "w") 才不会
+# 以 FileNotFoundError 收场（这正是「课案更新后可重跑」这句话的前提）。
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as f:
     f.write(res)
 

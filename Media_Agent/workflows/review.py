@@ -49,7 +49,9 @@
     · 失败路径：给 ``run_review_from_json`` 喂 ``""`` / ``"   "`` / ``"不是 JSON"``
       / ``"[]"`` / ``"{}"`` 五种垃圾输入，每次都要求「6 字段齐全 + ``error_msg`` 非空
       + 诊断字段为空串」（不能被当成正常结果）；
-    · 真调模型的那条链路放在 ``--llm`` 分支里，由人显式触发。
+    · 真调模型的那条链路放在 ``--llm`` 分支里，由人显式触发；
+      该分支用 ``_LLM_FAIL_PREFIXES`` **逐个**校验三个产出，命中就以非 0 退出码收场 ——
+      只判非空会把「没配 key / 额度耗尽」当成通过（失败提示文本同样是真值）。
 
 踩过的坑
     · 直接 ``python workflows/review.py`` 时 ``sys.path[0]`` 是 ``workflows/`` 目录，
@@ -92,6 +94,38 @@ if hasattr(sys.stderr, "reconfigure"):
 
 # 没数据时各节点的占位文案（课案原文如此，前端据此判断"没跑出东西"）
 NO_DATA = "暂无数据"
+
+# `llm_call` 的失败串前缀 —— 见 `workflows/__init__.py`：它**绝不抛异常**，
+# 失败时返回 `[LLM调用失败: …]` / `[LLM未配置] …` 这两种**提示文本**。
+# 这份元组与 `workflows/replicate.py` 的 `_LLM_FAIL_PREFIXES` 口径一致、**刻意各留一份**：
+# 它只是个 2 元组，重复的成本远低于「为一个常量去 import 另一个工作流模块」——
+# 那会把「读懂本文件要哪些判据」变成「顺着 import 去别处找定义」。
+# 真要收口，也该落在 `workflows/__init__.py`（`llm_call` 的家），而不是某个具体工作流里。
+_LLM_FAIL_PREFIXES = ("[LLM调用失败", "[LLM未配置")
+
+
+def _llm_fail_reason(text: str) -> str:
+    """判断一段 LLM 产出能不能用；不能用时给出中文原因，能用返回空串。
+
+    两种坏形态都要抓，**漏一种就是假绿**：
+
+    * 空 / 纯空白 —— 模型没吐东西（原来那个 ``and`` 断言覆盖的就是这一种）；
+    * 以 ``_LLM_FAIL_PREFIXES`` 开头 —— ``llm_call`` 失败时返回的提示文本。
+      它是**真值**，所以「只判非空」的断言会放它过去；本文件的自检 ``--llm``
+      分支就是这么假绿过的（没配 key 也报「通过」）。
+
+    Args:
+        text: 待判定的产出。允许空串，也容忍 ``None``（调用点多取自 state）。
+
+    Returns:
+        空串表示可用；否则是一句能直接打进日志的中文说明。
+    """
+    value = (text or "").strip()
+    if not value:
+        return "为空"
+    if value.startswith(_LLM_FAIL_PREFIXES):
+        return "是 LLM 失败提示文本，不是模型正文"
+    return ""
 
 
 class ReviewState(TypedDict):
@@ -575,12 +609,27 @@ if __name__ == "__main__":
         print("  --llm：真调模型跑完整链路（漏斗诊断 → 内容评估 → 优化策略）...")
         result = run_review_from_json(SAMPLE_MANUAL_JSON)
         assert not result["error_msg"], result["error_msg"]
-        # ⚠️ 下面两条只断言"非空"，**不认 `[LLM调用失败` 前缀**：
-        # `llm_call` 失败时返回的是失败提示文本，同样是真值 —— 也就是说
-        # 「API Key 没配 / 额度耗尽」这种失败会**通过**这两个断言，
-        # 只在打印里留下一串 `[LLM调用失败: ...]`。跑 --llm 时必须人眼看输出。
-        assert result["funnel_diagnosis"] and result["content_assessment"]
-        assert result["suggestions"]
+        # 三个产出**逐个**过可用性判据，并把原文打出来：
+        # 一眼能分清是「没配密钥」（`[LLM未配置]`）还是「调用报错/额度耗尽」（`[LLM调用失败: …]`）。
+        # ⚠️ 旧版本这里只判"非空"，**不认失败前缀** —— 而 `llm_call` 失败返回的
+        # 提示文本同样是真值，于是没配 key 也会打印「LLM 链路 OK」（假绿，本轮修掉）。
+        _outputs = (
+            ("漏斗诊断", "funnel_diagnosis"),
+            ("内容评估", "content_assessment"),
+            ("优化策略", "suggestions"),
+        )
+        _bad = [
+            (label, key, _llm_fail_reason(result[key]), result[key])
+            for label, key in _outputs
+            if _llm_fail_reason(result[key])
+        ]
+        for _label, _key, _why, _text in _bad:
+            print(f"    ✗ {_label}（{_key}）{_why}；原文：{_text!r}")
+        # 这里必须是 `assert`（退出码非 0）而不是只 `print`：
+        # `verify_all.py` 这类**子进程**场景只看退出码，只打印的话失败照样是绿。
+        assert not _bad, "--llm 链路没拿到可用正文：" + "；".join(
+            f"{label}={why}: {text[:200]!r}" for label, _, why, text in _bad
+        )
         print(f"    漏斗诊断: {result['funnel_diagnosis'][:120]}...")
         print(f"    优化策略: {result['suggestions'][:120]}...")
         print("  LLM 链路                  OK")

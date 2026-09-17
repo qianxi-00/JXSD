@@ -184,17 +184,22 @@ def _fingerprint(source_audio: str) -> str:
     """源音频指纹：绝对路径 + 大小 + 修改时间。文件变了就重新克隆。
 
     Args:
-        source_audio: 源音频/视频路径（可以不存在，但那样 ``stat()`` 会抛，见下）。
+        source_audio: 源音频/视频路径。**可以不存在** —— 不存在时返回空串，不抛异常。
 
     Returns:
-        str：形如 ``F:\\...\\模特.mp4|10485760|1758000000`` 的指纹串，用作缓存键。
+        str：形如 ``F:\\...\\模特.mp4|10485760|1758000000`` 的指纹串，用作缓存键；
+        **返回空串 = 没法指纹**（路径不是文件 / 已失效），调用方按「不能复用缓存」处理。
 
     为什么不用「内容 md5」：模特视频动辄几十上百 MB，算内容哈希要整读一遍；
     而这套指纹只需要 ``stat()`` 一次 —— 满足「素材换了就重克隆」已经足够。
+
+    为什么存在性判断放在**本函数里**：早先这里不判、靠两个调用方各自先 ``is_file()``
+    兜着，第三个调用方（或调用方判过之后文件被删/改名）就会踩 ``FileNotFoundError``。
+    返回空串是最省事的收口：不动调用契约，也不新增异常类型去牵动调用方。
     """
     p = Path(source_audio).resolve()
-    # 不再做存在性检查：调用方 `clone_voice()` 已经先判过 is_file()，
-    # 这里让 FileNotFoundError 自然抛给调用方（它自己会兜），少一层重复判断。
+    if not p.is_file():
+        return ""
     st = p.stat()
     # mtime 取整数秒：指纹只用来判「素材变没变」，没必要精确到亚秒 ——
     # 同一份素材被复制/重新落盘时的亚秒误差不该触发重复建音色（配额很贵）。
@@ -307,7 +312,9 @@ def clone_voice(source_media: str, prefix: str = "mediaclone", use_cache: bool =
     # ---- 查缓存 ----
     key = _fingerprint(source_media)
     cache = _load_cache() if use_cache else {}
-    cached = cache.get(key)
+    # 空指纹 = 这一刻拿不到这个文件（上面刚判过存在，这里只可能是极小概率的竞态）：
+    # 不能拿空串当缓存键查（也不该写进去），按「没缓存」处理，照常往下建音色。
+    cached = cache.get(key) if key else None
     if cached and cached.get("voice_id"):
         # 缓存命中是**正常路径**，不是优化：CosyVoice 建音色有配额，
         # 每次重跑页面都新建一次会把配额烧光（见模块 docstring 第 2 条）。
@@ -385,7 +392,9 @@ def clone_voice(source_media: str, prefix: str = "mediaclone", use_cache: bool =
     result.update(success=True, voice_id=str(voice_id), message="音色创建成功")
     print(f"[声音克隆] OK voice_id={voice_id}")
 
-    if use_cache:
+    # 空指纹不写缓存：写进去就是一条谁都对不上的记录（键是 ""），下次也命中不了，
+    # 只会把缓存文件搞脏。
+    if use_cache and key:
         from datetime import datetime
 
         # 记下 source / target_model / created_at：排查「这个 voice_id 是哪来的、
@@ -602,7 +611,8 @@ def forget_voice(source_media: str) -> bool:
         return False
     cache = _load_cache()
     key = _fingerprint(source_media)
-    if key not in cache:
+    # 空指纹（文件不可用）不可能在缓存里 —— 显式判掉，别拿空串去查表
+    if not key or key not in cache:
         return False
     # 先 pop 再整体回写：缓存文件是整份覆盖的（见 _save_cache），
     # 所以「改一份 dict 再写回」就是删除语义。
@@ -628,6 +638,9 @@ if __name__ == "__main__":
         assert fp1 == fp2, "同一文件指纹应稳定"
         fake.write_bytes(b"y" * 4096)          # 改内容（大小变了）
         assert _fingerprint(str(fake)) != fp1, "文件变化后指纹应改变"
+        # 路径不是文件 → 返回空串（**不是**抛 FileNotFoundError）：这是为「第三个
+        # 调用方」加的兜底，钉住它免得以后又被改回「让异常自然抛给调用方」。
+        assert _fingerprint(str(Path(td) / "不存在.wav")) == "", "不存在的路径应返回空串"
         print("  _fingerprint              OK")
 
     # 2) 失败路径必须返回结构化 dict，不抛异常

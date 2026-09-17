@@ -305,8 +305,8 @@ npm install --cache .npm-cache hyperframes
    ⚠️ 这三个能力**只在华北2（北京）地域提供**，要用该地域的 API Key。
 2. **开通模型**：百炼控制台 → 模型市场 → 分别开通 **Qwen-Audio-3.0-ASR-Flash**（Fun-ASR 家族的云托管版）、**CosyVoice**、
    **爱诗 PixVerse**（PixVerse 要搜到卡片点「立即开通」）。
-3. 可选：`MEDIA_IMAGE_API_KEY`（图片生成，不配就用占位图）、
-   `MEDIA_DOUYIN_COOKIE`（抖音数据复盘）。
+3. 可选：`MEDIA_IMAGE_API_KEY` + `MEDIA_IMAGE_MODEL`（图片生成，**两项都配**才走真接口，
+   缺任一项就降级成本地占位图）、`MEDIA_DOUYIN_COOKIE`（抖音数据复盘）。
 
 ### 3. 启动
 
@@ -435,6 +435,25 @@ flowchart TB
 - ⚠️ NewsNow 公共 API **不返回真实热度值**，`_estimate_heat()` 是按排名估算的，
   只用于排序展示，不能当真实数据写进分析结论
 
+**平台清单与「已知失效的平台」怎么处理**（2026-09 实测，图的形状没变、5 个抓取节点都还在）：
+
+- `PLATFORM_IDS` 是 **id 登记表（24 项）**：上游失效的键**照旧留在表里**，
+  为的是能回溯「这个平台曾经接过」；当前有 7 项的上游源已死
+  （HTTP 500，或重试 2 次后静默返回 `[]`，白等 7.6~12.0 秒）。
+- 页面可选项与工作流取数的来源是 `NAME_TO_IDS`，那里**已经摘掉死键**：
+  `"小红书"` 的 id 列表为空，`"全部"` 里也不再有 `xiaohongshu`。
+- 拿不到数据的平台登记在 `UNAVAILABLE_PLATFORMS`（中文名 → 中文原因）。
+  它是 **tools / workflows / views 三层共用的单一真源**（两层各维护一份清单正是当初
+  「选了小红书白等 12 秒」的成因），三处的表现分别是：
+  - **页面**：下拉里显示成「小红书（当前不可用）」（选项值仍是纯平台名，不带标记）；
+    你**显式选中**它时页面会直接拦住并给出原因，**一个请求都不发**，也不再让你白等那十几秒；
+  - **工作流**：选「全部」时，那个平台的抓取节点在调接口**之前**就被守卫拦下
+    （只往日志里写一行原因），其它平台照常并行抓取，图结构不变；
+  - **工具层**：`fetch_platform("")` 的空 id 守卫与 `fetch_for_workflow()` 的空列表短路是
+    下游兜底 —— 即使上游漏传，也不会发出 `?id=&latest` 这种注定 0 条的请求。
+- 具体到「小红书」：上游聚合源 `xiaohongshu` 已失效（HTTP 500，且已不在 NewsNow 的
+  `shared/sources.json` 里）—— **不是你的网络问题，也不是今天没有热搜**。
+
 **数据源**：TrendRadar / NewsNow 聚合 API（公共接口，无需密钥，可自部署 `ourongxing/newsnow`）
 
 ### 📝 3. 内容复刻
@@ -514,8 +533,13 @@ flowchart TD
 - **异步任务交互**：提交拿 `task_id` → 页面点「刷新进度」轮询 → 完成后自动下载到本地。
   在 Streamlit 里**不能阻塞等待**（会把界面卡死）
 - PixVerse 两种驱动：**音频驱动**（用克隆音色）/ **TTS 文本驱动**（用平台内置音色，一步出片）
+- **「PixVerse 内置音色」下拉是常驻的**（不勾/勾「优先使用克隆音色」都会渲染，选项来自
+  `tools/avatar_client.PIXVERSE_SPEAKERS`，默认 `auto - 随机`）。勾着克隆时它不是摆设 ——
+  `speaker_id` 照样会传给工作流，作为「克隆与 edge-tts 双双失败」那一刻的兜底音色；
+  早先只在**取消勾选**时才渲染，勾选状态下 `speaker_id` 恒为 `auto`，用户以为在用自己的
+  声音、实际拿到的是平台随机分配的嗓音，且无从选择。
 - **配音路由**（由页面「优先使用克隆音色」勾选框决定，见 `workflows/video.py` 的 `node_generate_video`）：
-  - **勾选**（默认）→ 克隆音色 → 失败降级 edge-tts 通用音色 → 两者都失败才回退 PixVerse 内置 TTS；
+  - **勾选**（默认）→ 克隆音色 → 失败降级 edge-tts 通用音色 → 两者都失败才回退 PixVerse 内置 TTS（用下拉里选的那个音色）；
   - **不勾** → 跳过克隆与 edge-tts，直接用页面选好的 PixVerse 内置音色（`speaker_id`）一步出片
 
 ### 🎬 5. 视频剪辑
@@ -620,7 +644,12 @@ flowchart LR
 - 四个 LLM 节点串行，每个都用真实数据喂 prompt
 - 漏斗转化率计算（播放→点赞→评论→分享→收藏）
 - **Cookie 获取**：通过 CDP 从 Edge 浏览器直接读（绕开 v20 加密和文件锁），
-  比硬解加密库可靠
+  比硬解加密库可靠。⚠️ 必须连**页级** CDP 目标：`/json/version` 给的是 browser 级地址，
+  而 `Network` 是页级域，在那个目标上调 `Network.getCookies` 会回
+  `-32601 "'Network.getCookies' wasn't found"`、Cookie 恒为空 —— 已登录的用户也会被
+  页面劝去登录（这就是原先那条路的实际表现）。现在改为从 `/json/list` 里挑
+  `type == "page"` 的目标、并把三个抖音域名**一次**传给 `urls`（`domain` 不是 CDP 的合法参数，
+  传了会被静默忽略）。
 - **降级入口**：采集服务不可达时，可以手动粘贴作品数据 JSON 走同一套诊断链路
 
 **⚠️ 课案的爬虫依赖已经失效**：课案用的是本地项目 `erma0/douyin`，
@@ -688,7 +717,7 @@ Media_Agent 特有的：
 | `MEDIA_ASSET_REMOTE_DIR` | `/var/www/media-assets` | 服务器上的静态目录 |
 | `MEDIA_ASSET_BASE_URL` | 空 | 对外基址，形如 `http://1.2.3.4/media-assets` |
 | `MEDIA_VOICE_REF_URL` | 空 | 已托管好的固定参考音频 URL（可选，优先于上面的托管） |
-| `MEDIA_IMAGE_API_KEY` / `_BASE_URL` / `_MODEL` | 空 | 留空则图片生成降级为占位图 |
+| `MEDIA_IMAGE_API_KEY` / `_MODEL` / `_BASE_URL` | 空 | 前**两项都非空**才走真接口，缺任一项降级为本地占位图（判据在 `tools/media_tools.py` 的 `_image_configured()`，首页「运行环境」卡片用的是同一条）；`_BASE_URL` 留空 = 用 OpenAI 官方端点，不参与判定 |
 | `MEDIA_TRENDRADAR_API_URL` | NewsNow 公共 API | 可换自部署实例 |
 | `MEDIA_DOUYIN_API_BASE` | `http://127.0.0.1:8080` | 自托管抖音采集服务 |
 | `MEDIA_DOUYIN_COOKIE` | 空 | 采集本人主页数据需要 |
