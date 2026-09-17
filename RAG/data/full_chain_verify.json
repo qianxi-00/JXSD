@@ -167,7 +167,48 @@
       }
     },
     {
-      "stage": "评估闭环抽检",
+      "stage": "评估闭环 · Langfuse 全量 36 条实验",
+      "command": "python RAG/script/langfuse_evaluation.py --run-name fullchain-36-20260917 --max-concurrency 2",
+      "pass": true,
+      "run_name": "fullchain-36-20260917",
+      "run_url": "http://localhost:3001/project/finance-rag/datasets/cmu48na1q0009nz07mnlia9th/runs/bf22ce7d68c25f5b",
+      "readings": {
+        "条目数": 36,
+        "耗时": "26 分 15 秒（并发 2）",
+        "Recall@K": 0.755,
+        "Faithfulness": 0.557,
+        "Answer Relevancy": 0.59,
+        "Context Precision": 0.72,
+        "Context Recall": 0.86,
+        "延迟均值 / P95": "23.070s / 46.261s",
+        "检索次数均值": 2.972,
+        "LLM 调用均值": 7.028,
+        "tokens 均值(进/出/合计)": "30113 / 4877.333 / 34990.333",
+        "错误数": 0
+      },
+      "baseline_comparison": {
+        "上一次全量（rerun-lines-final-thinkingoff）": {
+          "Recall@K": 0.731,
+          "Faithfulness": 0.583,
+          "Answer Relevancy": 0.612,
+          "Context Precision": 0.72,
+          "Context Recall": 0.9,
+          "延迟均值 / P95": "24.22s / 48.71s",
+          "检索次数": 3.028
+        },
+        "差异说明": "同口径复跑（评判 deepseek-chat、生成 deepseek-flash）。Ragas 四项里三项略降（Faithfulness -0.026、Answer Relevancy -0.022、Context Recall -0.040）、Context Precision 持平；Recall@K +0.024；延迟降 1.15s、P95 降 2.45s、检索次数降 0.056、错误均 0。这批波动量级与 LLM 采样噪声 + 本次图谱重建后社区划分变化一致，**不作为质量退化结论**；要判退化得固定同一批 evidence 再对比（本轮没有做这个控制实验）"
+      },
+      "independent_verification": {
+        "为什么需要": "控制台数字来自实验脚本自报；要用另一条读取路径核对它没报错也没少写",
+        "UI": "http://localhost:3001 需登录（未索取凭据，未用）",
+        "SDK/API": "Langfuse 服务端 4.37.0 与 SDK 4.15.1 的 runs/scores 列表接口不匹配（404），读取路径不可用 —— 如实记录",
+        "采用的方式": "直接查 Langfuse 自己的 ClickHouse（docker exec langfuse-clickhouse clickhouse-client），按 dataset_run_id 过滤",
+        "结果": "该 run 的 14 条运行级分数全部命中且与脚本自报逐项一致：batch_items=36、batch_mean_Recall@K=0.7546、Faithfulness=0.5572、Answer Relevancy=0.5898、Context Precision=0.72、Context Recall=0.86、latency_s=23.0702、p95=46.261、search_queries=2.9722、llm_calls=7.0278、tokens_in=30113、tokens_out=4877.3333、tokens_total=34990.3333、error=0",
+        "条目级": "Recall@K / latency_s / llm_calls / search_queries / tokens_* 各 36 行、均值与控制台一致；四项 Ragas 指标在 ClickHouse 里只按 run 级落 dataset_run_id（条目级不带），所以那四项以 run 级分数为准"
+      }
+    },
+    {
+      "stage": "评估闭环 · 3 条抽检（分阶段指标 + 评判）",
       "command": "python RAG/script/run_stage_eval.py --eval-set RAG/data/eval_set.jsonl --limit 3 --llm-score",
       "pass": true,
       "readings": {
@@ -235,7 +276,7 @@
   "not_covered": [
     "① OCR 本地复跑（模型在远端 GPU）",
     "图谱全量重建（300 篇 × 1 次 LLM 抽取，本轮按 --limit 3 与基线同口径）",
-    "36 条评估集全量重跑（本轮只抽 3 条；全量基线是 §7.1 里 Langfuse 的两轮记录）",
-    "Chainlit 页面的人工交互（本机不起真 Edge）"
+    "Chainlit 页面的人工交互（本机不起真 Edge）",
+    "固定同一批 evidence 的受控对比（判断 Ragas 三项小降是采样噪声还是真退化需要它）"
   ]
 }
