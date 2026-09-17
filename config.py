@@ -207,6 +207,9 @@ class LLMSettings(BaseSettings):
     temperature: float = 0.2
     max_tokens: int = 4096
     enable_thinking: bool = False
+    # 单次请求超时(秒)。必须显式设置:SDK 默认 600 秒 × 重试 3 次 ≈ 30 分钟,
+    # 网关断连时表现为整个应用卡死(实测卡过 46 分钟),对 Web 应用是不可接受的失败模式。
+    timeout: float = 180.0
 
 
 class EmbeddingSettings(BaseSettings):
@@ -219,6 +222,8 @@ class EmbeddingSettings(BaseSettings):
     model: str = ""
     embedding_size: int = 1024
     batch_size: int = 32
+    # 单次请求超时(秒)。不设会用 SDK 默认值(600 秒 × 重试 3 次)。
+    timeout: float = 60.0
     # 是否把 embedding_size 作为 dimensions 参数下发。
     # 默认 False:不少模型（如 BAAI/bge-m3）不接受该参数，传了直接 400；
     # 需要 MRL 截断的模型（如 Qwen/Qwen3-Embedding-4B，原生 2560 维）才开成 True。
@@ -335,6 +340,14 @@ class MediaAgentSettings(BaseSettings):
     # DeepAgents 编排层用的模型，留空 = 复用 llm_model（照抄课案 get_deepagent_model 思路）。
     # 视频剪辑那一步链路很长，通常用更稳的模型单独跑。
     deepagent_model: str = ""
+    # 模型路由：留空 = 复用根 API_KEY / BASE_URL；填 "deepseek" = 改用根 .env 的
+    # DEEPSEEK_* 三项（deepseek_api_key / deepseek_base_url / deepseek_model）。
+    #
+    # 为什么要有这个开关：根 .env 的 API_KEY / BASE_URL 是 **RAG 与 Agent 课案共用** 的，
+    # 直接改根配置会连带影响别的子项目。所以自媒体链路要换服务商时走这里，
+    # 只在 Media_Agent 内生效。（实测后台模型 grok-4.6 单节点几十秒，
+    # 剪辑那条 20+ 次调用的链路会拖到几十分钟；deepseek-flash 单次 ~1-2 秒。）
+    llm_provider: str = ""
 
     # ---- 语音识别 ASR（替代课案的本地 FunASR）----
     # 百炼 Fun-ASR-Flash / Qwen-Audio-3.0-ASR-Flash，同一接口同时提供
@@ -425,6 +438,14 @@ class MediaAgentSettings(BaseSettings):
     def get_image_output_dir(self) -> str:
         return self._resolve(self.image_output_dir or ".cache/images", MEDIA_AGENT_DIR)
 
+    # ---- 剪辑素材的生成方式 ----
+    # HyperFrames 是课案的默认方案（HTML/CSS/GSAP 渲染动画），但它依赖
+    # puppeteer 下载浏览器，本机实测 `npx hyperframes init/render` 会卡到超时
+    # （详见 VERIFY_REPORT.md 5.9④）。
+    # 关掉后 agent 直接用 moviepy 生成动画素材 —— 这正是 SKILL.md 里写明的降级分支。
+    # 换到浏览器链路正常的机器上，把它设成 true 即可恢复课案原方案。
+    use_hyperframes: bool = False
+
     def get_avatar_input_dir(self) -> str:
         return self._resolve(self.avatar_input_dir or ".cache/avatars", MEDIA_AGENT_DIR)
 
@@ -467,12 +488,25 @@ class Settings:
     # ---------- Media_Agent 的模型名解析 ----------
     # 放这里而不是 MediaAgentSettings 内部：只有聚合类同时看得到
     # 根字段 model_name（扁平）和 media.llm_model（分组）。
+    def _media_uses_deepseek(self) -> bool:
+        return (self.media.llm_provider or "").strip().lower() == "deepseek"
+
+    def media_llm_api_key(self) -> str:
+        """自媒体链路密钥：MEDIA_LLM_PROVIDER=deepseek 时用 DEEPSEEK_API_KEY，否则复用根 API_KEY。"""
+        return self.deepseek_api_key if self._media_uses_deepseek() else self.api_key
+
+    def media_llm_base_url(self) -> str:
+        """自媒体链路接口地址：MEDIA_LLM_PROVIDER=deepseek 时用 DEEPSEEK_BASE_URL，否则复用根 BASE_URL。"""
+        return self.deepseek_base_url if self._media_uses_deepseek() else self.base_url
+
     def media_llm_model(self) -> str:
-        """自媒体链路文本模型：MEDIA_LLM_MODEL 优先，留空则复用根 MODEL_NAME。"""
-        return self.media.llm_model or self.model_name
+        """自媒体链路文本模型：MEDIA_LLM_MODEL 优先，留空则按 provider 取默认模型名。"""
+        if self.media.llm_model:
+            return self.media.llm_model
+        return self.deepseek_model if self._media_uses_deepseek() else self.model_name
 
     def media_deepagent_model(self) -> str:
-        """DeepAgent 用模型：MEDIA_DEEPAGENT_MODEL → MEDIA_LLM_MODEL → 根 MODEL_NAME。"""
+        """DeepAgent 用模型：MEDIA_DEEPAGENT_MODEL → MEDIA_LLM_MODEL → provider 默认模型名。"""
         return self.media.deepagent_model or self.media_llm_model()
 
 
@@ -502,7 +536,8 @@ if __name__ == "__main__":
     print(f"  LangGraph PG_URI: {settings.pg_uri}")
     print(f"  Redis URL: {settings.redis_url}")
     print("  Milvus URI: " + settings.milvus_uri)
-    print(f"  自媒体 Agent 模型: {settings.media_llm_model()} @ {settings.base_url}")
+    print(f"  自媒体 Agent 模型: {settings.media_llm_model()} @ {settings.media_llm_base_url()}")
     print(f"  自媒体 Agent 编排模型: {settings.media_deepagent_model()}")
+    print(f"  自媒体模型路由: {'deepseek（DEEPSEEK_*）' if settings._media_uses_deepseek() else '根配置（API_KEY/BASE_URL）'}")
     print(f"  百炼原生 API: {settings.dashscope_api_endpoint}")
     print(f"  百炼密钥已配置: {bool(settings.dashscope_api_key)}")

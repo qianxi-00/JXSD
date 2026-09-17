@@ -20,7 +20,8 @@
 | 百炼 ASR 真实转写（英文歌 208s / 粤语新闻 158s / **普通话 60.9s**） | **通过**，并修复了 3 个真 bug（见 5.4） |
 | **声音克隆全链路**（自建托管 → `create_voice` → 克隆音色合成） | **通过**（见 5.8④） |
 | **自建公网素材托管**（`tools/asset_host.py` + nginx 只读 location） | **通过**（见 5.8①） |
-| 数字人出片 / DeepAgents 出片 / 抖音真实采集 | **未验证**（见第 8 节） |
+| **DeepAgents 视频剪辑真实出片** | **通过** —— 12 个 moviepy 动画素材 + 百炼 ASR 字幕 + 上下排布合成，产出 `mashup_final.mp4`（1280×960 / 20.0s / 30fps / 2.9MB，已逐帧核对），见 5.10 |
+| 数字人出片 / 抖音真实采集 | **未验证**（见第 8 节） |
 
 > 第二轮验证（5.8）另外修掉 3 个真问题：`MediaAgentSettings` **漏写 `env_prefix`**
 > 导致所有 `MEDIA_*` 配置从未被读取；`asset_host.unpublish()` 的 **shell 注入隐患**；
@@ -46,10 +47,10 @@ Set-Location F:\ProGram\Python_Base\Media_Agent
 |---|---|
 | 操作系统 | Windows（PowerShell 7） |
 | Python | 3.12.12，`F:\ProGram\Python_Base\.venv`（与仓库其它子项目**共用**） |
-| 文本模型 | `grok-4.6` @ `https://qianxi7988.me/v1`（根 `.env` 的 `MODEL_NAME` / `BASE_URL`） |
-| 百炼 | `DASHSCOPE_API_KEY` 已配置，端点 `https://dashscope.aliyuncs.com/api/v1` |
+| 文本模型 | 第一~二轮验证时是 `grok-4.6` @ `https://qianxi7988.me/v1`；**第三轮起根 `.env` 已整体切到 `deepseek-flash` @ `https://api.deepseek.com`**。剪辑链路（5.9）是在**切到 DeepSeek 之后**跑通的。<br>自媒体链路另有 `MEDIA_LLM_PROVIDER=deepseek` 开关，可只让本子项目换服务商而不动根配置（当前留空 = 复用根配置，保持单一真源）。 |
+| 百炼 | `DASHSCOPE_API_KEY` 已配置（**根 `.env` 既有值**，非本次工作新增，详见第 8 节第 6 条），端点 `https://dashscope.aliyuncs.com/api/v1` |
 | ffmpeg / yt-dlp / edge-tts | 均已安装可用 |
-| HyperFrames | **未安装**（剪辑的动画素材会走 moviepy 降级分支） |
+| HyperFrames | CLI **可用**（`npx --yes hyperframes --version` → `0.8.46`），但**渲染链路不可用**：`init`/`render` 实测卡到 300s 超时。默认已由 `MEDIA_MASHUP_USE_HYPERFRAMES=false` 切到 moviepy 分支（见 5.9④） |
 | Docker 服务 | **未启动**（抖音采集走降级入口） |
 | GPU | 不需要（本项目不含本地模型） |
 
@@ -538,6 +539,249 @@ shell 元字符 4 类共 6 个恶意样本，全部拒绝。
 
 ---
 
+### 5.9 ⚠️ 剪辑链路抓出一个「必崩」bug（第三轮验证，已修）
+
+**这是本项目唯一一个「第一次真跑就断」的硬 bug —— 之前只跑了离线自检，所以一直没暴露。**
+
+第一次真跑 `run_mashup()`，agent **一步都没执行**就抛异常：
+
+```
+ValueError: Path:F:\ProGram\Python_Base\Media_Agent\.skills outside root directory:
+            F:\ProGram\Python_Base\Media_Agent\.cache\mashup
+  File "...\deepagents\middleware\skills.py", line 615, in _list_skills_with_errors
+    ls_result = backend.ls(source_path)
+```
+
+**根因**：课案把技能目录的**绝对路径**直接传给 `create_deep_agent(skills=...)`，
+而 deepagents 规定 skills 路径**必须相对 backend 的 `root_dir`**
+（`create_deep_agent` 文档原文：*"skills are loaded from disk relative to the backend's
+`root_dir`"*）。`SkillsMiddleware.before_agent` 拿这个绝对路径去 `backend.ls()`，
+被 `virtual_mode=True` 的越界检查判定为「沙箱外」，直接抛异常，
+而报错点在 deepagents 内部、跟 `mashup.py` 表面无关，很容易误判成版本问题。
+
+**修法**：用 `CompositeBackend` 把真实技能目录挂到虚拟路径 `/skills/`：
+
+```python
+routes = {"/skills/": FilesystemBackend(root_dir=skills_dir, virtual_mode=True)}
+backend = CompositeBackend(default=sandbox, routes=routes)
+create_deep_agent(model=model, skills=list(routes), backend=backend, ...)
+```
+
+文件读写经路由落到真实磁盘，`execute` 仍走沙箱 ——
+`CompositeBackend.execute` 只认 `default` 后端（源码注释原文：*"Unlike file operations,
+execution is not path-routable — it always delegates to the default backend"*），
+而 `LocalShellBackend` 同时继承 `FilesystemBackend` 与 `SandboxBackendProtocol`，
+所以 shell 能力不受影响。
+
+**回归防护（两层，都不需要密钥、可离线跑）**：
+
+1. `workflows/mashup.py` 自检第 6 项：用同一套 `CompositeBackend` 接线
+   （不建 agent、不调 LLM），断言 `ls("/skills/")` 能列出 `video-use`、
+   `download_files(["/skills/video-use/SKILL.md"])` 能读到内容 —— 直接复现原崩溃点。
+2. `verify_all.py` 环境契约层：钉住 `CompositeBackend` 的 `default`/`routes`
+   构造参数与 `ls`/`download_files` 方法存在。
+
+**顺带纠正一条此前的错误结论**：报告早先写「HyperFrames 未安装，会走 moviepy 降级分支」——
+实测 **`npx --yes hyperframes --version` 返回 0.8.45**，npx 会按需拉取，
+所以 HyperFrames 是**可用的**，不需要预先全局安装。
+
+---
+
+#### ② ⚠️ 第二个必崩 bug：`execute` 在 Windows 上会**永久卡死**（已修，含一次被推翻的方案）
+
+修掉①之后 agent 能跑起来了（读技能 → 探源视频 → 转写字幕 → 建 HyperFrames 工程），
+但随后**整体挂死**：CPU 归零、沙箱不再有任何产出。
+
+这是靠 `faulthandler.dump_traceback_later(240, repeat=True)` 定时 dump 全线程栈才定位到的 ——
+**不是 LLM 卡住，是 `execute` 工具的子进程卡死**：
+
+```
+Thread 0x0000b17c (most recent call first):
+  subprocess.py:1628 in _communicate          ← 永久阻塞在这
+  subprocess.py:550  in run
+  deepagents/backends/local_shell.py:304 in execute
+  deepagents/backends/composite.py:841  in execute
+  deepagents/middleware/filesystem.py:2928 in sync_execute
+```
+
+当时那条命令的进程树（实抓）：
+
+```
+python (e2e)
+ └ cmd.exe /c "cd /d ...\mashup && npx --yes hyperframes@0.8.46 render ..."
+    └ node.exe (npx-cli)
+       └ cmd.exe /d /s /c hyperframes render ...
+          └ node.exe (hyperframes bin)
+             └ node.exe (hyperframes dist)     ← CPU 恒为 0，彻底僵住
+```
+
+**根因（Windows 专有，两层）**：
+
+1. `capture_output=True` 把 stdout/stderr 接到**管道**上，而管道句柄会被
+   **整棵子进程树继承**。只要树里存在一个长期存活的进程，`communicate()`
+   就永远等不到 EOF。
+2. `timeout=` **只负责"发现"超时，之后仍要回收管道**：
+   `except TimeoutExpired: process.kill(); process.communicate()`。
+   Windows 上 `kill()` 只终结**直接子进程**，孙进程照旧攥着管道 ——
+   于是超时机制**整体失效**。（`deepagents` 在 Windows 上还把
+   `start_new_session` 设成 `False`，见 `local_shell.py:314`，更没法整组清理。）
+
+**独立探针实测**（用一个 `ping -n 300` 当"不死的孙进程"，可复现）：
+
+| 方式 | 实测耗时 |
+|---|---|
+| `subprocess.run(capture_output=True, timeout=5)` | **59.8s** 才抛 `TimeoutExpired`（= 孙进程自己的寿命） |
+| `LocalShellBackend.execute(timeout=6)` | **29.3s** 才返回（同上） |
+| `execute(timeout=8)` + `taskkill /F /T` 整树杀 | **301.8s**，**该方案无效** |
+
+**❌ 第一个方案（`Popen.kill` 先 `taskkill /F /T`）被实测推翻**，已废弃：
+`taskkill /T` 只能沿**活着的父进程**遍历，而 `cmd /c start /b ...` 这类命令的
+直接子进程**早就退出了**，树根一没就无从下手 —— 孙进程照样活着。
+
+**✅ 最终修法：不用管道，改临时文件**（`mashup.py` 的 `_patched_run`，
+只接管 Windows + `capture_output=True`，其余走标准库原实现）：
+
+- stdout/stderr 指向**临时文件** → 没有管道，就没有 EOF 可等；
+- 用 `Popen.wait(timeout)` 判超时 → Windows 上走 `WaitForSingleObject`，
+  与管道状态无关，超时**必定**按时触发；
+- 超时后仍 `taskkill /F /T` 尽力清理树，再 `wait()` 收尾；
+- 正常退出则从文件读回输出，`CompletedProcess` 语义与标准库一致。
+
+**真实链路上的验证**（同一轮 E2E 内）：
+
+```
+[17] execute: npx --yes hyperframes init videos\hf_proj
+[🔧] Error: Command timed out after 300 seconds (custom timeout). ...
+[Command failed with exit code 124]
+```
+
+**这正是此前永久卡死的那条命令，现在有界返回**；同轮的 `faulthandler` 栈也落在
+新的 `mashup.py` `_patched_run` 里的 `proc.wait()`，确认走的是新路径。
+`LocalShellBackend.execute` 本来就捕获 `TimeoutExpired` 并返回 `exit_code=124`
+的中文提示，所以 agent 拿到的是一次干净的失败，可以据此降级。
+
+**回归防护**：`workflows/mashup.py` 自检第 7 项 —— 用 `cmd /c start /b cmd /c ping -n 60`
+构造同样的「直接子进程先退、孙进程继续攥输出」形态，断言耗时 **< 20 秒**
+（标准库在这台机器上要 ~60 秒）。纯本地、不会挂起。
+
+---
+
+#### ③ 顺手修掉的两个真缺陷
+
+**a) 工具异常会终结整轮任务**（`_ToolErrorToMessage` 中间件）
+
+实测：agent 把沙箱外的绝对路径喂给了 `read_file`，抛
+`ValueError: Path ... outside root directory`。`deepagents` 默认走 langgraph 的
+`_default_handle_tool_errors`，它**直接 raise** —— 整轮 20+ 步、几分钟的工作当场作废，
+模型连纠正的机会都没有。
+
+`create_deep_agent` 没有暴露 `handle_tool_errors`，所以改用 `middleware=[...]`
+挂一个 `wrap_tool_call`，把异常转成 `ToolMessage(status="error")` 回给模型。
+回归用例：自检第 8 项（断言异常被转成 `ToolMessage`、正常返回不被改动）。
+
+**b) `[PathFix]` 日志刷屏把真日志埋掉**
+
+`node_edit_video` 解析输出路径时，把**最后一条消息按空格切词、逐词**喂给
+`normalize_path()`。而 `normalize_path` 只要改动了就打印，且会无差别地把文本里的
+`/` 换成 `\` —— 实测刷出**几百行**噪音：
+
+```
+[PathFix] 路径已修复: 'https://cdn.jsdelivr.net/...' → 'https:\\cdn.jsdelivr.net\\...'
+[PathFix] 路径已修复: '1/3' → '1\3'
+[PathFix] 路径已修复: 'oss://' → 'oss:'
+```
+
+修法：**先按 `.mp4` 后缀过滤，再调 `normalize_path`**。
+（注：这不会污染写入的文件内容 —— `normalize_path` 只改它自己的局部变量，
+原始消息字符串未被修改；但日志被埋掉本身就是交付缺陷。）
+
+---
+
+#### ④ ⚠️ HyperFrames 在本机**渲染链路不可用**（环境结论，非代码 bug）
+
+实测证据：
+
+- `npx --yes hyperframes --version` → `0.8.46`，**CLI 本身能装能用**（此前报告写"未安装"是错的）；
+- `--help` / `docs <topic>` 这类纯本地命令**正常返回**；
+- 但 `npx --yes hyperframes init <dir>` 与 `render` 会**卡到 300 秒超时**
+  （`exit_code=124`），进程树 CPU 恒为 0；
+- 其渲染依赖 puppeteer/浏览器下载，而本机 `curl https://cdn.jsdelivr.net/...`
+  实测 `exit 35`（SSL 连接失败，走本地代理）。
+
+**结论**：`SKILL.md` 里写明的 moviepy 降级分支在本机是**可用路径**，HyperFrames 不是。
+这条只影响"动画素材用哪种方式生成"，不影响剪辑链路本身。
+
+为此加了一个配置项 `MEDIA_MASHUP_USE_HYPERFRAMES`（默认 `false`）——
+system_prompt 会随它切换：开着就走课案原方案并附时间预算约束，
+关着就明确指示 agent 别碰 HyperFrames、直接用 moviepy 画。
+浏览器链路正常的机器上改成 `true` 即可恢复课案原方案。
+
+### 5.10 ✅ DeepAgents 视频剪辑真实出片（第三轮验证，**通过**）
+
+**这是整份报告里最后补上的一块硬证据。**
+
+**输入**：`.cache/fixtures/cn/cn_avatar_20s.mp4`（普通话口播，1280×720 / 20s / 30fps / 有音轨）
+**要求**：上下排布（上方原视频、下方深色条带放动画素材）+ 白字黑描边字幕 + 输出 mp4
+
+**结果**（`elapsed = 394.3s`，模型 `deepseek-flash`）：
+
+```
+output = F:\ProGram\Python_Base\Media_Agent\.cache\mashup\videos\mashup_final.mp4
+size = [1280, 960]   duration = 20.0   fps = 30.0   audio = True
+2,904,114 bytes
+```
+
+`node_edit_video` 从 agent 最后一条消息里解析出了路径，`OUTPUT_OK` 校验通过
+（不是"兜底扫目录"扫出来的，是真报告上来的）。
+
+**agent 实际做了什么**（据其自述 + 沙箱产物核对）：
+
+1. **字幕**：`tools.audio_transcriber.transcribe_to_srt()` 走百炼云端 → `videos/subtitles.srt`
+   （12 句 / 118 字），全程只此一份 SRT；
+2. **素材 12 个**（要求 ≥6）：`ColorClip + TextClip + ImageClip(渐变) + with_position`
+   画出 `intro_card.mp4`(1280×720，与原视频同像素，放最上层)、
+   `band_intro.mp4` + `s01..s07` + `gap1..gap3`(均 1280×240 = 720//3)；
+   时间点严格对齐 SRT 句边界；
+3. **合成**：`CompositeVideoClip(size=(1280, 960))` = `(w, h + h//3)`；
+   原视频 1280×720 原生分辨率贴 (0,0)，无 `resized`、无 `.with_mask()/set_mask()`；
+   底下垫满幅深色底 → 任意时刻无黑屏；
+4. **人声**：`afx.MultiplyVolume(3.0)` 后加 `AudioNormalize` 防削波，成片峰值 0.939 无破音；
+   BGM 未配置 → 跳过混音不报错；
+5. **自检**：抽取 10 帧做联系表、逐帧核对字幕只出现一次、条带区均值 40~52（非黑）。
+
+**产物已归档为回归基线**（`.cache/` 是 gitignore 的，只在本机）：
+
+| 文件 | 大小 | 用途 |
+|---|---|---|
+| `.cache/fixtures/cn/mashup_final_e2e.mp4` | 2,904,114 | 成片 |
+| `.cache/fixtures/cn/mashup_final_sheet.png` | 2,337,593 | 10 帧联系表（人工核对用） |
+| `.cache/fixtures/cn/mashup_subtitles.srt` | 797 | 字幕 |
+
+**执行时间 394.3s 里，约 300s 花在一次 HyperFrames 超时上**（`exit 124`）——
+这正是 5.9② 的补丁起作用的结果：以前这一下会**永久卡死**。
+
+#### ⚠️ agent 实测抓出我提示词里的一个真错误（已修）
+
+我在 system_prompt 与任务提示里写的是 `TextClip(font='Microsoft YaHei', ...)`。
+**本机必崩**，agent 自己探针测出来并绕过了：
+
+```
+FAIL font='Microsoft YaHei'   ValueError: Invalid font Microsoft YaHei,
+                              pillow failed to use it with error cannot open resource
+OK   font='C:/Windows/Fonts/msyh.ttc'      size=(1280, 132)
+OK   font='msyh.ttc'
+```
+
+根因：moviepy 2.x 把 `font` 直接交给 pillow 当**字体文件**加载，不做字体族解析。
+（课案原文写的是 `font='Microsoft YaHei'` —— 那是课案作者环境下的写法，
+本项目**不能照抄**。）
+
+已修三处：`_build_editor_system_prompt` 的 TextClip 示例、
+moviepy 降级分支的指令、`node_edit_video` 的默认任务提示；
+并在自检里加了**实测断言**：用 `C:/Windows/Fonts/msyh.ttc` 构造 TextClip 必须成功。
+
+---
+
 ## 6. Streamlit 应用验证
 
 **命令**：
@@ -621,13 +865,19 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 
 1. ~~声音克隆（CosyVoice）出音~~ —— **已于第二轮验证打通**（见 5.8④）：
    自建公网托管（自己的服务器 + nginx 只读 location）+ `create_voice` + 克隆音色合成全通。
-2. **数字人对口型（PixVerse）的真实出片** —— 未验证。需要：
-   百炼控制台**手动开通 PixVerse**、一段 10~30 秒人脸视频（现已有可用的普通话素材）。
-   ⚠️ 剩余未知项只有「模型是否已开通」—— 素材托管这一环已经打通（5.8①），
-   即使 PixVerse 也不吃 `oss://`，用它现成的 `http://43.128.75.66/media-assets/...` 就行。
-3. **视频剪辑（DeepAgents）的真实出片** —— 未验证。只验证了：
-   图结构、路径清洗、SKILL.md 格式、system_prompt 约束完整性、DeepAgents API 形状。
-   真实跑一次要几分钟且会消耗不少 token。另：**HyperFrames 未安装**，会走 moviepy 降级分支。
+2. **数字人对口型（PixVerse）的真实出片** —— 未验证，且**当前被账号状态挡住**。
+   实测提交请求返回 `400 Arrearage`（`Access denied, please make sure your account is
+   in good standing`），根因见下方第 6 条，**不是**「模型未开通」。
+   素材与托管这两环都已就绪：普通话人脸素材 `.cache/fixtures/cn/cn_avatar_20s.mp4`（20s / 1280x720），
+   公网托管 `http://43.128.75.66/media-assets/...` 可用（见 5.8①），
+   即使 PixVerse 不吃 `oss://` 也不影响。
+   账号恢复后可直接跑：`python -c "from tools.avatar_client import generate_avatar_video; ..."`。
+3. ~~**视频剪辑（DeepAgents）的真实出片**~~ —— **已于第三轮验证出片**（见 5.10）：
+   12 个 moviepy 动画素材 + 百炼 ASR 字幕 + 上下排布合成，产出
+   `mashup_final.mp4`（1280×960 / 20.0s / 2.9MB），`elapsed=394.3s`。
+   过程中修掉了 4 个真缺陷（5.9 全节）。
+   仍需注意：**HyperFrames 渲染链路在本机不可用**（见 5.9④），
+   默认已由 `MEDIA_MASHUP_USE_HYPERFRAMES=false` 切到 moviepy 分支。
 4. **抖音数据采集的真实链路** —— 未验证。本机**没有 Docker 服务**，
    只验证了「服务不可达 → 返回带修复命令的中文错误 → 降级入口可用」。
    响应体的真实层级、Cookie 是否够用、`/user/self` 解析是否有效，全都需要真跑服务才能确认。
@@ -637,6 +887,29 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 5. **`_read_edge_cookies()`（从 Edge 读抖音 Cookie）** —— 未实跑。
    它会 `taskkill` 掉所有 Edge 进程再起无头实例，副作用大，不适合在验证阶段触发。
    仅验证了端口探活函数不可达时返回 `False` 且不抛异常。
+6. **【新增·需要你处理】百炼账号对计费模型返回 `Arrearage`** —— 账号欠费/无可用额度。
+   本轮实测（同一把 key，`sha256[:12]=b96e9a10cb9f`，len 35）：
+
+   | 探测目标 | 结果 |
+   |---|---|
+   | ASR `qwen-audio-3.0-asr-flash` | ✅ **通** —— 真跑 `cloned_out.wav`(6.4s) 识别出完整中文句子 |
+   | compatible-mode `qwen-turbo` 对话 | ❌ `Arrearage` |
+   | `voice-enrollment`（声音复刻） | ❌ `Arrearage` |
+   | `pixverse/pixverse-lipsync` | ❌ `Arrearage` |
+   | 不存在的模型（对照） | `InvalidParameter: Model not exist` |
+
+   对照项证明**错误码有先后顺序**：先校验模型是否存在、再校验账号状态 ——
+   所以 PixVerse 报 `Arrearage` 说明**模型本身存在且已开通**，卡的是账号状态。
+
+   **需要你做的**：登录阿里云百炼控制台 → 费用中心，查「免费额度」与账户余额，
+   结清欠费或充值。恢复之前，声音克隆与数字人出片**不可用**，ASR 与热点链路不受影响。
+
+   > 关于 key 归属：`DASHSCOPE_API_KEY` 是根 `.env` 里**本来就有的**一行，
+   > 位于注释「阿里云百炼 DashScope —— 课案「监控与评估 / RAG评估」的评测模型 + 向量模型」
+   > 之下，由 RAG 子项目共用；本次工作只是**复用它**，没有引入、替换或新增任何百炼密钥。
+   > 它也不是记忆栈那把 key（`F:\ProGramApp\DSH\memory\.env` 的 `MEMORY_LLM_API_KEY`）。
+   > 该行是否属于你的个人账号，只有你能最终确认 —— 但账号处于欠费状态这一点，
+   > 与「公司共享账号」的特征不符。
 
 ### 环境限制（影响验证方式，不是代码问题）
 
@@ -656,5 +929,5 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 |---|---|
 | Cookie 落点 | 页面上粘贴的抖音 Cookie 存在**运行时会话覆写点** `os.environ["MEDIA_DOUYIN_COOKIE"]`（重启即失效），持久值仍在根 `.env` 的 `MEDIA_DOUYIN_COOKIE`。这是为了让「界面粘 Cookie」这个动作不产生忘记清理的持久凭据。若希望它直接写 `.env`，需要改 `config.py` 加一个写入辅助函数。 |
 | `MEDIA_IMAGE_*` 未配置 | 图片生成走占位图分支（首页环境面板已明示）。 |
-| HyperFrames 未安装 | 剪辑会走 moviepy 降级分支（SKILL.md 里已写明 fallback）。 |
+| HyperFrames | 渲染链路不可用（浏览器依赖拉不下来），默认由 `MEDIA_MASHUP_USE_HYPERFRAMES=false` 走 moviepy 分支；换到浏览器链路正常的机器改成 `true` 即恢复课案原方案。 |
 | `docs/` 下的课案提取文件 | 由 `docs/html提取脚本.py` 从课案 HTML 生成，课案更新后可重跑。 |

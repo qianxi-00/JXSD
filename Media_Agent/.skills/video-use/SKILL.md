@@ -69,8 +69,18 @@ TextClip(font=..., text=..., font_size=..., size=(w, None),
          method='caption', text_align='center')
 ```
 
-> ⚠️ 2.x 用 `font`（字体名或字体文件路径），**没有** `fontsize=`（那是 1.x）。
-> 中文字体用 `'Microsoft YaHei'` 或直接给 `C:/Windows/Fonts/msyh.ttc`。
+> ⚠️ 2.x 用 `font`（**字体文件路径**），**没有** `fontsize=`（那是 1.x）。
+>
+> 🔴 **中文字体必须写字体文件路径，不能写字族名**（本机 moviepy 2.1.2 实测）：
+>
+> ```python
+> TextClip(text='中文', font='Microsoft YaHei', ...)          # ✗ ValueError: Invalid font
+> TextClip(text='中文', font='C:/Windows/Fonts/msyh.ttc', ...) # ✓ 微软雅黑
+> ```
+>
+> moviepy 2.x 把 `font` 直接交给 pillow 当**文件**加载，不做字体族解析。
+> 课案原文写的 `'Microsoft YaHei'` 在本机会直接报
+> `pillow failed to use it with error cannot open resource`。
 
 ## 五条必须严格遵守的约束
 
@@ -85,7 +95,7 @@ from moviepy.video.tools.subtitles import SubtitlesClip
 
 def make_st(txt):
     return TextClip(
-        text=txt, font='Microsoft YaHei', font_size=52,
+        text=txt, font='C:/Windows/Fonts/msyh.ttc', font_size=52,
         color='white', stroke_color='black', stroke_width=2,
         size=(w, None), method='caption',
     ).with_position(('center', h * 0.75))   # ← 关键！定位在原视频区域内
@@ -162,15 +172,20 @@ if not srt_path:
 
 ### 第 3 步：生成动画叠加素材
 
-优先用 HyperFrames（HTML/CSS/GSAP → MP4）：
+**先看 `MEDIA_MASHUP_USE_HYPERFRAMES` 的取值**（任务提示 / system_prompt 里会写明）：
 
-```bash
-npx --yes hyperframes render --input 素材.html --output 素材1.mp4
-```
+- **`true`** —— 用课案原方案 HyperFrames（HTML/CSS/GSAP → MP4）：
+  ```bash
+  npx --yes hyperframes render --input 素材.html --output 素材1.mp4
+  ```
+  最多试 3 次，失败/超时立刻降级，别去翻它的内部实现或 npm 缓存。
 
-**HyperFrames 不可用时的降级方案**（必须实现）：
-直接用 moviepy 生成纯色/文字动画 —— `ColorClip` + `TextClip` + `with_position` 做位移动画，
-`vfx` 做淡入淡出。**不要因为 HyperFrames 装不上就停下整个任务。**
+- **`false`（本机默认）** —— **不要执行任何 hyperframes 命令**，直接用 moviepy 画：
+  `ColorClip` + `TextClip` + `ImageClip`(渐变) + `with_position` 做位移动画，
+  `vfx` 做淡入淡出。
+
+> 本机实测：HyperFrames 的 CLI 能用（`npx --yes hyperframes --version` → `0.8.46`），
+> 但 `init`/`render` 会卡到 300 秒超时（浏览器依赖拉不下来），纯属浪费步数。
 
 ### 第 4 步：排版穿插
 
@@ -209,13 +224,18 @@ print('最终输出:', os.path.abspath(out))
 
 ## 中文字体（不写就全是方框）
 
-HyperFrames 生成的每个 HTML 文件，`<head>` 里**必须**加：
+**moviepy 的 `TextClip`：`font` 必须是字体文件路径**，写字族名会直接报错：
+
+```python
+FONT = 'C:/Windows/Fonts/msyh.ttc'   # ✓ 微软雅黑
+# TextClip(..., font='Microsoft YaHei')  # ✗ ValueError: Invalid font
+```
+
+（走 HyperFrames 时，每个 HTML 文件的 `<head>` 里加：）
 
 ```html
 <style>body{font-family:'Microsoft YaHei','PingFang SC','Noto Sans CJK SC',sans-serif}</style>
 ```
-
-moviepy 的 `TextClip` 用 `font='Microsoft YaHei'` 或字体文件绝对路径。
 
 不写这条，中文内容渲染出来全是方框，等于白做。
 
@@ -224,6 +244,7 @@ moviepy 的 `TextClip` 用 `font='Microsoft YaHei'` 或字体文件绝对路径�
 - [ ] 所有路径都用 `os.environ['WORK_DIR']` 构造，没有盘符
 - [ ] `SubtitlesClip` 从 `moviepy.video.tools.subtitles` 导入
 - [ ] 字幕只加了一次，用了 `make_textclip` + `with_position`
+- [ ] 中文字体用的是**字体文件路径**（如 `C:/Windows/Fonts/msyh.ttc`），不是字族名
 - [ ] 没有 `.with_mask()` / `set_mask()`
 - [ ] `CompositeVideoClip` 的 `size` 是 `(w, top_h + bottom_h)`
 - [ ] 中文字体已指定

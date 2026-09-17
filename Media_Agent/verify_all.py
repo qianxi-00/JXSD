@@ -209,7 +209,7 @@ if not settings.media_deepagent_model():
 # ---- 2. DeepAgents API 形状（升级 deepagents 前先跑这一层）----
 try:
     from deepagents import create_deep_agent
-    from deepagents.backends import LocalShellBackend
+    from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 
     sig = inspect.signature(LocalShellBackend.__init__)
     for param in ("root_dir", "virtual_mode", "inherit_env", "timeout",
@@ -218,6 +218,21 @@ try:
             problems.append(f"LocalShellBackend 构造参数缺少 {param}（deepagents 可能已升级）")
     if not hasattr(LocalShellBackend, "_resolve_path"):
         problems.append("LocalShellBackend 没有 _resolve_path —— mashup.py 的路径补丁会失效")
+
+    # 技能目录靠 CompositeBackend 挂到虚拟路径 /skills/（mashup.py 的实测补丁 9）。
+    # 这些形状一变，剪辑链路会以「agent 一步没跑就抛 outside root directory」的形式挂掉，
+    # 报错点还在 deepagents 内部、跟 mashup.py 看着没关系，所以在这里提前钉住。
+    for cls, params in (
+        (FilesystemBackend, ("root_dir", "virtual_mode")),
+        (CompositeBackend, ("default", "routes")),
+    ):
+        csig_cls = inspect.signature(cls.__init__)
+        for param in params:
+            if param not in csig_cls.parameters:
+                problems.append(f"{cls.__name__} 构造参数缺少 {param}（deepagents 可能已升级）")
+    for meth in ("ls", "download_files"):
+        if not hasattr(CompositeBackend, meth):
+            problems.append(f"CompositeBackend 缺少 {meth} —— SkillsMiddleware 加载技能会失败")
 
     csig = inspect.signature(create_deep_agent)
     for param in ("model", "backend", "system_prompt", "skills"):

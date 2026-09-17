@@ -68,7 +68,10 @@ Windows 上还需要（首次部署时做一次）：
 # 视频转码 / 音频提取 / 最终渲染都要用
 winget install ffmpeg
 
-# HyperFrames：HTML/CSS/GSAP → MP4 动画素材（可选，装不上会自动降级为纯 moviepy 动画）
+# HyperFrames：HTML/CSS/GSAP → MP4 动画素材（可选）
+# ⚠️ 本机实测：CLI 能装能用（npx --yes hyperframes --version → 0.8.46），
+#    但 init/render 会卡到 300s 超时（浏览器依赖拉不下来）。
+#    所以 MEDIA_MASHUP_USE_HYPERFRAMES 默认 false，走 moviepy 分支。
 npm install --cache .npm-cache hyperframes
 ```
 
@@ -240,7 +243,10 @@ Media_Agent/
 - **沙箱路径规则**：所有输出必须用 `os.path.join(os.environ['WORK_DIR'], ...)`，
   禁止手写盘符路径
 - moviepy 2.x 的 API 变化（见下）
-- **中文渲染**：HyperFrames 生成的 HTML 必须带中文字体 `<style>`，否则全是方框
+- **中文渲染**：`TextClip` 的 `font` **必须给字体文件路径**
+  （`C:/Windows/Fonts/msyh.ttc`）；写字族名 `'Microsoft YaHei'` 本机直接报
+  `ValueError: Invalid font`（moviepy 2.x 把 font 当文件加载，不做族名解析）。
+  走 HyperFrames 时 HTML 必须带中文字体 `<style>`，否则全是方框
 
 **⚠️ 课案的剪辑约束是踩出来的，一条都不能松**：
 | 约束 | 不遵守的后果 |
@@ -262,6 +268,8 @@ Media_Agent/
 # ⚠️ SubtitlesClip 不在顶层，必须从子模块导入
 from moviepy.video.tools.subtitles import SubtitlesClip
 # ⚠️ TextClip 用 font= / font_size=（2.x 没有 fontsize=）
+# ⚠️ font 必须是**字体文件路径**：'C:/Windows/Fonts/msyh.ttc'
+#    写成 'Microsoft YaHei' 会报 ValueError: Invalid font（本机实测）
 ```
 
 ### 📊 6. 数据复盘
@@ -312,6 +320,7 @@ Media_Agent 特有的：
 | `MEDIA_DOUYIN_API_BASE` | `http://127.0.0.1:8080` | 自托管抖音采集服务 |
 | `MEDIA_DOUYIN_COOKIE` | 空 | 采集本人主页数据需要 |
 | `MEDIA_BGM_PATH` | 空 | 留空则不混音 |
+| `MEDIA_MASHUP_USE_HYPERFRAMES` | `false` | 剪辑动画素材的生成方式：`false`=moviepy 直接画（本机默认）；`true`=课案原方案 HyperFrames。本机 `init`/`render` 会卡到 300s 超时，故默认关 |
 | `MEDIA_VIDEO_OUTPUT_DIR` 等四个目录 | 注释掉 | 注释掉即用 `Media_Agent/.cache` 下的默认绝对路径 |
 
 ---
@@ -336,8 +345,12 @@ A：官方说生成要 1~5 分钟，且**并发任务数为 1**。点页面上�
 A：看「工具调用轨迹」。最常见的是模型在用 bash 命令（`ls`/`cat`），
 但 `execute` 跑的是 cmd.exe —— 检查 `workflows/mashup.py` 的 system_prompt 是否完整。
 
-**Q：HyperFrames 装不上？**
-A：不影响。agent 会降级用 moviepy 直接生成动画素材（已写进 SKILL.md 的 fallback 分支）。
+**Q：HyperFrames 装不上 / 渲染卡住？**
+A：本机实测就是这个情况：CLI 能装（`npx --yes hyperframes --version` → `0.8.46`），
+但 `init`/`render` 会一直卡到 300 秒超时（它要 puppeteer 下载浏览器，本机拉不下来）。
+`MEDIA_MASHUP_USE_HYPERFRAMES` 默认 `false`，agent 直接用 moviepy 画动画素材 ——
+这正是 SKILL.md 里的降级分支，不影响出片。
+浏览器链路正常的机器上把它设成 `true` 即可恢复课案原方案。
 
 **Q：`python` 命令没有任何输出？**
 A：PATH 里的 `python` 是 Windows Store 占位符。用

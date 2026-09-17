@@ -17,12 +17,18 @@
     review.py        数据复盘（抖音采集 → 漏斗诊断 → 内容评估 → 优化策略）
 
 LLM 从哪来（重要，别重复配密钥）
-    统一走根目录 ``config.py`` 的扁平字段：
+    默认统一走根目录 ``config.py`` 的扁平字段：
         settings.api_key     → 密钥
         settings.base_url    → OpenAI 兼容接口地址（当前是中转站）
         settings.model_name  → 模型名
     自媒体链路可用 ``MEDIA_LLM_MODEL`` 单独覆盖模型名（见 settings.media_llm_model()），
     但不重复配置密钥与地址。
+
+    要**整条链路换服务商**时设 ``MEDIA_LLM_PROVIDER=deepseek``，
+    改为读根 .env 里已存在的 ``DEEPSEEK_API_KEY`` / ``DEEPSEEK_BASE_URL`` /
+    ``DEEPSEEK_MODEL``（见 settings.media_llm_api_key() / media_llm_base_url()）。
+    这样换端点的动作只落在 Media_Agent 内 —— 根 .env 的 API_KEY/BASE_URL 是
+    RAG 与 Agent 课案共用的，直接改它会连带影响别的子项目。
 
 为什么用 ``init_chat_model`` 而不是课案的 ``ChatOpenAI(...)``
     本仓库已有的 Agent 课案实现（``Agent/03_deepagents/*_jxsd.py`` 等十余处）
@@ -71,8 +77,8 @@ def get_model(temperature: float = 0.5, use_deepagent_model: bool = False):
         _MODEL_CACHE[key] = init_chat_model(
             model_provider="openai",
             model=model_name,
-            api_key=settings.api_key,
-            base_url=settings.base_url,
+            api_key=settings.media_llm_api_key(),
+            base_url=settings.media_llm_base_url(),
             temperature=temperature,
             timeout=90,      # 90 秒超时：长 prompt + 复杂推理需要更久
             max_retries=1,
@@ -102,10 +108,12 @@ def llm_call(prompt: str, temperature: float = 0.5, fallback: str = "") -> str:
     """
     from langchain_core.messages import HumanMessage
 
-    if not settings.api_key:
+    if not settings.media_llm_api_key():
         msg = (
             "[LLM未配置] 根目录 .env 里没有 API_KEY。\n"
-            "自媒体链路复用根配置的 API_KEY / BASE_URL / MODEL_NAME 三项。"
+            "自媒体链路默认复用根配置的 API_KEY / BASE_URL / MODEL_NAME 三项；\n"
+            "若设了 MEDIA_LLM_PROVIDER=deepseek，则改用 DEEPSEEK_API_KEY / "
+            "DEEPSEEK_BASE_URL / DEEPSEEK_MODEL。"
         )
         return fallback if fallback else msg
 
