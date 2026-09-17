@@ -1,3 +1,24 @@
+"""把 PaddleOCR 产出的 Markdown 汇总成入库用的 JSON(对照基础篇课案「OCR 清洗 / 结果处理」)。
+
+补的是一条**断掉的链**:
+    课案:  ocr_results.json → clean_ocr_json.py --dedupe consecutive → ocr_results_clean.json
+    本项目:data/output/<分类>/<stem>.md  →(本脚本)→  data/ocr_results.json
+                                             + data/ocr_results_clean.json →(tick_extract.py)→ Milvus
+
+在此之前 `paddle_ocr.py` 只写 Markdown、`tick_extract.py` 只读 JSON,中间那一步没有任何脚本,
+入库数据只能来自课案服务器上的另一次 DeepSeek-OCR-2 运行 —— 换机就复现不出来。
+
+清洗口径沿用课案:
+- 去掉 Markdown 图片/标题标记(版面元素,不是票面文字);
+- 压缩空行与行内空白;
+- `--dedupe` 默认 **consecutive**(只删连续重复行)。课案文档明确说 `all` 会误删发票表格里
+  重复的商品/税率/金额行 —— 那正是要保留的字段。
+
+用法:
+    uv run python RAG/data_process/build_ocr_json.py
+    uv run python RAG/data_process/build_ocr_json.py --dedupe all --categories invoice
+"""
+
 # =============================================================================
 # OCR 第二步：Markdown → 入库 JSON（基础篇「OCR 清洗 / 结果处理」）
 #
@@ -32,26 +53,6 @@ while _BASE.parent != _BASE and _BASE.name != "Python_Base":
     _BASE = _BASE.parent
 _sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
 _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
-"""把 PaddleOCR 产出的 Markdown 汇总成入库用的 JSON(对照基础篇课案「OCR 清洗 / 结果处理」)。
-
-补的是一条**断掉的链**:
-    课案:  ocr_results.json → clean_ocr_json.py --dedupe consecutive → ocr_results_clean.json
-    本项目:data/output/<分类>/<stem>.md  →(本脚本)→  data/ocr_results.json
-                                             + data/ocr_results_clean.json →(tick_extract.py)→ Milvus
-
-在此之前 `paddle_ocr.py` 只写 Markdown、`tick_extract.py` 只读 JSON,中间那一步没有任何脚本,
-入库数据只能来自课案服务器上的另一次 DeepSeek-OCR-2 运行 —— 换机就复现不出来。
-
-清洗口径沿用课案:
-- 去掉 Markdown 图片/标题标记(版面元素,不是票面文字);
-- 压缩空行与行内空白;
-- `--dedupe` 默认 **consecutive**(只删连续重复行)。课案文档明确说 `all` 会误删发票表格里
-  重复的商品/税率/金额行 —— 那正是要保留的字段。
-
-用法:
-    uv run python RAG/data_process/build_ocr_json.py
-    uv run python RAG/data_process/build_ocr_json.py --dedupe all --categories invoice
-"""
 
 import argparse
 import json

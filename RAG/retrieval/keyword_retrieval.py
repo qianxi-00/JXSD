@@ -34,6 +34,11 @@ from config import settings
 from core.logger import logger
 from pipeline.filters import row_matches_filters
 
+# BM25 语料一次性取回的上限（Milvus 的 query 自身也有上限，量级 16384，以所用版本文档为准）。
+# **取满即等于"可能被截断"**：`_load_index` 会在 `len(rows) >= CORPUS_LIMIT` 时打 WARNING，
+# 别让"后半部分票据搜不到"这件事只存在于注释里。数据量到万级必须改成分页/按主键迭代。
+CORPUS_LIMIT = 10000
+
 
 def _tokenize(text: str) -> list[str]:
     """把文本切成 BM25 用的词序列:jieba 精确切词 → 转小写 → 丢掉纯空白 token。
@@ -68,8 +73,9 @@ def _load_index():
     两处硬编码(换库/扩容时要看):
     - 过滤条件写死三种票据类型,与 `data_process/embed_tickets.py` 同一口径 ——
       库里真出现第四类票据时,这些行**不会进 BM25 语料**(向量路也搜不到,只有结构化 SQL 查得到);
-    - `limit=10000` 是兜底:Milvus 的 query 默认上限 16384,语料超过 1 万篇时这里会
-      **静默截断**(不报错,只是后半部分永远搜不到),届时要改成分页或按主键迭代。
+    - `limit=CORPUS_LIMIT`（默认 10000）是兜底:Milvus 的 query 默认上限 16384,语料超过 1 万篇时这里会
+      **截断**；不再是静默的 —— 取满即打 WARNING（见 `CORPUS_LIMIT` 处的说明），
+      真要扩容得改成分页或按主键迭代。
 
     另注:`docs` 取的是 `semantic_text`(与做向量、喂 rerank 的文本同源)。
     空 `semantic_text` 的行分词结果是空列表 ⇒ 永远无法通过"词重叠"判定,
@@ -84,8 +90,15 @@ def _load_index():
         collection_name=settings.milvus.collection,
         filter='ticket_type in ["flight", "invoice", "train"]',
         output_fields=OUTPUT_FIELDS,
-        limit=10000,
+        limit=CORPUS_LIMIT,
     )
+    if len(rows) >= CORPUS_LIMIT:
+        # docstring 里写的"静默截断"必须真喊出来：只写在注释里，扩容到万级时没人会重读注释，
+        # 表现只是"后半部分票据永远搜不到"（不报错，属于最难查的那类）。
+        logger.warning(
+            f"[BM25] 语料查询已达 limit={CORPUS_LIMIT} 上限，可能有票据没被取到 ⇒ "
+            "关键词路会永远搜不到它们。请改成分页或按主键迭代查询。"
+        )
     docs = [r.get("semantic_text") or "" for r in rows]
     tokenized = [_tokenize(d) for d in docs]
     # 注意:语料为空时 BM25Okapi 会直接除零(`BM25._initialize` 算 avgdl 时除以 corpus_size;

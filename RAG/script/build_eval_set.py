@@ -1,17 +1,7 @@
-# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
-# (顺序与理由同 run_stage_eval.py:先根后 RAG 根,insert 到最前以防同名模块串味)
-import sys as _sys
-from pathlib import Path as _Path
-
-_BASE = _Path(__file__).resolve()
-while _BASE.parent != _BASE and _BASE.name != "Python_Base":
-    _BASE = _BASE.parent
-_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
-_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 """评估集生成脚本(优化篇课案「RAG 评估 · 数据源生成与上传脚本」)。
 
-⚠ 与 run_stage_eval.py 同款问题:docstring 在 import 之后 ⇒ **不是**模块 docstring
-(`__doc__` 为 None),只是一段被丢弃的字符串。本次只加注释,不动位置(见报告)。
+（原先与 run_stage_eval.py 同款问题：docstring 写在 `import` 之后，`__doc__` 为 None。
+已一并挪到文件首个语句，`python -c "import ...; print(__doc__)"` 现在拿得到。）
 
 从 Milvus 真实票据字段**确定性**生成 data/eval_set.jsonl:
 按 (person, ticket_type) 分组,覆盖 金额汇总 / 日期人员筛选 / 缺失证据拒答 /
@@ -31,6 +21,17 @@ LLM 造的样本每题都要人复核,而且每次重生成都会变 —— 样�
     uv run python RAG/script/build_eval_set.py
     uv run python RAG/script/build_eval_set.py --out RAG/data/eval_set.jsonl
 """
+
+# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
+# (顺序与理由同 run_stage_eval.py:先根后 RAG 根,insert 到最前以防同名模块串味)
+import sys as _sys
+from pathlib import Path as _Path
+
+_BASE = _Path(__file__).resolve()
+while _BASE.parent != _BASE and _BASE.name != "Python_Base":
+    _BASE = _BASE.parent
+_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
+_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 
 import argparse
 from pathlib import Path

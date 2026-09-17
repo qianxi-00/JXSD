@@ -1,3 +1,8 @@
+"""批量向量化 tick 集合中的 semantic_text,并将向量回填到 Milvus 的 vec 字段
+
+用法: uv run python -m data_process.embed_tickets
+"""
+
 # =============================================================================
 # 向量回填脚本（RAG 基础篇「向量化入库」的第二步）
 #
@@ -22,16 +27,17 @@ while _BASE.parent != _BASE and _BASE.name != "Python_Base":
     _BASE = _BASE.parent
 _sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
 _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
-"""批量向量化 tick 集合中的 semantic_text,并将向量回填到 Milvus 的 vec 字段
-
-用法: uv run python -m data_process.embed_tickets
-"""
 
 import time
 
 from config import settings
 from core.database import get_milvus_client
+from core.logger import logger
 from retrieval.embedding import embed_texts
+
+# 待回填行的单次查询上限。**取满即视为可能被截断**并打 WARNING（原先只是注释里的"坑"，
+# 而"后半部分票据永远没有向量"这种失败不报错、只在语义检索里表现为搜不到，最难查）。
+EMBED_QUERY_LIMIT = 10000
 
 # 回填写 upsert 时要带上的**全部标量字段**：Milvus 的 upsert 语义是"整实体覆盖"，
 # 不是"部分更新"。只传 id + vec 会把其余字段一起抹成默认值（person/date_int 变空），
@@ -58,9 +64,9 @@ def main() -> None:
     name = settings.milvus.collection
 
     # 一次性把待回填的行全捞出来，在进程内分批处理。
-    # 坑 1：这里靠 limit=10000 兜底（Milvus 的 query 自身也有个上限，量级在 16384，
-    #   以所用版本的文档为准）。数据量超过 1 万行时会**静默截断**——不报错，
-    #   只是后半部分永远没有向量；届时必须改成分页或按主键迭代查询。
+    # 坑 1：这里靠 limit=EMBED_QUERY_LIMIT 兜底（Milvus 的 query 自身也有个上限，量级在 16384，
+    #   以所用版本的文档为准）。数据量超过上限时会被**截断**——原本连注释都不提，
+    #   表现只是后半部分永远没有向量；现在取满即打 WARNING，扩容时要改成分页或按主键迭代查询。
     # 坑 2：过滤条件写死三种票据类型，等于假设库里只有这三类。tick_extract 按 ticket_type
     #   落库时并不会校验这一点，若出现第四类，那些行不会进 todo，vec 一直是 NULL，
     #   向量检索也就永远搜不到它们（结构化 SQL 查得到、语义检索查不到，这种不一致最难查）。
@@ -68,8 +74,13 @@ def main() -> None:
         collection_name=name,
         filter='ticket_type in ["flight", "invoice", "train"]',
         output_fields=FIELDS,
-        limit=10000,
+        limit=EMBED_QUERY_LIMIT,
     )
+    if len(rows) >= EMBED_QUERY_LIMIT:
+        logger.warning(
+            f"[向量回填] 待回填查询已达 limit={EMBED_QUERY_LIMIT} 上限，可能有票据没被取到 ⇒ "
+            "它们的 vec 会一直是 NULL、永远搜不到。请改成分页或按主键迭代查询。"
+        )
     # semantic_text 才是检索/重排用的文本（rerank.py 发给接口的也是它），所以空文本的行
     # 直接跳过：embedding 空串要么报错要么得到一个无意义的向量，两种都会污染召回结果。
     # 这些被跳过的行 vec 保持 NULL——Milvus 建了 vec 索引后，NULL 向量不参与检索，

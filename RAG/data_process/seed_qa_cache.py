@@ -1,3 +1,8 @@
+"""将预设问答对及其问题向量写入 Redis 缓存
+
+用法: uv run python -m data_process.seed_qa_cache [--force]
+"""
+
 # =============================================================================
 # 预问答缓存灌库脚本（RAG 基础篇「FAQ 缓存 / 预设问答」）
 #
@@ -40,10 +45,6 @@ while _BASE.parent != _BASE and _BASE.name != "Python_Base":
 # 因为仓库根没有与 RAG 内同名的模块，这里不会产生遮蔽问题。
 _sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
 _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
-"""将预设问答对及其问题向量写入 Redis 缓存
-
-用法: uv run python -m data_process.seed_qa_cache [--force]
-"""
 
 import sys
 from pathlib import Path

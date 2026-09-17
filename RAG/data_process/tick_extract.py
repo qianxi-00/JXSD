@@ -1,3 +1,13 @@
+"""从 data/ocr_results_clean.json 提取三类票据字段,并可批量写入 Milvus tick 集合
+
+用法:
+  uv run python -m data_process.tick_extract                 # 干跑:统计 + 样本报告(data/tick_extract_report.json)
+  uv run python -m data_process.tick_extract --type invoice --limit 5
+  uv run python -m data_process.tick_extract --insert        # 建 tick 集合并全量入库
+  uv run python -m data_process.tick_extract --insert --recreate
+  uv run python -m data_process.tick_extract --save data/tick_extracted.jsonl
+"""
+
 # =============================================================================
 # OCR 第三步：入库 JSON → 票据字段 → Milvus（基础篇「字段抽取 / 入库」）
 #
@@ -43,15 +53,6 @@ while _BASE.parent != _BASE and _BASE.name != "Python_Base":
 _sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
 _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 
-"""从 data/ocr_results_clean.json 提取三类票据字段,并可批量写入 Milvus tick 集合
-
-用法:
-  uv run python -m data_process.tick_extract                 # 干跑:统计 + 样本报告(data/tick_extract_report.json)
-  uv run python -m data_process.tick_extract --type invoice --limit 5
-  uv run python -m data_process.tick_extract --insert        # 建 tick 集合并全量入库
-  uv run python -m data_process.tick_extract --insert --recreate
-  uv run python -m data_process.tick_extract --save data/tick_extracted.jsonl
-"""
 
 import argparse
 import hashlib

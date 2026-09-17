@@ -1,12 +1,3 @@
-# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
-import sys as _sys
-from pathlib import Path as _Path
-
-_BASE = _Path(__file__).resolve()
-while _BASE.parent != _BASE and _BASE.name != "Python_Base":
-    _BASE = _BASE.parent
-_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
-_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 """阈值标定第一步:为预设问答生成同义问法(正例)。
 
 课案(基础篇「评测集生成」)用 SimBERT / 往返翻译生成正例,本项目全部走外部 API,
@@ -25,6 +16,16 @@ _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
     uv run python RAG/script/build_threshold_dataset.py --limit 20
     uv run python RAG/script/build_threshold_dataset.py --limit 20 --out RAG/data/threshold_dataset.json
 """
+
+# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
+import sys as _sys
+from pathlib import Path as _Path
+
+_BASE = _Path(__file__).resolve()
+while _BASE.parent != _BASE and _BASE.name != "Python_Base":
+    _BASE = _BASE.parent
+_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
+_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 
 import argparse
 import json

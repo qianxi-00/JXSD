@@ -71,6 +71,7 @@ dependencies = [
     "sqlmodel==0.0.39",
     "streamlit==1.61.1",
     "tiktoken>=0.14.0",
+    "tqdm>=4.66",
     "trafilatura",
     "uvicorn[standard]>=0.52.3",
     "websocket-client",
