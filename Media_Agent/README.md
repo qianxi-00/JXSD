@@ -7,6 +7,18 @@
 一个把自媒体运营全链路串起来的多智能体应用：**账号定位 → 热点选题 → 内容复刻 → 口播视频 → 后期剪辑 → 数据复盘**。
 前端 Streamlit，工作流 LangGraph，剪辑环节交给 DeepAgents。
 
+## 目录
+
+- [与课案最大的差异：三个本地模型换成了百炼托管 API](#与课案最大的差异三个本地模型换成了百炼托管-api)
+- [系统架构](#系统架构) —— 三层结构 / 数据流 / 配置加载 / 模型映射 / 素材托管 / 自检体系 / 产物落盘（**7 张图**）
+- [快速开始](#快速开始) —— 环境准备 / 配置密钥 / 启动 / 自检
+- [目录结构](#目录结构)
+- [六大模块（知识点索引）](#六大模块知识点索引) —— 每节配一张链路图
+- [配置项清单（全部在根 .env）](#配置项清单全部在根-env)
+- [如何新增一个模块](#如何新增一个模块)
+- [常见问题](#常见问题)
+- [相关文档](#相关文档)
+
 ---
 
 ## 与课案最大的差异：三个本地模型换成了百炼托管 API
@@ -48,6 +60,199 @@ location /media-assets/ { alias /var/www/media-assets/; autoindex off; }
 
 课案的 Windows 适配代码**全部保留**：UTF-8 重配置、`subprocess.Popen` monkey-patch、
 `normalize_path()`（修 Git Bash 畸形路径）、`MSYS_NO_PATHCONV`、`LocalShellBackend._resolve_path` 补丁。
+
+---
+
+## 系统架构
+
+### 1. 三层架构总览
+
+整个项目就三层，**依赖方向永远是单向的**（页面 → 工作流 → 工具），
+所以每一层都能单独测：工作流不依赖 Streamlit，工具不依赖工作流。
+
+```mermaid
+flowchart LR
+    M["main.py<br/>Streamlit 入口<br/>侧边栏七页路由"]
+    M --> V["① views/<br/>7 个页面<br/>收集输入 / 渲染结果"]
+    V -->|"run_xxx()<br/>传普通 dict"| W["② workflows/<br/>6 张 LangGraph 图<br/>可脱离界面单测"]
+    W -->|"失败返回提示文本<br/>不抛异常"| T["③ tools/<br/>8 个能力模块<br/>各自带离线自检"]
+    T --> E["外部服务<br/>百炼 DashScope<br/>NewsNow · 自建托管<br/>自托管抖音采集"]
+
+    CFG["config.py + 根 .env"] -.->|"三层都从这里取配置"| V
+    VER["verify_all.py"] -.->|"子进程跑各模块 __main__"| W
+```
+
+**每一层放什么、失败时怎么办**（细节见下面的「目录结构」与各模块小节）：
+
+| 层 | 内容 | 谁来调 | 失败时怎么办 |
+|---|---|---|---|
+| ① 界面层 `views/` | `home` · `positioning` · `hot_topic` · `replicate` · `video` · `mashup` · `review`（7 个页面） | `main.py` 的侧边栏路由 | 把返回值里的提示文案渲染成 `st.error` / `st.warning` |
+| ② 工作流层 `workflows/` | 六张 LangGraph 图 + `__init__`（LLM 统一入口）/ `base`（别名转发） | 页面上的按钮 | 节点内兜住异常、回填中文失败标记，**不让异常冒到页面** |
+| ③ 工具层 `tools/` | `trend_radar_client` · `media_tools` · `audio_transcriber` · `dashscope_upload` · `asset_host` · `voice_clone` · `avatar_client` · `douyin_client`（8 个） | 工作流节点 | 返回 `""` 或 `{"success": False}`，把原因打进日志 |
+
+**为什么这么分层**：`views/` 里的页面函数只做「收集输入 → 调 `workflows.run_*()` → 渲染 dict」，
+一旦把业务逻辑写进页面就没法脱离界面测试了；`tools/` 里每个文件是**独立可运行的**，
+末尾都有 `if __name__ == "__main__":` 离线自检，可以单独跑。
+
+### 2. 一次请求的完整数据流
+
+以「内容复刻」为例，从点击按钮到页面出结果：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant P as views/replicate.py
+    participant W as workflows/replicate.py
+    participant L as workflows.llm_call
+    participant T as tools/media_tools
+    participant D as 百炼 DashScope
+
+    U->>P: 粘贴对标视频链接，点「开始复刻」
+    P->>W: run_replicate(url=...)
+    W->>T: download_video(url)
+    T-->>W: 本地 mp4 路径（yt-dlp Python API，不走 subprocess）
+    W->>T: extract_audio_text(mp4)
+    T->>D: ASR 请求（≤10MB 走 Base64 Data URI，超过换 oss://）
+    D-->>T: 文案 + 句级/词级时间戳
+    T-->>W: 纯文本；失败时以中文 error 上浮，不返回空串
+    W->>L: 拆解爆款结构（temperature 0.6，判断题要稳）
+    L-->>W: 五维度分析
+    W->>L: 仿写新文案（temperature 0.8，创作题要活）
+    L-->>W: 新文案
+    W->>L: 生成 5 类标题
+    L-->>W: 标题列表
+    W-->>P: dict（analysis / new_script / titles）
+    P->>P: 先存 st.session_state 再渲染
+    P-->>U: 页面展示 + 一键复制 / 下载
+```
+
+> ⚠️ 最后两步的顺序不能反：`st.download_button` 一被点击就触发**整页 rerun**，
+> 结果不先落进 `st.session_state` 的话，页面会当场变空白。
+> 这是课案反复强调的坑，七个页面全都遵守。
+
+### 3. 配置是怎么进来的
+
+配置全部走根目录一套，Media_Agent **不维护第二份**：
+
+```mermaid
+flowchart LR
+    EX["根 .env.example<br/>脱敏模板，含全部 MEDIA_* 键"]
+    ENV["根 .env<br/>真实密钥，不入 Git"]
+    CFG["根 config.py"]
+    PS["MediaAgentSettings<br/>env_prefix = MEDIA_<br/>键名 = MEDIA_ + 字段名大写"]
+    S["settings 聚合对象"]
+    SM["settings.media"]
+    ROUTE{"MEDIA_LLM_PROVIDER<br/>= deepseek？"}
+    DS["DEEPSEEK_API_KEY<br/>DEEPSEEK_BASE_URL<br/>DEEPSEEK_MODEL"]
+    ROOT["API_KEY<br/>BASE_URL<br/>MODEL_NAME"]
+    MOD["views/ · workflows/ · tools/<br/>统一 from config import settings"]
+
+    EX -.->|"照抄成 .env 后生效"| ENV
+    ENV --> PS
+    CFG --> PS
+    PS --> S --> SM --> MOD
+    S --> ROUTE
+    ROUTE -->|"是：只让本子项目改道"| DS
+    ROUTE -->|"否（默认）：复用根配置"| ROOT
+    MOD --> GATE["verify_all 第 3 层<br/>文档键名契约"]
+```
+
+> ⚠️ **键名是 `env_prefix` 拼出来的，写错不会报错**：字段名与文档里的键对不上时，
+> 那个键被静默忽略、只剩代码默认值生效（默认值恰好等于期望值时表面完全看不出）。
+> 所以 `verify_all.py` 第 3 层加了一条机器校验：
+> `.env.example` 里出现过的每个 `MEDIA_*`（注释态的也算）都必须真能被 pydantic 读到。
+
+**为什么复用根配置**：`.pth` 文件（`.venv/Lib/site-packages/python_base_root.pth`）
+把仓库根加进了 `sys.path`，所以任何子目录里都能直接 `from config import settings`，
+不需要每个子项目各写一份配置类。
+
+### 4. 模型替代映射
+
+```mermaid
+flowchart LR
+    subgraph LOCAL["课案：本地部署（要 GPU 实例）"]
+        direction TB
+        L1["FunASR Nano-2512 + fsmn-vad<br/>纯文本转写"]
+        L2["seaco-paraformer + ct-punc<br/>句级 / 词级时间戳"]
+        L3["Fish-Speech 1.5<br/>声音克隆 TTS"]
+        L4["HeyGem / Duix Avatar<br/>唇形驱动"]
+    end
+
+    subgraph CLOUD["本项目：百炼托管 API（一个 DASHSCOPE_API_KEY）"]
+        direction TB
+        C1["qwen-audio-3.0-asr-flash<br/>一个接口同时给文本与时间戳"]
+        C2["CosyVoice 声音复刻<br/>create_voice + SpeechSynthesizer"]
+        C3["pixverse/pixverse-lipsync<br/>video + audio，或 video + tts_text"]
+    end
+
+    L1 --> C1
+    L2 --> C1
+    L3 --> C2
+    L4 --> C3
+```
+
+本机不需要 GPU、不下载任何权重；**保留本地不动的**是那些本来就不是"模型"的组件：
+`ffmpeg`、`moviepy`、`HyperFrames`(npm)、`yt-dlp`、`trafilatura`、Edge-TTS。
+
+### 5. 本地素材怎么变成接口能收的地址
+
+百炼的多个接口只认公网可访问的 URL，而素材都在本地。分流规则如下：
+
+```mermaid
+flowchart TD
+    A["本地素材<br/>图片 / 音频 / 视频"] --> Q1{"调的是哪个接口？"}
+    Q1 -->|"数字人对口型"| U1["tools/dashscope_upload<br/>→ oss://（48 小时有效）"]
+    Q1 -->|"ASR 且音频 ≤ 10MB"| U2["Base64 Data URI<br/>素材不落地"]
+    Q1 -->|"ASR 且音频 > 10MB"| U1
+    Q1 -->|"声音克隆 create_voice"| Q2{"有真正的 http(s) 地址吗？"}
+    Q2 -->|"配了 MEDIA_VOICE_REF_URL"| U3["直接用这个固定 URL"]
+    Q2 -->|"配了 MEDIA_ASSET_* 三项"| U4["tools/asset_host<br/>scp 上传 + nginx 只读分发"]
+    Q2 -->|"两者都没配"| D1["声音克隆不启用"]
+    U1 --> OK["接口调用成功"]
+    U2 --> OK
+    U3 --> OK
+    U4 --> OK
+    D1 --> D2["降级：edge-tts 通用音色<br/>或 PixVerse 内置音色"]
+```
+
+> ⚠️ **只有 `create_voice` 认不了 `oss://`**（实测 400 `audio url should start with http or https`），
+> 所以自建托管只需要为声音克隆准备；数字人**不需要**。
+
+### 6. 自检体系
+
+```mermaid
+flowchart TB
+    V["verify_all.py"]
+    V --> L1["第 1 层 · 模块自检（子进程跑各模块 __main__）<br/>15 个 tools/ + workflows/ 文件<br/>零密钥、纯逻辑断言"]
+    V --> L2["第 2 层 · 视图导入<br/>views/*.py 全部 import 成功"]
+    V --> L3["第 3 层 · 环境契约<br/>配置可读 + 依赖 API 形状 + 关键文件<br/>+ 降级路径 + 文档键名契约"]
+    V --> LX["附加 · 真实 API 调用<br/>（加 --live 才跑，要密钥）"]
+    L1 --> R["共 17 项检查<br/>任何一项失败即 exit 1"]
+    L2 --> R
+    L3 --> R
+```
+
+**离线也必须全绿**是这个项目的验收底线：所有自检都不联网、不消耗额度，
+包括需要付费接口的那几个模块（用打桩顶掉真实导入）。
+
+### 7. 运行时产物落在哪
+
+```mermaid
+flowchart LR
+    CACHE["Media_Agent/.cache/<br/>运行时产物，不入 Git"]
+    CACHE --> O1["videos/<br/>口播成片 + 配音音频"]
+    CACHE --> O2["mashup/<br/>剪辑沙箱<br/>= agent 的沙箱根"]
+    CACHE --> O3["avatars/<br/>上传的模特视频"]
+    CACHE --> O4["images/<br/>生成的配图"]
+    CACHE --> O5["voices.json<br/>克隆音色缓存"]
+```
+
+`videos/downloads/` 放下载回来的对标视频；`mashup/` 里的中间产物收在 `_scratch/` 下。
+这些目录都能用 `MEDIA_*_DIR` 覆盖，不配就用 `.cache` 下的默认绝对路径。
+
+> ⚠️ `voices.json` **不能删也不能每次重建**：CosyVoice 建音色有配额，
+> 丢了缓存会重新占用名额（指纹按 `路径 + 大小 + 修改时间` 算，所以移动源文件会重新建）。
 
 ---
 
@@ -181,6 +386,18 @@ Media_Agent/
 
 **链路**：`画像分析 → 对标账号搜索 → 定位方案生成`（串行 3 节点）
 
+```mermaid
+flowchart LR
+    S(["START"]) --> A["node_analyze<br/>写 profile"]
+    A --> B["node_competitors<br/>写 competitors"]
+    B --> C["node_plan<br/>写 plan"]
+    C --> E(["END"])
+
+    A -.->|"节点返回差量 dict"| ST[("PositioningState")]
+    B -.-> ST
+    C -.-> ST
+```
+
 **知识点**：
 - LangGraph 最小可用形态：一条直线 `START → analyze → competitors → plan → END`
 - 节点返回的是**差量 dict**（`{"profile": ...}`），不是完整 state
@@ -192,6 +409,24 @@ Media_Agent/
 **目标**：抓热点 → AI 筛选 → 生成选题建议。
 
 **链路**：`并行抓 5 平台 → 合并去重 → LLM 筛选 → 选题建议`
+
+```mermaid
+flowchart TB
+    S(["START"]) --> R{"route_fetch<br/>返回一串 Send(...)"}
+    R --> F1["fetch_douyin<br/>抖音"]
+    R --> F2["fetch_weibo<br/>微博"]
+    R --> F3["fetch_zhihu<br/>知乎"]
+    R --> F4["fetch_xiaohongshu<br/>小红书"]
+    R --> F5["fetch_bilibili<br/>B站"]
+    F1 --> M["node_filter<br/>隐式 join：5 条边都指向它"]
+    F2 --> M
+    F3 --> M
+    F4 --> M
+    F5 --> M
+    M --> G["node_suggest<br/>生成选题建议"]
+    G --> E(["END"])
+    M -.->|"Annotated[list, operator.add]<br/>并行结果自动合并"| ST[("HotTopicState")]
+```
 
 **知识点**：
 - LangGraph 的 **`Send` 并行**机制：`add_conditional_edges(START, route_fetch, [...])`
@@ -208,6 +443,22 @@ Media_Agent/
 
 **链路**：`下载视频 → ASR 提文案 → 拆解（5 维度）→ 仿写 → 生成标题`
 
+```mermaid
+flowchart LR
+    S(["START"]) --> A["node_extract<br/>下载 + ASR 提文案"]
+    A --> B["node_analyze<br/>拆解爆款结构<br/>temperature 0.6"]
+    B --> C["node_rewrite<br/>仿写新文案<br/>temperature 0.8"]
+    C --> D["node_titles<br/>生成 5 类标题"]
+    D --> E(["END"])
+    B -.-> F["LLM 失败时返回提示文本<br/>形如「LLM调用失败: ...」"]
+    C -.-> F
+    D -.-> F
+```
+
+> ⚠️ 失败提示文本**必须被当成"不可用"**：`_is_usable()` 会把
+> 「LLM调用失败 / LLM未配置」这两类前缀判为无效产出。
+> 曾经漏了这一判据，失败串被当作模型输出继续往下传，后面几步全白跑。
+
 **知识点**：
 - `extract_url()` 从抖音/小红书的分享口令混合文本里提取纯 URL
 - yt-dlp 用 **Python API**（不用 subprocess）：不依赖 PATH 里的可执行文件，
@@ -223,6 +474,38 @@ Media_Agent/
 **双模式**：
 - 📺 **提词器**：纯前端 HTML/JS 大字滚动（每次 3 行，1~15 秒/行可调），**不调任何模型**
 - 🎭 **数字人**：克隆音色 → TTS 配音 → 对口型 → MP4
+
+```mermaid
+flowchart LR
+    S(["START"]) --> T["node_teleprompter<br/>台词原样透传（提词器内容）"]
+    T --> G["node_generate_video<br/>数字人模式的真正工作在这里"]
+    G --> E(["END"])
+    G -.->|"mode = teleprompter 时<br/>函数内直接短路返回"| SKIP["不配音、不提交任务"]
+```
+
+> 图是**严格线性**的：`mode` 的分流发生在 `node_generate_video` **函数内部**，
+> 不是条件边。提词器模式也要走完两个节点，只是第二个节点什么都不做 ——
+> 这样页面拿到的 state 键始终完整，不用到处判空。
+
+**配音路由**（本项目自定义的语义，课案里没有「内置音色」这条用户可见的路）：
+
+```mermaid
+flowchart TD
+    ST(["数字人出片"]) --> C{"勾了「优先使用克隆音色」？"}
+    C -->|"勾了（默认）"| A1["克隆音色 CosyVoice<br/>需要真正的 http(s) 参考音频"]
+    A1 -->|失败| A2["edge-tts 通用音色"]
+    A2 -->|"也失败"| A3["PixVerse 内置 TTS"]
+    A1 -->|成功| B["音频驱动<br/>submit_lipsync(video, audio)"]
+    A2 --> B
+    C -->|"没勾"| A3
+    A3 --> D["文本驱动<br/>submit_lipsync(video, tts_text, speaker_id)"]
+    B --> T["提交异步任务，拿 task_code"]
+    D --> T
+    T --> P["页面「刷新进度」轮询<br/>完成后再下载到本地"]
+```
+
+> ⚠️ **模特视频要在跑 TTS 之前就校验存在性**：课案的顺序是先配音后检查，
+> 路径失效时会白白消耗一次合成额度。本项目补回了存在性判断。
 
 **知识点**：
 - **素材必须先换成可访问的资源 URL**：数字人走百炼临时存储（`tools/dashscope_upload.py` → `oss://`，48 小时有效），**不需要自建公网托管**；只有声音克隆的 `create_voice` 才要真正的 http(s)（走 `tools/asset_host.py`）
@@ -241,6 +524,29 @@ Media_Agent/
 
 **核心思路（课案原有）**：**不手写剪辑步骤**，把剪辑知识编码成 `.skills/video-use/SKILL.md`，
 让 DeepAgent 自己按手册调用 moviepy 完成。
+
+```mermaid
+flowchart TB
+    S(["START"]) --> E["node_edit_video<br/>把整包任务交给 deepagent"]
+    E --> AG
+    subgraph AG["edit 节点内部的 DeepAgents 循环（不是 LangGraph 节点）"]
+        direction TB
+        M["模型推理"] --> D{"下一步做什么？"}
+        D -->|"先读手册"| R["read_file<br/>/skills/video-use/SKILL.md"]
+        D -->|"写脚本"| W["write_file<br/>沙箱内 _scratch/"]
+        D -->|"跑脚本"| X["execute<br/>LocalShellBackend<br/>实际是 cmd.exe"]
+        R --> O["观察结果"]
+        W --> O
+        X --> O
+        O --> M
+        MW["_ToolErrorToMessage<br/>工具异常转成 ToolMessage<br/>而不是抛出去终结整轮"] -.-> D
+    end
+    AG --> F["node_find_output<br/>在沙箱里找成片<br/>os.walk 限深 3"]
+    F --> EN(["END"])
+```
+
+> 循环的**上限**由 LangGraph 的 `recursion_limit` 管（本项目 150）。
+> 课案没设上限；从 50 提到 150 是因为一次超时命令的降级重试就要吃掉十几个 super-step。
 
 **知识点**：
 - **DeepAgents 技能机制**：`create_deep_agent(skills=[技能父目录])`，
@@ -296,6 +602,19 @@ from moviepy.video.tools.subtitles import SubtitlesClip
 **目标**：抖音真实作品数据 → 漏斗诊断 / 内容评估 / 优化策略。
 
 **链路**：`采集作品数据 → 流量漏斗诊断 → 内容质量评估 → 优化策略生成`
+
+```mermaid
+flowchart LR
+    M1(["主图入口<br/>采集真实作品数据"]) --> F["node_funnel<br/>漏斗诊断"]
+    M2(["副图入口<br/>手动粘贴 JSON"]) --> F
+    F --> C["node_content<br/>内容评估"]
+    C --> S["node_suggest<br/>优化策略"]
+    S --> E(["END"])
+```
+
+> 两个入口**汇进同一条尾巴** —— `node_funnel` / `node_content` / `node_suggest`
+> 在两个图里是同一批函数，所以粘贴一份 JSON 也能跑出同一套诊断。
+> 降级入口不是"另写一条简化链路"，而是把采集那一环换掉。
 
 **知识点**：
 - 四个 LLM 节点串行，每个都用真实数据喂 prompt
@@ -376,6 +695,41 @@ Media_Agent 特有的：
 | `MEDIA_BGM_PATH` | 空 | 留空则不混音 |
 | `MEDIA_MASHUP_USE_HYPERFRAMES` | `false` | 剪辑动画素材的生成方式：`false`=moviepy 直接画（本机默认）；`true`=课案原方案 HyperFrames。本机 `init`/`render` 会卡到 300s 超时，故默认关 |
 | `MEDIA_VIDEO_OUTPUT_DIR` 等四个目录 | 注释掉 | 注释掉即用 `Media_Agent/.cache` 下的默认绝对路径 |
+
+---
+
+## 如何新增一个模块
+
+照着现成的六个模块抄一遍就行，顺序是**自下而上**（先工具、再工作流、最后页面），
+每层都有个「注册点」别漏：
+
+```mermaid
+flowchart LR
+    A["① tools/xxx_client.py<br/>调外部能力的函数<br/>失败返回空串/False"] --> B["② workflows/xxx.py<br/>LangGraph 图 + 节点<br/>末尾写 __main__ 离线自检"]
+    B --> C["③ views/xxx.py<br/>show_xxx() 收集输入 + 渲染"]
+    C --> D["④ main.py<br/>PAGES 与 ROUTES 各加一行"]
+    B --> E["⑤ verify_all.py<br/>MODULE_SELF_CHECKS 加一行"]
+    F["⑥ .env.example<br/>新键必须写成 MEDIA_*"] -.->|"漏了就红"| E
+```
+
+1. **`tools/xxx_client.py`** —— 一个文件包一个外部能力。约定：失败返回 `""` / `{"success": False}`
+   并打印中文提示，**不抛异常**（上层靠返回值判断，不靠 try）。
+2. **`workflows/xxx.py`** —— 建 `TypedDict` 状态 → 写节点函数（返回**差量 dict**）→ `add_node` / `add_edge`。
+   末尾必须有 `if __name__ == "__main__":` 离线自检：**打桩**顶掉真实网络调用，零密钥也能跑绿。
+3. **`views/xxx.py`** —— 只写 `show_xxx()`：收集输入 → 调 `run_xxx()` → 先存 `st.session_state` 再渲染。
+   页面上不要出现 `llm_call()` 或任何 HTTP 调用。
+4. **`main.py`** —— `PAGES` 与 `ROUTES` 两张表各加一行，侧边栏就有了。
+5. **`verify_all.py`** —— 把新工作流文件登记进 `MODULE_SELF_CHECKS`，
+   它才会进第 1 层自检（不登记 = 永远不校验）。
+6. **`.env.example`** —— 新增的配置项必须写成 `MEDIA_<字段名大写>`。
+   第 3 层的「文档键名契约」会拿模板里的键去反查 `MediaAgentSettings` 的字段，
+   **对不上直接判红**（这类错误没有报错、只有静默失效，所以必须机器拦）。
+
+改完跑一遍：
+
+```powershell
+& 'F:\ProGram\Python_Base\.venv\Scripts\python.exe' 'F:\ProGram\Python_Base\Media_Agent\verify_all.py'
+```
 
 ---
 

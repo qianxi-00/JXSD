@@ -79,12 +79,36 @@ def _add_history(action: str, summary: str) -> None:
     history.append({
         "time": datetime.now().strftime("%H:%M"),
         "action": action,
+        # 只截 200 字符：首页那行只展示摘要，整段输入（可能上千字）没必要一直占着内存
         "summary": summary[:200],
     })
 
 
 def show_positioning() -> None:
-    """账号定位页面（无参，供 main.py 路由调用）。"""
+    """账号定位页面（无参，供 main.py 路由调用）。
+
+    页面上的控件
+        · ``st.text_input``「你的职业」→ ``job``（可为空）
+        · ``st.text_area``「核心技能」→ ``skills``（可为空）
+        · ``st.text_area``「兴趣领域」→ ``interests``
+        · ``st.selectbox``「目标平台」→ ``platform``（抖音 / 小红书 / B站 / 视频号 / 全平台）
+        · ``st.button``「🚀 生成定位方案」→ 调 ``workflows.positioning.run_positioning()``
+        · 三个 Tab 里的 ``st.download_button``「📥 下载方案」
+
+    数据流
+        四个控件拼成一段带字段名的文本 ``user_input``（工作流把它原样塞进 prompt，
+        不做二次解析），交给 ``run_positioning()``；返回的 ``profile`` /
+        ``competitors`` / ``plan`` 分别渲染到「画像分析 / 对标账号 / 完整方案」三个 Tab。
+        整个 result 存进 ``st.session_state["pos_result"]``、输入原文存进
+        ``st.session_state["pos_input"]``，并往 ``st.session_state["history"]``
+        追加一条 —— 这三件事都只发生在按钮分支里（渲染分支每次 rerun 都会重放）。
+
+    失败时页面显示什么
+        · 职业与技能都空 → 黄条「请至少填写职业或技能再生成」，直接 return，不调工作流；
+        · 三块产出里任一块以 ``_FAIL_PREFIXES`` 的前缀开头 → 红条列出没跑成功的环节，
+          并提示去查根目录 ``.env`` 的 ``API_KEY`` / ``BASE_URL`` / ``MODEL_NAME``；
+        · 还没生成过（session_state 里没有 ``pos_result``）→ 蓝条引导先填信息再点按钮。
+    """
     st.title("🎯 账号定位智能体")
     st.markdown("输入你的背景信息，AI帮你制定专属的账号定位策划方案")
 
@@ -101,14 +125,24 @@ def show_positioning() -> None:
         platform = st.selectbox("目标平台", ["抖音", "小红书", "B站", "视频号", "全平台"])
 
     # ========== 生成 ==========
+    # width="stretch" 是 use_container_width=True 的替代写法：行为一致，
+    # 但后者在 streamlit 1.61 上会打弃用告警
     if st.button("🚀 生成定位方案", type="primary", width="stretch"):
+        # 只把「职业 / 技能」当必填：兴趣与平台在 prompt 里只是补充维度，
+        # 这两项全空时 LLM 手里没有任何可分析的信息，只能编
         if not job and not skills:
             st.warning("请至少填写职业或技能再生成")
             return
 
+        # 拼成一段带字段名的纯文本：工作流不解析，直接把整段塞进 prompt，
+        # 所以这里的字段名与行序就是 LLM 实际看到的输入格式
         user_input = f"职业：{job}\n技能：{skills}\n兴趣：{interests}\n目标平台：{platform}"
 
+        # 30~90 秒的依据：三个节点串行、每个节点一次 LLM 调用；
+        # 把预期写进 spinner，免得用户以为页面卡死又点一次
         with st.spinner("AI 正在分析你的画像（三步串行，约 30~90 秒）..."):
+            # 延迟到点击后才 import：这个模块导入时会建 LangGraph 图，
+            # 放在这里页面至少能先把标题与输入框渲染出来
             from workflows.positioning import run_positioning
 
             result = run_positioning(user_input)
@@ -122,6 +156,8 @@ def show_positioning() -> None:
     # ========== 从 session_state 恢复结果 ==========
     result = st.session_state.get("pos_result")
     if not result:
+        # falsy 判断同时覆盖「没生成过」与「生成过但 result 是空 dict」两种情况；
+        # 空白页会让人以为功能坏了，所以至少给一句操作引导
         st.info("填写上方信息后点击「生成定位方案」。")
         return
 
@@ -129,6 +165,8 @@ def show_positioning() -> None:
     competitors = result.get("competitors", "")
     plan = result.get("plan", "")
 
+    # startswith 接受元组，一次比对六个前缀；只认前缀而不认子串，
+    # 这样正文里恰好引用到「[LLM调用失败…」这类字样时不会误报
     failed = [
         name
         for name, value in (("画像分析", profile), ("对标账号", competitors), ("定位方案", plan))
@@ -142,14 +180,20 @@ def show_positioning() -> None:
         )
     else:
         st.success("✅ 方案生成完成！")
+    # 输入原文从 session_state 取，不用按钮分支里的局部变量 ——
+    # 渲染分支每次 rerun 都会重放，那时 user_input 早就不存在了
     st.caption(f"输入：{st.session_state.get('pos_input', '')}")
     tab1, tab2, tab3 = st.tabs(["📊 画像分析", "🔍 对标账号", "📝 完整方案"])
     with tab1:
+        # `or` 兜底是课案原文的措辞；工作流保证失败也回填中文提示，
+        # 所以真走到这里只可能是空串（给句占位文案好过一片空白）
         st.markdown(profile or "分析中...")
     with tab2:
         st.markdown(competitors or "搜索中...")
     with tab3:
         st.markdown(plan or "生成中...")
+        # data 传「渲染时刻」的 plan（本轮从 session_state 恢复出来的那份）：
+        # 下载按钮点击后会整页 rerun，按钮那次的局部变量那时已经不存在了
         st.download_button(
             "📥 下载方案",
             plan,

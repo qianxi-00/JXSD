@@ -58,19 +58,35 @@ _SKIP_MARK = "⚠️"
 
 
 def _add_history(action: str, summary: str) -> None:
-    """往本次操作记录里追加一条（首页展示最近 10 条）。"""
+    """往本次操作记录里追加一条（首页展示最近 10 条）。
+
+    ``main.py`` 已经初始化了 ``st.session_state.history``；
+    这里的 ``setdefault`` 只是让页面脱离 main.py 单独跑时也不炸。
+    """
     from datetime import datetime
 
     history = st.session_state.setdefault("history", [])
     history.append({
         "time": datetime.now().strftime("%H:%M"),
         "action": action,
+        # 只截 200 字符：首页那行只展示摘要，整段分享口令/链接没必要一直占着内存
         "summary": summary[:200],
     })
 
 
 def _build_report(result: dict, rep_url: str) -> str:
-    """把四段产出拼成一份可下载的 Markdown 复刻报告。"""
+    """把四段产出拼成一份可下载的 Markdown 复刻报告。
+
+    纯字符串拼接，不读 ``st.session_state`` —— 两个入参由调用方取好传进来。
+
+    Args:
+        result: ``run_replicate()`` 的返回 dict，取 ``original_text`` /
+            ``viral_analysis`` / ``rewritten`` / ``titles`` 四段。
+        rep_url: 生成这次结果时的来源链接（不是当前输入框里的值）。
+
+    Returns:
+        完整 Markdown 文本；四段里缺哪段就在报告里留空，不抛异常。
+    """
     from datetime import datetime
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -109,19 +125,45 @@ def _build_report(result: dict, rep_url: str) -> str:
 
 
 def show_replicate() -> None:
-    """内容复刻页面（无参，供 main.py 路由调用）。"""
+    """内容复刻页面（无参，供 main.py 路由调用）。
+
+    页面上的控件
+        · ``st.text_input``「📎 视频链接」→ 允许「分享口令 + 链接」的混合文本
+        · ``st.button``「🔄 分析 & 仿写」→ 调 ``workflows.replicate.run_replicate()``
+        · 四个 Tab（原文案 / 爆款拆解 / 仿写文案 / 标题）里的两个 ``st.text_area``
+        · 两个 ``st.download_button``：「📥 下载仿写文案」「📥 下载完整复刻报告」
+
+    数据流
+        ``run_replicate()`` 返回的四个字段分别进四个 Tab；整个 result 存
+        ``st.session_state["rep_result"]``、来源链接存 ``["rep_url"]``；
+        每次生成还把 ``["rep_run_id"]`` 加一（下一次生成时控件 key 全换新，见模块
+        docstring 的「踩过的坑」）。历史在按钮分支里追加一条。
+
+    失败时页面显示什么
+        · 链接为空 → 黄条「请输入链接」，直接 return，不调工作流；
+        · 提取阶段就断了（下载失败 / 视频没有音轨 / 无有效文案）→ 工作流把
+          「卡在哪一步」的中文说明以 ``⚠️`` 开头回填到 ``original_text``，
+          页面用红条把这段原文显示出来（不是另写一句「失败了」）。
+    """
     st.title("📝 内容复刻智能体")
     st.markdown("粘贴爆款视频/文章链接 → 提取文案 → 拆解爆款公式 → 仿写新文案")
 
+    # 不做格式校验：工作流会用正则从整段文本里抠链接，
+    # 所以「分享口令 + 链接」混在一起粘贴也是合法的输入
     url = st.text_input("📎 视频链接", placeholder="粘贴抖音/B站链接，或公众号/知乎文章链接...")
 
     # ========== 分析 & 仿写 ==========
     if st.button("🔄 分析 & 仿写", type="primary", width="stretch"):
+        # 空链接连下载都无从谈起，提前 return，免得白跑一次 yt-dlp
         if not url:
             st.warning("请输入链接")
             return
 
+        # 这是全项目最慢的一条链路（下载 → ASR → 3 次 LLM），
+        # 把三段的量级都写进 spinner，用户才知道等多久算正常
         with st.spinner("提取文案并分析中（下载 + 语音识别 + 3 次 LLM，可能需要 1~3 分钟）..."):
+            # 延迟 import：这里会拉起 yt-dlp / 百炼 ASR 客户端，
+            # 放在函数内，页面至少能先把标题与输入框渲染出来
             from workflows.replicate import run_replicate
 
             result = run_replicate(url)
@@ -129,7 +171,8 @@ def show_replicate() -> None:
         # 存入 session_state 防止下载按钮触发 rerun 后丢失
         st.session_state["rep_result"] = result
         st.session_state["rep_url"] = url
-        # 每次生成换一组控件 key，避免输入框顽固地显示上一次的文案
+        # 每次生成换一组控件 key，避免输入框顽固地显示上一次的文案。
+        # 计数器只增不减：键名跟着变，旧控件连同它在 session_state 里的旧值一起被回收
         st.session_state["rep_run_id"] = st.session_state.get("rep_run_id", 0) + 1
         _add_history("内容复刻", url)
 
@@ -139,6 +182,8 @@ def show_replicate() -> None:
         st.info("粘贴链接后点击「分析 & 仿写」。")
         return
 
+    # 两个值都从 session_state 取：渲染分支每次 rerun 都会重放，
+    # 而按钮分支的局部变量（url）在那时已经不存在了
     rep_url = st.session_state.get("rep_url", "")
     run_id = st.session_state.get("rep_run_id", 0)
 
@@ -149,6 +194,8 @@ def show_replicate() -> None:
 
     st.caption(f"来源：{rep_url}")
 
+    # 工作流短路时把「卡在哪一步」的中文说明以 ⚠️ 开头回填到这个字段，
+    # 直接把原文当错误消息显示 —— 比另写一句「失败了」信息量大得多
     if original.startswith(_SKIP_MARK):
         st.error(original)
     else:
@@ -156,11 +203,16 @@ def show_replicate() -> None:
 
     tabs = st.tabs(["📄 原文案", "🔍 爆款拆解", "✍️ 仿写文案", "🏷️ 标题"])
     with tabs[0]:
+        # 用可编辑的 text_area 而不是 markdown：原文是要被选中、复制走再改的
         st.text_area("原文", original, height=200, key=f"rep_orig_{run_id}")
     with tabs[1]:
+        # `or "（无）"` 兜底：LLM 段失败时字段可能是空串，
+        # 空白的 Tab 看着像「还没跑完」而不是「这段没有内容」
         st.markdown(analysis or "（无）")
     with tabs[2]:
         st.text_area("仿写结果", rewritten, height=200, key=f"rep_new_{run_id}")
+        # data 用渲染时刻的 rewritten（本轮从 session_state 恢复的），
+        # 不用按钮那次的局部变量
         st.download_button(
             "📥 下载仿写文案",
             rewritten,
@@ -178,6 +230,7 @@ def show_replicate() -> None:
     st.download_button(
         "📥 下载完整复刻报告",
         report,
+        # 文件名带分钟级时间戳：连下几次不会互相覆盖
         file_name=f"内容复刻报告_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
         mime="text/markdown",
         width="stretch",

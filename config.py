@@ -437,9 +437,20 @@ class MediaAgentSettings(BaseSettings):
         return str(path)
 
     def get_video_output_dir(self) -> str:
+        """口播视频成片与配音音频的落盘目录（``.cache/videos``）。
+
+        Returns:
+            绝对路径字符串，目录已确保存在。课案里这个值是个硬编码的绝对路径，
+            本项目改成 ``MEDIA_VIDEO_OUTPUT_DIR``（留空即用默认值）。
+        """
         return self._resolve(self.video_output_dir or ".cache/videos", MEDIA_AGENT_DIR)
 
     def get_image_output_dir(self) -> str:
+        """图片生成产物的落盘目录（``.cache/images``）。
+
+        Returns:
+            绝对路径字符串，目录已确保存在。
+        """
         return self._resolve(self.image_output_dir or ".cache/images", MEDIA_AGENT_DIR)
 
     # ---- 剪辑素材的生成方式 ----
@@ -457,9 +468,27 @@ class MediaAgentSettings(BaseSettings):
     mashup_use_hyperframes: bool = False
 
     def get_avatar_input_dir(self) -> str:
+        """数字人模特视频的目录（``.cache/avatars``）。
+
+        页面上传的模特视频会被保存到这里，数字人页面下拉框列的就是这个目录下的视频。
+        列表按 ``views/video.py`` 里的 ``VIDEO_EXTS`` 过滤 —— 数字人需要一段会说话的
+        真人视频，照片驱动不了口型，所以照片放进来也不会出现在候选里。
+
+        Returns:
+            绝对路径字符串，目录已确保存在。
+        """
         return self._resolve(self.avatar_input_dir or ".cache/avatars", MEDIA_AGENT_DIR)
 
     def get_mashup_work_dir(self) -> str:
+        """视频剪辑的**沙箱根目录**（``.cache/mashup``）。
+
+        deepagent 的 ``LocalShellBackend(root_dir=...)`` 就指到这里，
+        它写在 ``WORK_DIR`` 里的脚本与产物全都在这个目录内 ——
+        所以这个值同时也是「agent 能碰到的文件边界」，改动它等于改沙箱范围。
+
+        Returns:
+            绝对路径字符串，目录已确保存在。
+        """
         return self._resolve(self.mashup_work_dir or ".cache/mashup", MEDIA_AGENT_DIR)
 
 

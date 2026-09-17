@@ -48,6 +48,16 @@
       调用没清干净）。现在的做法：每个用例开头 `clear_calls()`，
       `finally` 只负责还原被替换的函数、不动调用记录。
 
+    · 自检里那句 `llm_call = _stub_llm`（带 `# noqa: F841`）看着像一条写了没用的赋值，
+      其实是**打桩能不能生效的关键**：`if __name__` 块在**模块作用域**执行，
+      这一行重新绑定的是 `replicate` 自己的全局名 `llm_call`，
+      而节点函数是运行时才按全局名去查的 —— 所以它确实把 LLM 换掉了。
+      一旦把它挪进某个函数里变成普通局部变量，桩就再也打不上，
+      自检会真去联网调模型（而且看起来还是「通过」的）。
+    · 下载 / ASR / 抓取三个依赖同理，必须用 `globals()[...] = ...` 改写**本模块**的
+      全局名：节点读的是 `replicate.download_video`，去改 `tools.media_tools` 里
+      那几个原函数对节点没有任何影响。
+
 运行方式
     离线自检（不联网、不下载视频）::
 
@@ -107,7 +117,18 @@ def _is_usable(text: str) -> bool:
     ``fallback=`` 上 —— 以后加新节点，只要沿用节点现有的写法，就自动继承
     「上游不可用就别往下传」；靠每个调用点自己记得传 ``fallback=_SKIP_MARK``
     更脆，新增一处忘了传就重新踩同一个坑。
+
+    Args:
+        text: 上游写进 state 的文本。允许空串，也容忍 ``None``
+            （调用点已经先做过 ``state.get(...) or ""``，这里再兜一次，
+            是为了让这个判据自己站得住 —— 传 ``None`` 进来不该 AttributeError）。
+
+    Returns:
+        ``True`` = 可以把它塞进 prompt 继续往下走；
+        ``False`` = 必须短路，往下传 ``_SKIP_MARK`` 文案而不是拿它调 LLM。
     """
+    # ``or ""`` 兜 None；``strip()`` 顺带把「只有换行/空格」的文案也判成不可用 ——
+    # 那种文案喂给模型，它会一本正经地为空内容编一篇拆解出来。
     value = (text or "").strip()
     if not value or value.startswith(_SKIP_MARK):
         return False
@@ -132,6 +153,20 @@ def node_extract(state: ReplicateState) -> dict:
 
     课案这里只有 ``download_video`` + ``extract_audio_text`` 两行。
     本实现补了三件事：洗链接、判空、文章兜底 —— 都是「跑真实链接」才会遇到的问题。
+
+    Args:
+        state: 只读 ``source_url``（可带分享口令）。
+
+    Returns:
+        差量 dict，且**只含** ``original_text``：
+
+        * 成功 → 转写/抓取到的正文；
+        * 两条路都失败 → ``⚠️`` 开头的中文提示，**不是空串** ——
+          空串在下游看不出「断在第 1 步」，也没法告诉用户可能的原因。
+
+    Raises:
+        不抛异常。整段包在 ``try`` 里，任何一步炸了都转成 ``⚠️`` 文案写回 state；
+        这是本模块的统一约定：失败也要让链路走完，页面才看得见断在哪。
     """
     try:
         raw = state.get("source_url", "") or ""
@@ -141,17 +176,29 @@ def node_extract(state: ReplicateState) -> dict:
 
         text = ""
         # ---- 主链路：视频下载 → 语音识别 ----
+        # `download_video` 的契约是**失败返回空串、绝不抛异常**（工具层刻意不抛，
+        # 见 `tools/media_tools.py`）：链接不是视频、本机没装 yt-dlp、被平台反爬、
+        # 解析结果为空 …… 全走这一条返回。所以这里判的是 `if video_path`，
+        # 拿 `""` 去调 ASR 只会多打一行「路径为空」的日志。
         video_path = download_video(url)
         if video_path:
+            # 这一步内部串了两跳：FFmpeg 抽单声道音频 → 百炼 qwen-audio-3.0-asr-flash
+            # 转写；本机缺 ffmpeg 时它会退回「让识别服务直接吃视频文件」那条路。
+            # 同样以空串表示失败，真因由 tools 层打印（未配 DASHSCOPE_API_KEY 等）。
             text = extract_audio_text(video_path)
         else:
             print("[内容复刻] 视频下载失败（链接不是视频 / 未装 yt-dlp / 被反爬）")
 
         # ---- 兜底：当文章抓（图文链接，或视频链路没拿到文案）----
+        # 课案流程图写的是「下载视频 / 抓取文章」二选一，但课案代码只实现了视频那半；
+        # 知乎/公众号这类图文链接本来就没有视频可下，视频链路空手而归时也全靠它救。
         if not text:
             print("[内容复刻] 改走文章抓取兜底...")
             text = fetch_article(url)
 
+        # 走到这里还空 → 链路到此为止：返回的文案以 `_SKIP_MARK` 开头，
+        # 下游三个节点过 `_is_usable` 时全部判 False、逐级往后传提示，
+        # 最终**一次 LLM 都不调**（这就是本文件相对课案多出来的那条短路）。
         if not text:
             print("[内容复刻] 视频与文章两条路都没拿到文案，链路将在此停下")
             return {"original_text": (
@@ -168,13 +215,30 @@ def node_extract(state: ReplicateState) -> dict:
 
 
 def node_analyze(state: ReplicateState) -> dict:
-    """节点②：拆解爆款要素（钩子/结构/情绪/金句/互动引导）。"""
+    """节点②：拆解爆款要素（钩子/结构/情绪/金句/互动引导）。
+
+    Args:
+        state: 只读 ``original_text``。
+
+    Returns:
+        差量 dict，且**只含** ``viral_analysis``：
+
+        * 正常 → LLM 输出的五维拆解文本；
+        * 上游不可用（``_is_usable`` 为 False）→ ``⚠️`` 提示，**不调 LLM**；
+        * LLM 自己失败 → 原样保留失败串 ``[LLM调用失败: …]`` / ``[LLM未配置] …``。
+
+    Raises:
+        不抛异常：失败转成 ``⚠️`` 文案写回 state。
+    """
     try:
         original_text = state.get("original_text", "") or ""
         if not _is_usable(original_text):
             print("[内容复刻] 没有可用文案，跳过爆款拆解")
             return {"viral_analysis": f"{_SKIP_MARK} 上游没拿到文案，无法拆解爆款结构。"}
 
+        # 【prompt 契约】输入＝上一步的原始文案全文（不截断）；输出＝五维拆解文本
+        # （钩子类型 / 结构模板 / 情绪节奏 / 金句亮点 / 互动引导）。
+        # 这段 prompt 与课案**逐字一致**：拆解维度是本章的核心资产，改它等于换课。
         prompt = f"""拆解以下爆款文案的结构：
 
 {original_text}
@@ -187,6 +251,11 @@ def node_analyze(state: ReplicateState) -> dict:
 5. **互动引导**（点赞/评论/关注的引导方式）
 """
         print("[内容复刻] ② 拆解爆款要素中...")
+        # 「拆解要稳」（判断题）→ 温度 0.6，取值依据见文件头的 `_TEMP_ANALYZE`。
+        # `llm_call` **绝不抛异常**：失败时它返回 `[LLM调用失败: …]` / `[LLM未配置] …`，
+        # 这里刻意**原样写进 state**（不换成 `_SKIP_MARK`）—— 报错原文比一句
+        # 「拆解出错」更能定位问题；而下游 `_is_usable` 认这个前缀，照样短路，
+        # 所以「留下真因」和「不该继续往下跑」两件事不冲突。
         return {"viral_analysis": llm_call(prompt, temperature=_TEMP_ANALYZE)}
     except Exception as exc:  # noqa: BLE001
         print(f"[内容复刻] ② 爆款拆解失败: {exc}")
@@ -194,14 +263,33 @@ def node_analyze(state: ReplicateState) -> dict:
 
 
 def node_rewrite(state: ReplicateState) -> dict:
-    """节点③：按同一结构模板仿写新文案。"""
+    """节点③：按同一结构模板仿写新文案。
+
+    Args:
+        state: 读两个字段 —— ``viral_analysis`` 用于判短路，``original_text``
+            作为 prompt 里的「参考原文」。
+
+    Returns:
+        差量 dict，且**只含** ``rewritten``：仿写好的新文案；
+        上游不可用时不调 LLM，直接给 ``⚠️`` 提示；LLM 失败则保留失败串原文。
+
+    Raises:
+        不抛异常：失败转成 ``⚠️`` 文案写回 state。
+    """
     try:
         viral_analysis = state.get("viral_analysis", "") or ""
         original_text = state.get("original_text", "") or ""
+        # 短路**只认** `viral_analysis`：它是上一步的产出，也是链路断点的唯一信号。
+        # `original_text` 虽然也读，但它只是 prompt 里的参考材料 ——
+        # 拿不到它的情况在节点②就已经短路了，轮不到这里判。
         if not _is_usable(viral_analysis):
             print("[内容复刻] 没有爆款拆解结果，跳过仿写")
             return {"rewritten": f"{_SKIP_MARK} 缺少爆款拆解结果，无法仿写。"}
 
+        # 【prompt 契约】输入＝① 上一步的五维拆解（决定结构模板）
+        #                      ② 原始文案（决定内容与篇幅基准）
+        # 输出＝一篇「同类不同题」的新文案，字数被要求压在原文的 80%~120%。
+        # 同样是课案原文，不改。
         prompt = f"""根据以下爆款分析，仿写一篇新文案：
 
 【爆款要素分析】
@@ -217,6 +305,7 @@ def node_rewrite(state: ReplicateState) -> dict:
 - 字数控制在原文的80%-120%
 """
         print("[内容复刻] ③ 仿写新文案中...")
+        # 「仿写要活」（创作题）→ 温度 0.8；失败串的处理同节点②（原样写回 state）。
         return {"rewritten": llm_call(prompt, temperature=_TEMP_CREATIVE)}
     except Exception as exc:  # noqa: BLE001
         print(f"[内容复刻] ③ 仿写失败: {exc}")
@@ -224,13 +313,26 @@ def node_rewrite(state: ReplicateState) -> dict:
 
 
 def node_titles(state: ReplicateState) -> dict:
-    """节点④：为仿写文案生成 5 种类型的爆款标题。"""
+    """节点④：为仿写文案生成 5 种类型的爆款标题。
+
+    Args:
+        state: 只读 ``rewritten``（**不读**原文与拆解 —— 标题要贴着新文案写）。
+
+    Returns:
+        差量 dict，且**只含** ``titles``：5 种类型各一行的标题文本；
+        上游不可用时不调 LLM，直接给 ``⚠️`` 提示；LLM 失败则保留失败串原文。
+
+    Raises:
+        不抛异常：失败转成 ``⚠️`` 文案写回 state。
+    """
     try:
         rewritten = state.get("rewritten", "") or ""
         if not _is_usable(rewritten):
             print("[内容复刻] 没有仿写结果，跳过标题生成")
             return {"titles": f"{_SKIP_MARK} 缺少仿写文案，无法生成标题。"}
 
+        # 【prompt 契约】输入＝仿写后的文案；输出＝5 种类型各一条标题
+        # （数字型 / 疑问型 / 痛点型 / 悬念型 / 命令型，每条 ≤25 字）。
         prompt = f"""为以下文案生成5个爆款标题：
 
 {rewritten}
@@ -244,6 +346,7 @@ def node_titles(state: ReplicateState) -> dict:
 每个标题不超过25字。
 """
         print("[内容复刻] ④ 生成标题中...")
+        # 温度 0.8 同节点③；失败串的处理同节点②。
         return {"titles": llm_call(prompt, temperature=_TEMP_CREATIVE)}
     except Exception as exc:  # noqa: BLE001
         print(f"[内容复刻] ④ 标题生成失败: {exc}")
@@ -253,6 +356,13 @@ def node_titles(state: ReplicateState) -> dict:
 # ==========================================================================
 # 构建图：START → extract → analyze → rewrite → titles → END
 # ==========================================================================
+# 为什么是「一条直线的 4 节点串行」而不是带 `add_conditional_edges` 的分支：
+# 短路靠**节点内部**返回 `⚠️` 文案 + 下游 `_is_usable` 判断，不靠图上的条件边。
+# 好处是图的形状恒定（自检就把它钉成 4 节点 5 边），四个字段在任何路径下都存在，
+# `run_replicate`/前端直接取就行，不会因为「某个键没被写过」而 KeyError
+# （LangGraph 的 invoke 只返回写过的键）。
+# 代价是链路断了也会照常把后面几个节点走一遍 —— 但那些节点一次 LLM 都不调，
+# 真实开销只是几次空转。
 builder = StateGraph(ReplicateState)
 builder.add_node("extract", node_extract)
 builder.add_node("analyze", node_analyze)
@@ -283,6 +393,10 @@ def run_replicate(url: str) -> dict:
         （例外：中断的正是某一步的 LLM 调用时，该字段保留 ``[LLM调用失败: …]`` /
         ``[LLM未配置] …`` 原文 —— 报错原文比 ``⚠️`` 更能说明问题，
         而它后面的字段照旧以 ``⚠️`` 短路）。
+
+    Raises:
+        无。图本身出错也被 ``try`` 兜住、写成 ``⚠️`` 文案 —— 课案没有这一层，
+        单点异常会直接抛给 Streamlit 页面。
     """
     try:
         result = replicate_graph.invoke({"source_url": url or ""})
@@ -303,7 +417,11 @@ def run_replicate(url: str) -> dict:
 # 离线自检
 # ==========================================================================
 def _live_check(url: str = "") -> None:
-    """真实联网跑一次（下载视频 + ASR + LLM）—— 只在 ``--live`` 时执行。"""
+    """真实联网跑一次（下载视频 + ASR + LLM）—— 只在 ``--live`` 时执行。
+
+    Args:
+        url: 视频/文章链接；空串则改为在控制台交互式询问（输入为空就跳过）。
+    """
     print("\n=== 真实联网跑一次（--live）===")
     if not url:
         url = input("粘贴一个视频/文章链接: ").strip()
@@ -351,19 +469,40 @@ if __name__ == "__main__":
     print("  ✓ ReplicateState 字段与契约一致")
 
     # ---- 3) 打桩：下载 / ASR / 文章抓取 / LLM 全换成本地假数据 ----
+    # **为什么必须打桩**：这四件事没有一个是本地的 ——
+    #   ① `download_video` 要连 B站/抖音/小红书（还会被反爬）；
+    #   ② `extract_audio_text` 是百炼付费 ASR；
+    #   ③ `fetch_article` 要真去请求网页；
+    #   ④ `llm_call` 一次调用就是钱。
+    # 而自检要把「视频链路 / 文章兜底 / 两条都失败 / LLM 失败串」四种分支都跑一遍，
+    # 所以只能把它们换成「返回值可控」的假实现，让整条图真的跑起来
+    # （而不是只断言节点函数存在）。跑完在 `finally` 里还原：
+    # 自检不能把模块留在打桩状态，否则 `import` 它的页面会拿到假函数。
     _real_download = download_video
     _real_asr = extract_audio_text
     _real_article = fetch_article
     _real_llm = llm_call
 
+    # 调用记录：断言「谁被调了、调了几次、参数是什么」全靠它
     calls: dict[str, list] = {"download": [], "asr": [], "article": [], "llm": []}
 
     def _stub_llm(prompt: str, temperature: float = 0.5, fallback: str = "") -> str:
+        """顶掉 `llm_call` 的桩：记下调用参数，返回 ``[STUB-N]`` 这种可判定的回显。
+
+        回显里带序号（而不是固定字符串）是为了让断言能验证「节点③拿到的 prompt
+        里确实有节点②的产出」—— 见 3a) 的 ``"[STUB-1]" in calls["llm"][1][0]``。
+        签名必须与真 `llm_call` 一致（含 `fallback`），节点是按关键字传的。
+        """
         calls["llm"].append((prompt, temperature))
         return f"[STUB-{len(calls['llm'])}]"
 
     def wire(download_result: str, asr_result: str, article_result: str) -> None:
-        """把四个外部依赖换成可编排的桩。"""
+        """把三个 I/O 依赖换成「返回指定结果」的桩，用来编排分支。
+
+        返回值由调用方给，所以同一套桩既能演「下载成功」，也能演「下载失败」：
+        ``wire("C:/fake/demo.mp4", "文案", "")`` 是视频链路，
+        ``wire("", "", "文章正文")`` 是文章兜底，``wire("", "", "")`` 是两条都断。
+        """
         def _stub_download(url: str, output_dir: str = None) -> str:
             calls["download"].append(url)
             return download_result
@@ -376,11 +515,16 @@ if __name__ == "__main__":
             calls["article"].append(url)
             return article_result
 
+        # **为什么改的是 `globals()` 而不是 `tools.media_tools` 里的原函数**：
+        # 本文件在模块顶部做过 `from tools.media_tools import download_video`，
+        # 名字已经绑到**本模块**的全局命名空间，节点运行时按全局名去查；
+        # 替换 `tools.media_tools` 下的实现对节点毫无影响。
         globals()["download_video"] = _stub_download
         globals()["extract_audio_text"] = _stub_asr
         globals()["fetch_article"] = _stub_article
 
     def clear_calls() -> None:
+        """清空四条调用记录 —— 每个用例**开头**调一次（不是 `finally`，见文件头）。"""
         for value in calls.values():
             value.clear()
 
@@ -393,6 +537,11 @@ if __name__ == "__main__":
         globals()["extract_audio_text"] = _real_asr
         globals()["fetch_article"] = _real_article
 
+    # 这一行**不是**无用赋值：`if __name__` 块在模块作用域执行，
+    # 所以它重新绑定的是本模块的全局名 `llm_call` —— 节点运行时才按全局名去查，
+    # 桩因此生效（`# noqa: F841` 只是让 linter 别再报「局部变量没用」）。
+    # 一旦把它挪进某个函数里变成普通局部变量，桩就再也打不上，
+    # 自检会真的联网调模型（见文件头「踩过的坑」）。
     llm_call = _stub_llm  # noqa: F841
 
     try:
@@ -447,6 +596,11 @@ if __name__ == "__main__":
         print("  ✓ 文案拿不到时短路：4 个字段都给中文提示，0 次 LLM")
 
         # 3e) 空链接
+        #     注意这一条**只验了工作流侧的行为**（空串进来不崩、短路）。
+        #     下面那句 print 说的「download_video/fetch_article 都白名单拒了空串」
+        #     是**工具层**的性质，此刻三个函数已被桩替换、桩并不做白名单判断，
+        #     所以那句话在离线自检里其实没被验证 —— 真正的覆盖在
+        #     `tools/media_tools.py` 自己的自检里（`download_video("") == ""`）。
         clear_calls()
         wire("", "", "")
         empty_result = run_replicate("")
@@ -458,13 +612,20 @@ if __name__ == "__main__":
         #     rewrite 与 titles 必须短路 —— 否则会拿着报错去编仿写，还白烧 2 次 LLM。
         #     （两把 key 相互独立，「ASR 配了、LLM 没配」是可达组合。）
         def _make_fail_llm(text: str, counter: list):
-            """造一个「一调就返回失败串」的 llm_call 桩（两种失败串复用同一份）。"""
+            """造一个「一调就返回失败串」的 llm_call 桩（两种失败串复用同一份）。
+
+            与 `_stub_llm` 的区别：它把调用记在**自己的** counter 里（不是共享的
+            `calls["llm"]`），因为这组用例的判据就是「总共被调了几次」，
+            单独计数才不会被前一个用例的残留干扰。
+            """
             def _stub(prompt: str, temperature: float = 0.5, fallback: str = "") -> str:
                 counter.append((prompt, temperature))
                 return text
 
             return _stub
 
+        # 两种失败串各跑一遍：它们前缀不同（`[LLM调用失败` / `[LLM未配置`），
+        # 而 `_LLM_FAIL_PREFIXES` 是一个元组 —— 只测其中一种会漏掉另一种没配上的情况。
         for label, fail_text in (
             ("调用失败", "[LLM调用失败: boom]"),
             ("未配置", "[LLM未配置] 根目录 .env 里没有 API_KEY。"),
@@ -473,6 +634,8 @@ if __name__ == "__main__":
             wire("C:/fake/demo.mp4", "大家好，今天讲三个提升效率的AI工具。", "")
             fail_calls: list = []
 
+            # 同样是模块级重绑定（见上文 `llm_call = _stub_llm` 处的注释），
+            # 这一轮把 LLM 换成「一调就返回失败串」的桩。
             llm_call = _make_fail_llm(fail_text, fail_calls)  # noqa: F841
             fail_result = run_replicate("https://www.bilibili.com/video/BV1xx")
 
@@ -485,6 +648,8 @@ if __name__ == "__main__":
             assert fail_result["titles"].startswith(_SKIP_MARK), fail_result["titles"]
             print(f"  ✓ LLM {label}串不算正文：只调 1 次 LLM，后续 2 个节点逐级短路")
     finally:
+        # 还原三个 I/O 依赖与 LLM 桩。**故意不清 `calls`** ——
+        # 断言失败时 traceback 里的 message 持有的是同一个 list，清空等于把证据抹掉。
         reset_globals()
         llm_call = _real_llm
 

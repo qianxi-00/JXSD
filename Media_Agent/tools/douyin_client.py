@@ -59,9 +59,40 @@ reload 要起监督进程 + 子进程（多进程 + /dev/shm，容器里默认�
     ⚠️ 上游 v5（现 main 分支）改成了 ``/api/v1/...`` 且要 API Key，本文件按 v4 写；
     换版本 / 换挂载前缀时**只改下面的 ``ENDPOINT_USER_POST_VIDEOS`` 常量**即可。
 
+⚠️ 采集端点现状：**必失败**，所以本模块的主路径是手动粘贴（2026-09 实测）
+    ``GET /fetch_user_post_videos`` 落到上游抖音 ``aweme/v1/web/aweme/post/`` 会被固定回
+    **403**，真因是**上游请求签名 ``a_bogus`` 的算法停在 2025-03**（V4.1.2 就是那时构建的；
+    换 2025-10 的新镜像 tag 里还是同一份 V4.1.2 代码，签名没变，一样 403）。三条判据：
+      · 同一容器、同一份 Cookie，``/handler_user_profile`` 能正常返回 200
+        ⇒ Cookie 与网络都是好的；
+      · 换**任意公开大号**打同一端点，同样 400/403，且宿主机与容器出口 IP 一致
+        ⇒ 不是账号被风控、也不是出口 IP 被墙；
+      · 把 Cookie 注入容器内配置文件之后，``handler_user_profile`` 立刻可用，
+        但 ``aweme/post`` 仍 403 ⇒ 再一次证明不是 Cookie。
+    ⇒ **换 Cookie / 换账号 / 换镜像 tag 都救不回来**。官方 README 也写明
+    「v4 has **no identity pool**」—— v5 才有修这类问题的自维护身份池。
+
+    Cookie 有两份，**只有第二份参与上游采集请求**：
+      · HTTP 请求头里那份（``fetch_user_videos()`` 发的）**服务端不转发给抖音** ——
+        实测「带 Cookie」与「不带 Cookie」返回完全相同的 400；
+      · 真正生效的是**容器内** ``crawlers/douyin/web/config.yaml`` 里那份，
+        由 ``deploy/start_api.py`` 启动时从根 .env 的 ``MEDIA_DOUYIN_COOKIE`` 注入。
+      · 唯一例外是 ``_resolve_self_sec_uid()``：它直连 douyin.com、不经过自托管服务，
+        那里的请求头 Cookie **是真的在生效** —— 这也正好解释了「为什么同一个头，
+        ``/user/self`` 能成功、采集端点却 400」。
+
+    ⇒ 所以本模块的实际用法是：**采集路径只负责给出可读的真因提示**，
+    真正跑得通的是降级入口 ``parse_manual_json()``（页面上「📋 手动粘贴作品数据」）。
+    它后面接的漏斗诊断 / 内容评估 / 优化策略三个 LLM 节点与采集路径**完全一样**，
+    只是数据要手工取。这条降级路径已真跑验证过 —— 见 ``VERIFY_REPORT.md``
+    第 5.3 节与第 8 节第 4 条。
+
 踩过的坑
     · 本机很可能**没有跑这个 Docker 服务**，且 agent 无权启动它 ——
       所以所有对外函数都按「服务不可达」这条路径设计，绝不抛异常。
+    · **对外函数一律不抛异常、只返回带中文 ``error`` 的 dict**（含探活 ``is_available()``）：
+      这些函数在 Streamlit 页面里被直接调，抛出去会把整页打成红色堆栈，
+      而降级入口本来就能兜住 —— 宁可返回结构化错误让页面自己提示。
     · 抖音原始数据里 ``video.duration`` 是**毫秒**（课案也是 /1000）；
       但手动粘贴的数据里常直接写 ``45`` 或 ``"45秒"``，所以 ``_to_duration_text()`` 两种都认。
     · 只有本人主页才有真实播放量，别人的主页 ``play_count`` 恒为 0 ——
@@ -81,6 +112,8 @@ import requests
 
 from config import settings
 
+# Windows 控制台默认按 GBK 编码输出，而本模块的日志与自检里有 emoji（✅ ⚠️ 📋），
+# 不改流编码会直接 UnicodeEncodeError 把自检打挂。tools/ 下各模块统一这么做。
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -114,6 +147,9 @@ _LIST_KEYS = ("aweme_list", "awemeList", "items", "list")
 # 需要再往里钻一层的信封键
 _ENVELOPE_KEYS = ("data", "aweme_detail", "result")
 
+# 伪装成浏览器 UA：抖音（以及它前面的 Cloudflare）对 ``python-requests`` 的默认 UA
+# 直接回 403，现象看起来很像「Cookie 失效」或「被风控」，其实只是 UA 被拦。
+# 核对上游接口时必须带上它 —— `trend_radar_client.py` 的 NewsNow 端点有同一个坑。
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -121,6 +157,8 @@ _UA = (
 
 # sec_user_id 固定以 MS4wLjABAAAA 开头（抖音自己生成的编码）
 _SEC_UID_RE = re.compile(r"(MS4wLjABAAAA[A-Za-z0-9_\-]+)")
+# 兜底：从 ``/user/<id>`` 路径段取 id（短链、或页面 URL 里带不出 sec_user_id 时用）。
+# 字符集刻意与上面的 ``_SEC_UID_RE`` 保持一致，免得两处口径漂移。
 _USER_PATH_RE = re.compile(r"/user/([A-Za-z0-9_\-]+)")
 
 # 给页面文本框用的示例数据（自检也用它，避免两处样例漂移）
@@ -141,16 +179,36 @@ SAMPLE_MANUAL_JSON = json.dumps(
 # ============================================================
 
 def _fail(message: str) -> dict:
-    """统一的失败返回（所有对外函数失败都走这里，绝不抛异常）。"""
+    """统一的失败返回（所有对外函数失败都走这里，绝不抛异常）。
+
+    Args:
+        message: 给用户看的中文说明（可以是多行，页面会原样渲染）。
+
+    Returns:
+        dict: 固定形状 ``{"items": [], "error": message}`` —— 调用方（页面 / 工作流）
+        只认这两个键，形状统一才不用在每处判分支。
+    """
     return {"items": [], "error": message}
 
 
 def _as_dict(value: Any) -> dict:
+    """把「可能是 dict 也可能是别的」统一成 dict（不是 dict 就给空 dict）。
+
+    Returns:
+        dict: 原值（若本来就是 dict）或空 dict —— 让调用方可以无条件 ``.get()``。
+    """
     return value if isinstance(value, dict) else {}
 
 
 def _to_int(value: Any) -> int:
-    """尽力转 int：``"1,200"`` / ``1200.0`` / ``None`` 都不炸。"""
+    """尽力转 int：``"1,200"`` / ``1200.0`` / ``None`` 都不炸。
+
+    先去掉千分位逗号再走 ``int(float(...))``，所以 ``"1200.0"`` 这种也转得动。
+
+    Returns:
+        int: 转不出来时返回 ``0`` —— 调用点（点赞/评论/…）把 0 当「没有这个指标」，
+        比抛异常或塞个 ``None`` 让上层到处判空要好。
+    """
     if isinstance(value, str):
         value = value.strip().replace(",", "")
     try:
@@ -160,7 +218,13 @@ def _to_int(value: Any) -> int:
 
 
 def _first(record: dict, keys: tuple) -> Any:
-    """按候选键顺序取第一个非空值。"""
+    """按候选键顺序取第一个非空值。
+
+    ``None`` 与空串都算「没有」—— 上游不同版本会把同一个字段写成 ``""`` 或缺键。
+
+    Returns:
+        Any: 第一个非空值；一个都没有时返回 ``None``（由调用方决定兜底文案）。
+    """
     for key in keys:
         value = record.get(key)
         if value not in (None, ""):
@@ -169,7 +233,14 @@ def _first(record: dict, keys: tuple) -> Any:
 
 
 def _stat(record: dict, keys: tuple) -> int:
-    """取一个计数指标：先查嵌套的 ``statistics``，再查顶层（两种数据源写法都认）。"""
+    """取一个计数指标：先查嵌套的 ``statistics``，再查顶层（两种数据源写法都认）。
+
+    嵌套优先是有意的：抖音原始响应把计数放在 ``statistics`` 里，而手动粘贴的数据
+    常把它们摊平到顶层 —— 两种都遇到过才写成「两层都试」。
+
+    Returns:
+        int: 计数；两层都没这个键时返回 ``0``。
+    """
     for container in (_as_dict(record.get("statistics")), record):
         for key in keys:
             if key in container:
@@ -178,12 +249,17 @@ def _stat(record: dict, keys: tuple) -> int:
 
 
 def _to_time_text(value: Any) -> str:
-    """``create_time`` 是秒级时间戳 → 本地日期；已经是字符串就原样返回。"""
+    """``create_time`` 是秒级时间戳 → 本地日期；已经是字符串就原样返回。
+
+    Returns:
+        str: ``"2026-09-01 12:00"`` 形式的本地时间；取不到给 ``"未知"``；
+        时间戳超出 ``datetime`` 可表示范围时退回原值的字符串形式（不抛异常）。
+    """
     if value in (None, ""):
         return "未知"
     ts = _to_int(value)
     if ts > 0:
-        if ts > 10_000_000_000:   # 兼容毫秒时间戳
+        if ts > 10_000_000_000:   # 兼容毫秒时间戳：10^10 秒已是公元 2286 年，正常秒级戳远达不到
             ts //= 1000
         try:
             return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
@@ -198,8 +274,12 @@ def _to_duration_text(record: dict) -> str:
     抖音原始数据里 ``video.duration`` 是毫秒；手动粘贴的数据常直接写秒数
     （``45`` 或 ``"45秒"``）。这里三种都认：带非数字字符的原样返回，
     ≥1000 当毫秒，<1000 当秒。
+
+    Returns:
+        str: ``"45秒"`` / ``"未知"`` / 原样返回的字符串（如 ``"1分30秒"``）。
     """
     raw = None
+    # ``video.duration`` 是抖音原始结构，顶层 ``duration`` 是手动粘贴/摊平后的写法，两层都试
     for container in (_as_dict(record.get("video")), record):
         raw = _first(container, ("时长", "duration", "duration_ms", "video_duration"))
         if raw is not None:
@@ -211,13 +291,24 @@ def _to_duration_text(record: dict) -> str:
     value = _to_int(raw)
     if value <= 0:
         return "未知"
+    # ≥1000 当毫秒（抖音原始就是毫秒，如 45000），否则当秒（手动粘贴常写 45）。
+    # 课案是**无条件 /1000**；这里多出来的「<1000 当秒」分支是为了兼容粘贴数据。
+    # ⚠️ 已知局限：真实时长 ≥1000 秒（16 分 40 秒以上）的视频会被少算 1000 倍 ——
+    #    抖音短视频场景极罕见，两害相权选这个固定阈值，不额外引入分辨逻辑。
     seconds = value // 1000 if value >= 1000 else value
     return f"{seconds}秒"
 
 
 def _normalize_item(record: dict) -> Dict[str, Any]:
-    """把一条原始作品记录整成课案要的中文键字段。"""
+    """把一条原始作品记录整成课案要的中文键字段。
+
+    Returns:
+        Dict[str, Any]: ``{"标题","发布时间","时长","点赞","评论","分享","收藏"}``；
+        注意这里**不含「播放」**—— 要不要带播放量由 ``_build_items()`` 统一决定。
+    """
     return {
+        # 标题截到 80 字（与课案 ``[:80]`` 同一口径）：抖音标题能到几百字，
+        # 原样带进漏斗诊断的 prompt 会白烧 token，也会把页面表格撑到看不出重点
         "标题": str(_first(record, ("标题", "desc", "title", "caption")) or "（无标题）")[:80],
         "发布时间": _to_time_text(_first(record, ("发布时间", "create_time", "time", "publish_time"))),
         "时长": _to_duration_text(record),
@@ -234,10 +325,19 @@ def _build_items(records: List[dict], limit: int = 0) -> List[Dict[str, Any]]:
     保留课案的 ``has_play_count`` 判断：**只有本人主页才有真实播放量**，
     别人主页的 play_count 恒为 0 —— 为 0 时不输出「播放」字段，
     免得把 0 当成"这个视频没人看"去做诊断。
+
+    Args:
+        records: 原始记录列表；非 dict 的元素会被就地滤掉。
+        limit: 最多产出多少条；``0``（默认）表示不截断。
+
+    Returns:
+        List[Dict[str, Any]]: 中文键作品列表，可能有、也可能没有「播放」键。
     """
     records = [r for r in records if isinstance(r, dict)]
     if limit and limit > 0:
         records = records[:limit]
+    # 只抽样前 5 条判「有没有播放量」：同一主页的 ``play_count`` 是全有或全无
+    # （见 docstring），没必要为了这个判断遍历整个列表
     has_play = any(_stat(r, STAT_KEYS["播放"]) > 0 for r in records[:5])
     items = []
     for record in records:
@@ -249,7 +349,16 @@ def _build_items(records: List[dict], limit: int = 0) -> List[Dict[str, Any]]:
 
 
 def _extract_aweme_list(payload: Any) -> List[dict]:
-    """从各种可能的信封里找出作品列表（不知道 data 内部层级，所以逐个试）。"""
+    """从各种可能的信封里找出作品列表（不知道 data 内部层级，所以逐个试）。
+
+    Args:
+        payload: 已 ``json.loads`` 过的任意对象（list / dict / 别的都行）。
+
+    Returns:
+        List[dict]: 作品记录列表；认不出结构时返回**空列表**。
+        返回的元素一定是 dict —— 上游列表里混进来的非 dict 项在这里就滤掉，
+        免得后面 ``record.get()`` 抛 AttributeError。
+    """
     if isinstance(payload, list):
         return [x for x in payload if isinstance(x, dict)]
     if not isinstance(payload, dict):
@@ -258,6 +367,7 @@ def _extract_aweme_list(payload: Any) -> List[dict]:
         value = payload.get(key)
         if isinstance(value, list):
             return [x for x in value if isinstance(x, dict)]
+    # 只有列表键都没命中才往里层信封钻，避免把 data 里别的 list 误当成作品列表
     for key in _ENVELOPE_KEYS:
         if key in payload:
             found = _extract_aweme_list(payload[key])
@@ -267,10 +377,17 @@ def _extract_aweme_list(payload: Any) -> List[dict]:
 
 
 def _parse_delimited(text: str) -> List[dict]:
-    """解析从表格 / Excel 复制来的 CSV、TSV（课案没有这个降级入口，是本项目补的）。"""
+    """解析从表格 / Excel 复制来的 CSV、TSV（课案没有这个降级入口，是本项目补的）。
+
+    Returns:
+        List[dict]: ``[{表头: 单元格}, ...]``；少于两行、解析失败或表头不足两列时
+        返回**空列表**（由调用方统一给中文错误提示）。
+    """
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if len(lines) < 2:
         return []
+    # 分隔符靠首行「谁的个数多」判：从 Excel 复制是 TSV，从网页表格复制多半是 CSV。
+    # 走 csv.reader 而不是 str.split：标题里可能带引号包住的逗号
     delimiter = "\t" if lines[0].count("\t") > lines[0].count(",") else ","
     try:
         rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
@@ -293,19 +410,39 @@ def _parse_delimited(text: str) -> List[dict]:
 # ============================================================
 
 def api_base() -> str:
-    """自托管服务根地址（去掉尾部斜杠）。"""
+    """自托管服务根地址（去掉尾部斜杠）。
+
+    每次调用都现从 ``settings`` 取，所以改根 .env 后重启 Streamlit 就能生效。
+
+    Returns:
+        str: 形如 ``http://127.0.0.1:8080``；未配置（``MEDIA_DOUYIN_API_BASE`` 为空）
+        时返回**空串** —— 调用方据此给出「请配置服务地址」的中文提示，而不是发请求。
+    """
     return (settings.media.douyin_api_base or "").strip().rstrip("/")
 
 
 def resolve_cookie() -> str:
-    """取抖音 Cookie：**页面运行时覆写** 优先，其次根 .env 的 ``MEDIA_DOUYIN_COOKIE``。"""
+    """取抖音 Cookie：**页面运行时覆写** 优先，其次根 .env 的 ``MEDIA_DOUYIN_COOKIE``。
+
+    优先级：环境变量 ``MEDIA_DOUYIN_COOKIE``（页面里粘的，见 ``COOKIE_ENV_KEY``）
+    → ``settings.media.douyin_cookie``（根 .env，import 时已定型）。
+    调用时读环境变量，所以页面粘完**立即生效**，不用重启进程。
+
+    Returns:
+        str: Cookie 原文；两处都没有时返回空串（不抛异常）。
+    """
     return os.environ.get(COOKIE_ENV_KEY, "").strip() or (
         settings.media.douyin_cookie or ""
     ).strip()
 
 
 def cookie_hint() -> str:
-    """给页面显示的一行 Cookie 状态提示。"""
+    """给页面显示的一行 Cookie 状态提示。
+
+    Returns:
+        str: 已配置时是 ``✅ 已配置抖音 Cookie（N 字符）``（**只报长度，不回显 Cookie 值**）；
+        未配置时是一段带操作指引的多行警告，供 ``st.caption()`` 直接渲染。
+    """
     cookie = resolve_cookie()
     if cookie:
         return f"✅ 已配置抖音 Cookie（{len(cookie)} 字符）"
@@ -321,6 +458,14 @@ def is_available(timeout: float = 3.0) -> bool:
 
     只要**收到任何 HTTP 响应**就算可达 —— 不校验状态码，因为不同版本根路径
     给出的东西不一样（v4 是 PyWebIO 页面，v5 是控制台）。连不上/超时才返回 False。
+
+    Args:
+        timeout: 单次 GET 的超时秒数。默认 3.0 是「页面点一下要有即时反馈」的上限 ——
+            本地服务正常时是毫秒级应答，超过 3 秒基本就是没起。
+
+    Returns:
+        bool: 收到响应（哪怕 4xx/5xx）为 ``True``；地址未配置、连接被拒、超时、
+        DNS 失败等一切异常路径都是 ``False``。
     """
     base = api_base()
     if not base:
@@ -338,6 +483,12 @@ def extract_sec_user_id(text: str) -> str:
     支持三种写法：完整主页链接、``.../user/<sec_uid>``、直接粘 sec_uid 本身。
     ``/user/self`` 取不到（那不叫 id），返回空串 —— 由 ``fetch_user_videos()``
     走 ``_resolve_self_sec_uid()`` 再解析一次。
+
+    Args:
+        text: 主页链接或裸 sec_user_id；``None`` / 空串 / 垃圾文本都安全。
+
+    Returns:
+        str: 解析出的 sec_user_id；认不出时返回**空串**（不抛异常）。
     """
     if not text:
         return ""
@@ -345,9 +496,11 @@ def extract_sec_user_id(text: str) -> str:
     match = _SEC_UID_RE.search(text)
     if match:
         return match.group(1)
+    # 裸 id 可能被粘成好几种半截形态，只认 ``MS4w`` 前缀比要求完整正则宽松
     if text.startswith("MS4w"):
         return text
     match = _USER_PATH_RE.search(text)
+    # ``self`` 是占位符不是 id，这里必须排除（排除了才会返回空串去触发上面的 /user/self 分支）
     if match and match.group(1) != "self":
         return match.group(1)
     return ""
@@ -358,12 +511,22 @@ def _resolve_self_sec_uid() -> str:
 
     需要有效的登录 Cookie；没有 Cookie 时抖音返回的是登录页，正则必然取不到，
     于是返回空串让调用方给出可读的错误提示。
+
+    Returns:
+        str: 解析到的 sec_user_id；没登录 / 解析失败 / 请求异常时都返回**空串**
+        （异常只打印日志，绝不往上抛 —— 调用点在页面里）。
     """
     cookie = resolve_cookie()
     headers = {"User-Agent": _UA}
     if cookie:
+        # ⚠️ 这里的请求头 Cookie **是真的生效的**，与 fetch_user_videos() 里那处不同：
+        #    本函数直连 https://www.douyin.com/user/self，不经过自托管服务，
+        #    所以抖音看得到这份 Cookie，会把登录态的主页 HTML 返回来。
+        #    采集端点那份则被自托管服务丢掉了（见模块 docstring「Cookie 有两份」）。
         headers["Cookie"] = cookie
     try:
+        # 15 秒：这一跳要真打抖音主页、还可能被重定向到登录页，比探活慢得多。
+        # 给太短会在网络稍慢时误判成「Cookie 失效」，给太长会把整个页面卡住。
         resp = requests.get("https://www.douyin.com/user/self", headers=headers, timeout=15)
         sec_uid = extract_sec_user_id(resp.text)
         if sec_uid:
@@ -399,6 +562,7 @@ def fetch_user_videos(profile_url: str, limit: int = 20) -> dict:
 
     profile_url = profile_url.strip()
     # /user/self 是个特殊写法，得先换成真实 sec_user_id
+    # （``self`` 是页面上的占位符，抖音接口只认 sec_user_id）
     if profile_url.rstrip("/").endswith("/user/self") or profile_url.strip() == "self":
         sec_user_id = _resolve_self_sec_uid()
         if not sec_user_id:
@@ -443,10 +607,14 @@ def fetch_user_videos(profile_url: str, limit: int = 20) -> dict:
         #    MEDIA_DOUYIN_COOKIE）。详见 VERIFY_REPORT.md 第 8 节第 4 条。
         #    这里仍然照发：对当前镜像无害，且万一下游版本支持转发就能用上。
         headers["Cookie"] = cookie
+    # max_cursor=0 表示「从第一页开始」（抖音的游标分页，后续页由响应里的游标续）；
+    # count 夹一个下限 1：limit=0 这种输入本来就无意义，别把 0 直接送给上游
     params = {"sec_user_id": sec_user_id, "max_cursor": 0, "count": max(1, int(limit))}
 
     print(f"[复盘] 正在采集: {profile_url} → {base}{ENDPOINT_USER_POST_VIDEOS}")
     try:
+        # 25 秒：这一跳是「本机 → 自托管服务 → 抖音上游再回来」，服务端还要自己去请求
+        # 抖音，比普通 HTTP 慢得多；探活只用 3 秒（见 is_available）
         resp = requests.get(
             f"{base}{ENDPOINT_USER_POST_VIDEOS}", params=params, headers=headers, timeout=25
         )
@@ -455,7 +623,9 @@ def fetch_user_videos(profile_url: str, limit: int = 20) -> dict:
         return _fail(f"采集请求失败: {exc}")
 
     if resp.status_code >= 400:
-        # v4 出错时 HTTP 400 + {"detail": {...}}；这里把能读到的信息都带上
+        # v4 出错时 HTTP 400 + {"detail": {...}}；这里把能读到的信息都带上。
+        # 截到 300 字符：FastAPI 的 detail 有时会把整段上游 HTML 塞进来，
+        # 原样丢给 Streamlit 会把错误框撑到看不见重点
         detail = resp.text[:300]
         try:
             body = resp.json()
@@ -486,8 +656,11 @@ def fetch_user_videos(profile_url: str, limit: int = 20) -> dict:
     try:
         payload = resp.json()
     except ValueError:
+        # 不是 JSON 多半是拿到了服务端自己的 HTML 报错页（404/502 之类），只留前 200 字符
         return _fail(f"采集接口返回的不是 JSON（前 200 字符）: {resp.text[:200]}")
 
+    # 信封层还可能带业务错误码：v4 成功固定 code=200，其余值要当场报出来，
+    # 否则会一路走到下面那句「没解析出作品列表」，把真因（如权限不足）吞掉
     if isinstance(payload, dict):
         code = payload.get("code")
         if code is not None and _to_int(code) != 200:
@@ -515,11 +688,25 @@ def parse_manual_json(raw: str) -> dict:
       · JSON 数组，字段用中文键（标题/点赞/…）或抖音原始英文键（desc/digg_count/…）；
       · 抖音接口的完整响应（``{"code":200,"data":{"aweme_list":[...]}}``），自动扒出列表；
       · 从表格 / Excel 复制出来的 CSV 或 TSV（首行是表头）。
+
+    这是**当前实际能用**的主路径（采集端点恒 403，见模块 docstring）——
+    ``workflows/review.py`` 的 ``run_review_from_json()`` 就是接它。
+
+    Args:
+        raw: 粘贴框里的原始文本。
+
+    Returns:
+        dict: ``{"items": [...], "error": str}``，每条 item 的字段与
+        ``fetch_user_videos()`` 完全一致。**任何解析失败都返回 ``items=[]``
+        + 中文 error，不抛异常。**
     """
     if not raw or not raw.strip():
         return _fail("请粘贴作品数据（JSON 数组，或从表格复制的 CSV/TSV）")
 
     text = raw.strip()
+    # 先按 JSON 试，失败就转 CSV/TSV 那条路。用 ``parsed_ok`` 标记而不是在
+    # except 里直接返回：两种格式共用下面的 _extract_aweme_list / _build_items，
+    # 免得在 except 分支里把后续逻辑再抄一遍
     parsed_ok = True
     try:
         payload = json.loads(text)
@@ -533,6 +720,7 @@ def parse_manual_json(raw: str) -> dict:
             "支持：JSON 数组、抖音接口原始响应、或从表格复制的 CSV/TSV（首行表头）。"
         )
 
+    # 刻意不传 limit：手动粘贴的数据量本来就小，截断只会让用户以为丢了数据
     items = _build_items(records)
     if not items:
         return _fail("解析结果为空，请检查每行是否至少包含「标题」或「desc」字段")
@@ -545,6 +733,9 @@ def parse_manual_json(raw: str) -> dict:
 # ============================================================
 
 if __name__ == "__main__":
+    # 自检挂在 __main__ 下：verify_all.py 的「第 1 层：模块自检」就是逐个
+    # ``python <模块>.py`` 跑这一段，断言失败会让它整体变红 —— 所以这里必须
+    # 离线可过（除下面第 6 段外都不碰网络），且不依赖任何密钥。
     print("=== 抖音采集客户端自检 ===")
 
     # 1) sec_user_id 提取（纯函数）
@@ -612,7 +803,10 @@ if __name__ == "__main__":
     assert r["items"] == [] and r["error"], r
     print("  fetch_user_videos 参数校验 OK")
 
-    # 6) 服务探活 + 真实调用：无论服务在不在，都必须不抛异常且返回约定结构
+    # 6) 服务探活 + 真实调用：无论服务在不在，都必须不抛异常且返回约定结构。
+    #    这是自检里**唯一会碰网络**的一段：服务没起来时走 is_available() == False 的
+    #    降级分支，一样打印 OK —— 所以纯离线环境（本机常关着这个 Docker 服务）
+    #    也照样 exit 0，「服务不可达 + exit 0」是**预期分支**，不是失败。
     avail = is_available()
     assert isinstance(avail, bool)
     print(f"  is_available()           OK  {avail}"

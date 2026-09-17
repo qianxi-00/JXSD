@@ -7,13 +7,45 @@
 与课案的差异：卡片里的链路描述改成了**本项目实际用的技术**
 （课案写的是本地 FunASR / HeyGem，本项目是百炼托管 API），
 免得界面在骗人。
+
+与课案的落地差异
+    | 项 | 课案原文 | 本实现 | 原因 |
+    |---|---|---|---|
+    | 模块 / 函数 docstring | 模块 docstring 只有「show_home页面」五个字，函数 docstring 只有「首页」两个字 | 说明性的模块 docstring + 带 Returns 的函数 docstring | 首页是新读者第一个打开的文件，「卡片文案为什么跟课案不一样」写在这里，省得以后有人照着课案「改回去」 |
+    | 卡片文案 | 6 张卡共 24 个字段 | 6 张卡的图标与标题逐字一致，卡 1「账号定位」4 个字段全一致；其余 5 张的「简介 / 核心链路」按本项目技术栈改写 | 本地 FunASR / HeyGem / videodl / HyperFrames 已换成百炼托管 API + yt-dlp + PixVerse；照抄课案会让界面描述与实际链路对不上 |
+    | HTML 卡片模板 | 内联样式那 11 行 | **内容逐行一致**（课案提取件用 U+00A0 当缩进，行内文本相同） | 版式属另一件事，本轮不动 |
+    | 操作历史读取 | ``if st.session_state.history:`` 直接取属性 | ``st.session_state.get("history", [])`` | 直接取属性在 key 不存在时抛 ``AttributeError``，``get`` 兜底让首页能脱离 ``main.py`` 单独渲染 |
+    | 空历史 | 无 else 分支（整块不显示） | 多一行 ``st.info("还没有操作记录…")`` | 首次进来时那块是空的，用户不知道这个区域是干什么的 |
+    | 运行环境自检区 | 无 | 三个 ``st.metric`` + 「华北2（北京）」地域提示 | 「为什么某功能一直降级」是最高频的疑问，直接摆在首页，省掉一轮排查 |
+    | 绝对路径 | 无 | 无 | —— |
+
+踩过的坑
+    · ``st.session_state.get("history", [])`` 这个兜底不是多余的：``main.py`` 里那段
+      初始化只在**主入口**跑过，任何「不经过 ``main.py`` 就调用 ``show_home()``」的场合
+      （无头渲染、单独测一个页面）拿到的 ``session_state`` 都是空的，
+      直接写 ``st.session_state.history`` 会 ``AttributeError``。
+    · ``history`` 里每条固定是 ``{"time", "action", "summary"}`` 三个键
+      （各页面的 ``_add_history`` 统一这么写）。首页按这三个键取值 ——
+      加新页面时照抄这个结构，少一个键首页就会在渲染时炸。
+    · 卡片简介里的 ``\n`` 靠 CSS ``white-space:pre-line`` 才换行；
+      去掉那条样式，两行简介会挤成一行。
+    · ``unsafe_allow_html=True`` 是必需的：Streamlit 默认会把 HTML 当纯文本转义，
+      卡片会原样把 ``<div style=...>`` 打出来。
 """
 
 import streamlit as st
 
 
 def show_home() -> None:
-    """首页：功能总览 + 本次操作记录。"""
+    """首页：功能总览 + 本次操作记录。
+
+    由 ``main.py`` 的侧边栏路由调用；无参数、无返回值，
+    所有内容都渲染在 Streamlit 的当前页面上下文里。
+
+    Returns:
+        None。全部效果通过 ``st.*`` 调用产生。
+    """
+    # 标题与课案逐字一致（26 字符），别为了排版顺手改 —— 它是「界面与课案对齐」的可见锚点。
     st.title("🎬 自媒体AI创作全流程平台")
     st.caption(
         "课案《3.自媒体Agent》实现 —— 本地模型已全部替换为阿里云百炼托管 API，"
@@ -21,6 +53,8 @@ def show_home() -> None:
     )
 
     # 三列功能卡片：(图标, 标题, 简介, 核心链路)
+    # 顺序与 main.py 侧边栏的 PAGES 一致（首页 → 账号定位 → … → 数据复盘），方便两边对照。
+    # 六张卡按「三列两行」排：靠下面的 i % 3 回绕。
     cards = [
         ("🎯", "账号定位", "输入背景信息\nAI生成专属定位方案",
          "分析画像 → 对标账号 → 输出方案"),
@@ -38,7 +72,10 @@ def show_home() -> None:
 
     cols = st.columns(3)
     for i, (icon, title, desc, flow) in enumerate(cards):
+        # i % 3 让第 4 张卡回到第一列（第二行开头）；直接写 cols[i] 会在 i=3 时 IndexError。
         with cols[i % 3]:
+            # 内联 HTML 卡片的样式与课案一致：min-height 让两行文字长短不一的卡片等高，
+            # white-space:pre-line 才认简介里的换行符。
             st.markdown(
                 f"""
                 <div style="padding:20px; border:1px solid #e0e0e0;
@@ -51,37 +88,50 @@ def show_home() -> None:
                 <small style="color:#999;">{flow}</small>
                 </div>
                 """,
+                # 必须显式打开：Streamlit 默认把 HTML 当纯文本转义，卡片会原样打出标签。
                 unsafe_allow_html=True,
             )
 
     st.markdown("---")
 
     # ---- 环境自检：把「为什么某功能一直降级」直接摆在首页 ----
+    # 放在函数体内延迟导入：模块顶层只依赖 streamlit，
+    # 这样 import views.home（verify_all.py 第 2 层做的事）不会连带去读 config / 根 .env。
     from config import settings
 
     st.markdown("### 🔧 运行环境")
+    # 用 metric 而不是 caption：这三项是状态值，要能一眼扫到，而不是当成说明文字去读。
     c1, c2, c3 = st.columns(3)
     c1.metric("文本模型", settings.media_llm_model())
     c2.metric(
         "百炼密钥",
         "已配置" if settings.dashscope_api_key else "未配置",
+        # help 里点明依赖的是根 .env 的哪一项 —— 「该改哪个文件」是最高频的追问。
         help="语音识别 / 声音复刻 / 数字人对口型 都依赖它（根目录 .env 的 DASHSCOPE_API_KEY）",
     )
     c3.metric(
         "图片生成",
         "已配置" if settings.media.image_api_key else "未配置（用占位图）",
     )
+    # 这条是提醒而不是校验：代码不判断 Key 属于哪个地域，用错了要等调用被拒才发现。
     st.caption(
         "百炼的语音识别 / 声音复刻 / 视频对口型**只在华北2（北京）**提供，"
         "需使用该地域的 API Key。"
     )
 
     # ---- 本次操作记录（课案功能，保留）----
+    # get(..., []) 兜底：main.py 里的初始化只在主入口跑过，
+    # 不经过 main.py 直接渲染首页时 session_state 里根本没有 history 这个键。
     history = st.session_state.get("history", [])
     if history:
         st.markdown("---")
         st.markdown("### 📋 本次操作记录")
+        # 先切片再反转：history[-10:] 只取最近 10 条，reversed 让最新一条排在最上面。
+        # 10 条是首页的显示预算 —— 再多会把上面的功能卡片挤出首屏（完整历史仍在 session_state 里）。
         for h in reversed(history[-10:]):
+            # 各页面写入时把 summary 截到 200 字符（见它们的 _add_history），
+            # 这里再截到 80：caption 只占一行，展示预算和存储预算不是一回事。
             st.caption(f"🕐 {h['time']} | {h['action']} | {h['summary'][:80]}...")
     else:
+        # 没有 history 键、或列表为空，都落到这里（首次进入就是这个状态）。
         st.info("还没有操作记录。从左侧导航选一个功能开始吧。")
