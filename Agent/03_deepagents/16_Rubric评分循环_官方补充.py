@@ -36,6 +36,8 @@ DeepAgents 官方补充篇③：Rubric 评分循环（非课案内容）
 
 ⚠️ 本文件需要真实模型（评分器 + 被评的 agent 都会调模型，且**每次迭代两次调用**）。
 
+缺口表对应：`Agent/官方文档缺口对照.md` 的 **DeepAgents 第 6 项**（Rubric 评分循环）。
+
 运行方式（项目根目录下）：
     uv run Agent/03_deepagents/16_Rubric评分循环_官方补充.py
 """
@@ -58,6 +60,10 @@ model = init_chat_model(
     model=settings.model_name,
     api_key=settings.api_key,
     base_url=settings.base_url,
+    max_retries=0,
+    # 评分循环一次要跑 6+ 次模型调用（主 agent + 评分器，每轮两次），
+    # 本机网关在高负载下单次请求可能超过两分钟 —— 给足 5 分钟，避免整跑崩在超时上。
+    timeout=300,
 )
 
 # 每次评分回调都记下来，运行结束统一打印（也可直接 print）

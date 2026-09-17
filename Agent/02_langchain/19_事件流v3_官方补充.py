@@ -40,6 +40,8 @@ LangChain 官方补充篇：事件流 v3（非课案内容，故不带 _jxsd 后
 
 ⚠️ 本文件需要真实模型（流式内容来自模型）。
 
+缺口表对应：`Agent/官方文档缺口对照.md` 的 **LangChain 第 6 项**（事件流 v3）。
+
 运行方式（项目根目录下）：
     uv run Agent/02_langchain/19_事件流v3_官方补充.py
 """
@@ -78,8 +80,10 @@ def get_weather(city: str) -> str:
 @tool
 def risky_lookup(keyword: str) -> str:
     """查询一个可能不存在的东西（演示工具报错在流里怎么体现）。"""
-    # ToolException 会被框架转成错误 ToolMessage（普通异常会直接中断运行，
-    # 原因见 02_langchain/16_测试与护栏_官方补充.py Demo 4 的实测）
+    # 注意（实测结论）：**普通异常与 ToolException 一样，都会让运行直接中断** ——
+    # ToolNode 的默认处理器只把 `ToolInvocationError` 转成错误消息，其余一律 re-raise
+    # （源码 langgraph/prebuilt/tool_node.py 的 _default_handle_tool_errors）。
+    # 本 Demo 正是要演示这一点：没挂 ToolErrorMiddleware 时，失败根本进不了流。
     raise ToolException(f"下游服务查不到 {keyword!r}")
 
 
@@ -336,8 +340,9 @@ if __name__ == "__main__":
 #    B. v3 的 `message.output.content` 可能是**内容块列表**（text / tool_call 等），
 #       不是纯字符串 —— 本文件取文本时用了 `"".join(message.text)`，别直接对 content 做字符串操作；
 #    C. v3 是实验性协议，升级 langgraph 后请优先回归本文件；
-#    D. 工具报错要用 `ToolException`（会被转成错误消息并出现在 error/output 上）；
-#       普通异常会直接中断运行，流里也就看不到「工具失败」这一事件；
+#    D. 工具报错**不管抛哪种异常，默认都会直接中断运行**（ToolNode 只把
+#       `ToolInvocationError` 转成错误消息，普通异常与 `ToolException` 一律 re-raise）；
+#       要让「工具失败」变成流里可见的事件，必须挂 ToolErrorMiddleware（Demo 3 Part C 就是对照）；
 #    E. 子代理要出现在 `stream.subagents` 里，必须给内层 `create_agent(name=...)` 命名；
 #       不命名则是普通子图（落在 subgraphs 投影）。读内层消息同样要**内联消费**；
 #    F. `ToolErrorMiddleware(on_error)` 的 `on_error` 是**两参数** `(exc, request)` ——

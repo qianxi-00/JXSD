@@ -14,7 +14,8 @@ LangGraph 官方补充篇②：容错与测试（非课案内容，故不带 _jx
     生产里 agent 卡死、第三方接口抖动、模型偶尔超时都是常态 —— 容错和测试就是
     从 demo 到可用系统的分界线。
 
-官方给出的**错误处理四分类**（fault-tolerance.mdx 的核心表，照抄在这里当索引）：
+官方给出的**错误处理四分类**（thinking-in-langgraph.mdx 与 deepagents/fault-tolerance.mdx
+    都列过；langgraph 的 fault-tolerance.mdx 里没有这张表，别引错出处）：
 
     # | 错误类型            | 谁来修 | 策略                                    | 本仓库对应
     1 | 瞬时错误（网络/限流）| 系统   | 节点级 RetryPolicy（本文件 Demo 1/2）     | 本文件
@@ -27,8 +28,11 @@ LangGraph 官方补充篇②：容错与测试（非课案内容，故不带 _jx
        `ValueError: Node timeouts are only supported for async nodes ...`，
        必须 `async def` 节点 + `asyncio.run(graph.ainvoke(...))` 异步入口。
     B. 想让**超时**被重试，`retry_on` 必须写 `NodeTimeoutError`（或干脆用默认 RetryPolicy）；
-       写 `(TimeoutError,)` **不会**重试 —— 尽管 NodeTimeoutError 在 Python 里是
-       TimeoutError 的子类，实测 retry_on 走的是精确类型匹配。
+       写 `(TimeoutError,)` **不会**重试 —— 原因很朴素：**`NodeTimeoutError` 根本不是
+       `TimeoutError` 的子类**（实测它的 MRO 只有 `Exception`），所以既匹配不上
+       `retry_on`，也**不能用 `except TimeoutError` 捕获**（要写 `except NodeTimeoutError`）。
+       默认 RetryPolicy 之所以会重试超时，是因为 NodeTimeoutError 不在
+       `default_retry_on` 的排除名单里（排除的是 ValueError / OSError 等，见官方文档）。
     C. 默认 RetryPolicy **不重试 ValueError 这类业务异常**（实测 1 次即抛）——
        这是特性不是 bug：参数错误重试一万次也还是错。
 
@@ -258,7 +262,10 @@ if __name__ == "__main__":
     print("\nPart A：timeout=0.4（节点实际要 1.5 秒）")
     started = time.time()
     try:
-        # 必须走异步入口：同步 invoke 会因为「timeout 只支持异步节点」直接报 ValueError
+        # 必须走异步入口：这条 async 节点若走同步 invoke，会直接报
+        # TypeError: No synchronous function provided to "slow"；
+        # （「同步节点 + timeout」是另一回事：那种写法在 compile 期就抛
+        #  ValueError: Node timeouts are only supported for async nodes）
         asyncio.run(graph_timeout.ainvoke({"log": []}))
         print("  居然没超时？（不符合预期）")
     except NodeTimeoutError as exc:
@@ -293,9 +300,12 @@ if __name__ == "__main__":
             outcome = f"{type(exc).__name__}"
         print(f"  {label} → {outcome}，共尝试 {timeout_retry_attempts['n']} 次")
     print(
-        "  ↑ 关键坑：NodeTimeoutError 在 Python 里是 TimeoutError 的子类，\n"
-        "    但 retry_on 走**精确类型匹配** —— 写 (TimeoutError,) 一次都不重试；\n"
-        "    要重试超时就得写 (NodeTimeoutError,) 或者直接用默认 RetryPolicy()。"
+        "  ↑ 关键坑：**`NodeTimeoutError` 不是 `TimeoutError` 的子类**\n"
+        "    （实测 MRO：NodeTimeoutError → Exception → BaseException → object）；\n"
+        "    所以写 `retry_on=(TimeoutError,)` 匹配不上、一次都不重试，\n"
+        "    要重试超时就得写 `(NodeTimeoutError,)` 或者直接用默认 `RetryPolicy()`。\n"
+        "    同理：**捕获也不能写 `except TimeoutError`**，要写 `except NodeTimeoutError` ——\n"
+        "    否则超时会直接冒泡出去（这正是本 Demo 用 except NodeTimeoutError 的原因）。"
     )
 
     # ---------- Demo 3 ----------
@@ -351,12 +361,18 @@ if __name__ == "__main__":
 # 3. 踩坑提示：
 #    A. timeout 只支持**异步节点**，而且必须走异步入口（ainvoke）；同步节点上写 timeout 直接
 #       抛 ValueError: Node timeouts are only supported for async nodes ...。
-#    B. 超时的重试匹配是**精确类型**：retry_on=(TimeoutError,) 无效，要用 NodeTimeoutError
-#       或默认 RetryPolicy()（官方文档只说"可以重试 TimeoutError 或 NodeTimeoutError"，实测更严）。
+#    B. **NodeTimeoutError 不继承 TimeoutError**（langgraph 的类 docstring 自述：故意不继承
+#       `TimeoutError`——它是 OSError 的子类——好让默认 RetryPolicy 把它当可重试异常）；
+#       而 retry_on 的匹配用的是 `isinstance`（不是精确类型匹配），所以
+#       `(TimeoutError,)` 匹配不到、`(NodeTimeoutError,)` 才行。
+#       ⚠️ 官方 use-functional-api.mdx 里那句「NodeTimeoutError subclasses Python's built-in
+#       TimeoutError」与本机实现不一致 —— 以源码/实测为准。
 #    C. 默认策略排除 ValueError 等业务异常 —— 想连业务异常也重试，必须显式 retry_on 声明。
 #    D. 静态断点用 compile(interrupt_after=[...])，恢复用 invoke(None, config)；
-#       update_state(..., as_node=...) 的 as_node 必须写**已经跑过的节点名**，语义是
-#       "这些状态由它产出"，图才会从它的下游继续。
+#       update_state(..., as_node=...) 的语义是「这些状态假装由哪个节点产出」，图从它下游继续；
+#       官方 test.mdx 的写法是先 update_state 伪造上游输出、再 invoke(None, config,
+#       interrupt_after=...) 从下游开始，**全程不跑上游**（本文件 Demo 3 里 step_a
+#       已经真实跑过一次，所以注释说的是"只测中间一段"）。
 #    E. 本文件把三种测试模式用 assert 写成可执行脚本；搬进 pytest 时的对应写法：
 #           def test_whole_graph():
 #               assert graph_calc.invoke({"value": 21}) == {"value": 42}

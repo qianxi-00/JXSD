@@ -112,7 +112,8 @@ def demo_1_taxonomy() -> None:
 # ================================================================
 # Demo 2：配索引 vs 不配索引 —— 课案那条坑的对照实验
 # ================================================================
-# 课案 01_langgraph/05 记录过：「没配向量索引时 query 被静默忽略，退化成按时间倒序取 N 条」。
+# 课案 01_langgraph/05 记录过：「没配向量索引时 query 被静默忽略，退化成分页取 N 条」。
+# 官方 stores.mdx 进一步说明：InMemoryStore 按**插入顺序**返回（最新的一条在最后）。
 # 本 Demo 把两种 Store 摆在一起跑同一个查询，让差异自己说话 ——
 # 这也是"为什么必须配 index"的最直观证据。
 def demo_2_index_matters() -> None:
@@ -135,7 +136,7 @@ def demo_2_index_matters() -> None:
     indexed_hits = INDEXED_STORE.search(EPISODIC, query=query, limit=2)
     for hit in indexed_hits:
         print(f"      score={hit.score:.4f}｜{hit.value.get('text')}")
-    print("      → 有真实相似度分数，Redis 那条事故排在前面（语义相关）")
+    print("      → 有真实相似度分数（顺序见上，不再写死谁在前 —— 重跑结果可能不同）")
 
     print(
         "\n  ↑ 结论：**`search(query=...)` 只有在 Store 配了 `index=` 时才是语义检索**；\n"
@@ -231,7 +232,10 @@ def demo_3_memory_in_agent() -> None:
     # （注意：只要答出任意一条真实存在的偏好就算跨会话生效；
     #   之前用「标点」两个字做判定太窄，把"答出了别的偏好"误判成失败 —— 本文件踩过）
     stored_semantic = [item.value.get("text", "") for item in INDEXED_STORE.search(SEMANTIC, limit=10)]
-    keywords = ["简洁", "客套", "标点", "FastAPI", "周报", "逗号"]
+    # 判定词**从库里真实存在的记忆里取**（而不是硬编码一张关键词表）：
+    # 否则库里根本没这条记忆时，模型凭空说出某个词也会被误判成「跨会话生效」。
+    candidates = ("简洁", "客套", "标点", "FastAPI", "周报", "逗号")
+    keywords = [token for token in candidates if any(token in text for text in stored_semantic)]
     hit_keywords = [k for k in keywords if k in answer_b]
     if hit_keywords:
         print(f"\n  ✔ 会话 B 用全新 thread_id 仍复述出了长期记忆中的偏好（命中关键词：{hit_keywords}）")
@@ -239,8 +243,9 @@ def demo_3_memory_in_agent() -> None:
     else:
         print("\n  ⚠️ 本次会话 B 没复述出任何偏好（模型行为，重跑通常即可）")
 
-    print("\n  ★ 一个值得注意的细节：会话 A 新写的那条「中文标点」偏好，这次**没有被召回**。")
-    print("    直接查库能查到它（score≈0.56，见上），说明**写入成功、索引也生效**了；")
+    print("\n  ★ 一个值得注意的细节：会话 A 新写的那条「中文标点」偏好，**本次没有被召回**")
+    print("    （取决于模型这一轮的查询措辞与 top-k，不是必然结果）。")
+    print("    但直接查库能查到它（score 有值，见上），说明**写入成功、索引也生效**了；")
     print("    没进上下文的原因是 **top-k 截断 + 查询措辞**：recall 工具每个命名空间只取 2 条，")
     print("    而模型这次的查询词（偏「写作偏好」）让老偏好排在了前面。")
     print("    实践启示：① k 要按语料规模调；② 写入时把内容写得**自解释**（带主题词），")
@@ -258,7 +263,8 @@ def demo_3_memory_in_agent() -> None:
 # 官方 stores.mdx 提醒过：长期记忆会越积越多，需要维护策略。
 # 本 Demo 演示两个最基本的旋钮：
 #   · 同一个 (namespace, key) 再 put = **覆盖**（适合「偏好变了」的场景）；
-#   · `ttl=` 秒数 = 过期自动消失（适合「临时上下文」「时效性信息」）。
+#   · `ttl=` = 过期时间，**单位是分钟**（官方 API：Time to live in minutes）——
+#     适合「临时上下文」「时效性信息」，但**要看后端支不支持**（见下面实测）。
 def demo_4_maintenance() -> None:
     print("\n" + "=" * 70)
     print("Demo 4：记忆维护 —— 覆盖写，以及 TTL 的实测限制")
@@ -272,7 +278,7 @@ def demo_4_maintenance() -> None:
     print(f"  同 key 再写一次（覆盖）：{INDEXED_STORE.get(namespace, 'session-note').value}")
 
     # TTL：本机 InMemoryStore **不支持**，会直接抛 NotImplementedError（实测）
-    print("\n  尝试写入一条带 TTL 的记忆（ttl=1 秒）：")
+    print("\n  尝试写入一条带 TTL 的记忆（ttl=1，单位是**分钟**）：")
     try:
         INDEXED_STORE.put(namespace, "temp-token", {"text": "临时验证码 8520"}, index=["text"], ttl=1.0)
         time.sleep(1.3)
@@ -312,7 +318,10 @@ if __name__ == "__main__":
 #    - **不配索引的 Store：`score` 恒为 None，query 被静默忽略**（返回插入顺序）——
 #      课案记录的那条坑在本机复现，本文件做成对照实验；
 #    - `put(..., index=["text"])` 可让**新写入**的记忆立刻可被检索；
-#    - `ttl=1.0` 的记忆 1.3 秒后 `get` 返回 None（过期生效）。
+#    - **InMemoryStore 不支持 TTL**：`put(..., ttl=1.0)` 直接抛
+#      `NotImplementedError: TTL is not supported by InMemoryStore`（`supports_ttl` 为 False）；
+#      ttl 的单位是**分钟**（官方 API：Time to live in minutes）——
+#      要过期能力请换 PostgresStore 等支持 TTL 的后端（换后端接口不变）。
 # 3. 与课案的衔接：
 #    - 课案 01_langgraph/05_长期记忆：Store 基本读写与命名空间；
 #    - 课案 03_deepagents/11_记忆 与 02_langchain/20 官方补充篇 Demo 3：
@@ -325,8 +334,9 @@ if __name__ == "__main__":
 #      本文件为了聚焦 Store 机制，改成显式工具写入；
 #    - **记忆去重与冲突消解**：属于应用层策略（相似度去重、时间衰减），未展开。
 # 5. 踩坑提示：
-#    A. `index` 的 `dims` 必须与 embedding 维度一致（bge-m3 = **1024**），
-#       写错不会在构造时报错，而是在写入时抛维度不匹配；
+#    A. `index` 的 `dims` 必须与 embedding 维度一致（bge-m3 = **1024**）；
+#       **InMemoryStore 并不校验 dims**（写入时只查向量条数），维度写错要到**检索时**
+#       才暴露（numpy 形状不匹配；纯 Python 回退路径下会被 zip 静默截断、算出错误结果）；
 #    B. `fields` 指明对 value 的哪些字段建索引；写入时可用 `index=["text"]` 覆盖，
 #       但字段名必须存在，否则索引不到；
 #    C. **`score is None` = 索引没生效**（最常见的静默故障），排查先看这个；

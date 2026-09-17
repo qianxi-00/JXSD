@@ -30,6 +30,8 @@ LangChain 官方补充篇：Skills 渐进披露（非课案内容，故不带 _j
    不是纯离线。因此按仓库惯例：模型没按预期调用工具时，打印中文提示并给出重跑建议，
    而不是抛 traceback。
 
+缺口表对应：`Agent/官方文档缺口对照.md` 的 **LangChain 第 4 项**（Skills 渐进披露）。
+
 运行方式（项目根目录下，会调用 .env 里的模型）：
     uv run Agent/02_langchain/17_Skills渐进披露_官方补充.py
 """
@@ -59,8 +61,12 @@ model = init_chat_model(
 # 目录约定与课案 08_skills 章一致（agentskills.io 规范）：
 #     skills/<技能名>/SKILL.md        ← 技能正文（YAML frontmatter + Markdown）
 #     skills/<技能名>/assets/...      ← 附属资源（schema、模板、脚本），**用到时才读**
-# 官方教程（skills-sql-assistant）就是这么组织的：技能正文里告诉模型
-# 「需要详细表结构时去读 assets/schema.sql」，从而实现两级渐进披露。
+# 这种「技能目录 + 附属资源」的组织来自 agentskills.io 规范（与课案 08_skills 一致）；
+# 而「技能正文只指向附属文件、用到时才读」这个**引用感知（reference awareness）**模式，
+# 出自官方 skills.mdx 的 "Extending the pattern" 一节。
+# ⚠️ 别记混：官方那篇 SQL 教程（skills-sql-assistant）用的是**内存字典**装技能正文
+#    （原文结尾自述 "implemented skills as in-memory Python dictionaries"），
+#    并没有 assets/schema.sql 这种文件结构 —— 本文件才是文件 + 附属资源的组织形式。
 SKILLS: dict[str, str] = {
     "write_sql": """---
 name: write_sql
@@ -137,10 +143,12 @@ def make_skill_tools(skills_root: Path) -> list:
     def read_skill_asset(skill_name: str, relative_path: str) -> str:
         """读取某个技能目录下的附属资源文件（如 assets/schema.sql）。"""
         path = (skills_root / skill_name / relative_path).resolve()
-        # 安全边界：附属资源必须落在该技能目录内（防 ../ 越权读取）
-        if not str(path).startswith(str((skills_root / skill_name).resolve())):
+        # 安全边界：附属资源必须落在该技能目录内（防 ../ 越权读取）。
+        # 用 is_relative_to 而不是字符串 startswith —— 后者会被「同名前缀目录」绕过
+        # （例如 /skills/write_sql_x 以 /skills/write_sql 开头），这类越权很难察觉。
+        if not path.is_relative_to((skills_root / skill_name).resolve()):
             return "路径越界，已拒绝"
-        if not path.exists():
+        if not path.is_file():      # is_file 而不是 exists：目录也会让 exists 为真
             available = [rel for (n, rel) in SKILL_ASSETS if n == skill_name]
             return f"资源不存在。该技能可用的附属文件：{available or '（无）'}"
         return path.read_text(encoding="utf-8")
@@ -213,7 +221,7 @@ def demo_1_basic_skill_loading(skills_root: Path) -> None:
 # ================================================================
 # Demo 2：渐进披露到底省了多少上下文（可量化）
 # ================================================================
-def demo_2_disclosure_savings(skills_root: Path) -> None:
+def demo_2_disclosure_savings() -> None:
     print("\n" + "=" * 70)
     print("Demo 2：渐进披露省了多少上下文（量化对比）")
     print("=" * 70)
@@ -221,10 +229,14 @@ def demo_2_disclosure_savings(skills_root: Path) -> None:
     # 方案 A：把**所有技能全文**塞进 system_prompt（"全量注入"，很多项目这么干）
     full_injection = SYSTEM_PROMPT + "\n\n" + "\n\n".join(SKILLS.values())
     # 方案 B：只列技能名与用途，正文按需加载（本文件的模式）
-    skill_index = "\n".join(
-        f"- {name}：{content.splitlines()[2].replace('description: ', '')}"
-        for name, content in SKILLS.items()
-    )
+    def description_of(body: str) -> str:
+        """从 SKILL.md 的 frontmatter 里取 description（按前缀找，不靠行号下标）。"""
+        for raw_line in body.splitlines():
+            if raw_line.strip().startswith("description:"):
+                return raw_line.split("description:", 1)[1].strip()
+        return "（无描述）"
+
+    skill_index = "\n".join(f"- {name}：{description_of(content)}" for name, content in SKILLS.items())
     lazy = SYSTEM_PROMPT + "\n" + skill_index
 
     a, b = len(full_injection), len(lazy)
@@ -292,7 +304,7 @@ if __name__ == "__main__":
         print(f"目录结构：{[str(p.relative_to(skills_root)) for p in sorted(skills_root.rglob('*')) if p.is_file()]}\n")
 
         demo_1_basic_skill_loading(skills_root)
-        demo_2_disclosure_savings(skills_root)
+        demo_2_disclosure_savings()
         demo_3_reference_awareness(skills_root)
 
     print("\n全部 Demo 执行完毕。")

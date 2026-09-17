@@ -146,15 +146,18 @@ def demo_2_sandbox_boundary() -> None:
     )
     print(f"  工具调用序列：{tool_sequence(result)}")
     print(f"  最终回答：{str(result['messages'][-1].content)[:220]}")
+    called = tool_sequence(result)
+    fs_calls = [name for name in called if name in ("read_file", "ls", "glob", "grep")]
+    print(f"  ↑ 本次实际调用：{called or '（无）'}")
     print(
-        "  ↑ 实测有个值得注意的细节：模型**没有**去 eval 里试 `fs`，而是直接用了\n"
-        "    深度智能体自带文件工具（read_file / ls）—— 它知道那些工具走的是**虚拟路径**，\n"
-        "    访问不到宿主机的 C:\\（这正是后端抽象的隔离效果）。\n"
+        "    常见表现有两种，都算正常：\n"
+        "      · 直接改用深度智能体自带的文件工具" + ("（本次就是：%s）" % fs_calls if fs_calls else "") + "\n"
+        "        —— 那些工具走**虚拟路径**，读不到宿主机的 C:\\（后端抽象的隔离效果）；\n"
+        "      · 先在 eval 里试 fs / require —— 沙箱里根本没有，会拿到 TypeError。\n"
         "    两句话记牢：① eval 沙箱没有文件系统、网络、时钟；\n"
         "    ② 要让 agent 读写文件，走**后端 + 文件工具**（课案 03~09 的后端体系），\n"
         "    而不是把宿主环境暴露给解释器。\n"
-        "    （另：模型回答里那句「当前环境也不是 Windows」是它**自己脑补**的 —— 本机就是\n"
-        "      Windows；模型对环境的自我描述不可信，能力边界要以实测为准。）"
+        "    （模型对环境/自身的描述（比如「当前环境不是 Windows」）不可信，能力边界以实测为准。）"
     )
 
 

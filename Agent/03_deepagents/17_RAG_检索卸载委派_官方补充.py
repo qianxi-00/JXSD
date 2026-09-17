@@ -260,7 +260,11 @@ def demo_3_offload_and_delegate(workdir: Path) -> None:
         saved: list[str] = []
         for index, text in enumerate(picked, start=1):
             path = f"/retrieved/chunk-{index}.md"
-            backend.write(path, text)
+            write_result = backend.write(path, text)
+            # 写入失败（路径/权限/编码）要如实回报 —— 否则会把不存在的路径交给子代理，
+            # 子代理再 read_file 失败，白烧一轮模型调用。
+            if getattr(write_result, "error", None):
+                return f"写入 {path} 失败：{write_result.error}"
             saved.append(path)
         # 只回路径 + 极短预览：全文**不进**主线程上下文
         preview = "\n".join(f"{path}（{len(text)} 字符，开头：{text[:24]}…）"
@@ -370,8 +374,10 @@ if __name__ == "__main__":
 #       子代理与主线程都要能在后续轮次里找到它们；
 #    B. 卸载后**主线程只回传路径 + 极短预览** —— 一旦把全文也塞进返回值，
 #       这个模式就退回成普通 RAG 了（白折腾）；
-#    C. `SubAgent` 手动构造时要给 `model`（实测必填）；子代理的描述要写清"适合读长文档"，
-#       否则主 agent 不会把活派给它；
+#    C. `SubAgent.model` 是**可选**的：不传就继承主 agent 的模型 ——
+#       `create_deep_agent` 会用 `spec.get("model", model)` 回填（deepagents/graph.py）；
+#       只有**绕开它直接构造** `SubAgentMiddleware` 时才必须显式给 model（那条路径没有回填）。
+#       子代理的 description 要写清「适合读长文档」，否则主 agent 不会把活派给它；
 #    D. 委派不是必然发生：模型有时自己顺手读完就答了 —— 要在系统提示里明确要求委派
 #       （本文件第 2 条规则），必要时用 Rubric 校验它有没有真的走流程；
 #    E. 落盘内容涉及敏感数据时，记得配合 FilesystemPermission 做访问控制

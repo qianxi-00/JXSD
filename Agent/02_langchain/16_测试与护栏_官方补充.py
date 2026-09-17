@@ -56,7 +56,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool as core_tool
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import PrivateAttr
 
 
@@ -126,7 +126,7 @@ def demo_1_fake_model_unit_test() -> None:
             AIMessage(content="你叫小明。"),
         ])
     )
-    agent = create_agent(model=fake, tools=[], checkpointer=MemorySaver())
+    agent = create_agent(model=fake, tools=[], checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "unit-test-1"}}
 
     # ---- 第 1 轮 ----
@@ -152,8 +152,9 @@ def demo_1_fake_model_unit_test() -> None:
 # Demo 2：轨迹断言 —— 断言 Agent「做了什么」，而不是「说了什么」
 # ================================================================
 # 官方 test/evals.mdx 用 agentevals 包做 trajectory match，四种模式：
-#     strict（完全一致）/ unordered（顺序无关）/ subset（期望是实际的子集）
-#     / superset（实际是期望的子集）
+#     strict（结构与顺序完全一致）/ unordered（顺序无关）
+#     / subset（实际**只调**参考里的工具，不许有额外的）
+#     / superset（实际**至少调齐**参考工具，允许多调）
 # 本仓库没装 agentevals —— 按仓库惯例：缺包给出中文提示，同时用**本地简化版**
 # 把同样的思想演示出来（真正的评估逻辑并不神秘，就是比对工具调用序列）。
 def demo_2_trajectory_assertion() -> None:
@@ -267,7 +268,8 @@ def demo_3_deterministic_guardrail() -> None:
     print(f"    拦截次数：{guard_stats['blocked']}")
     assert guard_stats["model_calls"] == 1 and guard_stats["blocked"] == 1
     print(
-        "  ↑ 护栏的价值不只是「拦住了」，而是**在花钱之前就拦住**（模型调用为 0）；\n"
+        "  ↑ 护栏的价值不只是「拦住了」，而是**在花钱之前就拦住**"
+        "（用例 B 的模型调用为 0，累计那 1 次是用例 A 的）；\n"
         "    确定性护栏适合处理已知的坏模式，开放式风险再叠加模型护栏（官方两条路线并用）。"
     )
 
@@ -333,7 +335,7 @@ def demo_4_runtime_context() -> None:
         print(f"\n  用例 B（不传 context）→ 抛 {type(exc).__name__}: {exc}")
         print(
             "  ↑ 实测行为（重要）：runtime.context 是 **None**，工具里一访问属性就 AttributeError；\n"
-            "    而 ToolNode 默认对「非 ToolException 的错误」是**直接往外抛**\n"
+            "    而 ToolNode 默认只把 ToolInvocationError 转成错误消息，**其余异常一律往外抛**\n"
             "    （源码 langgraph/prebuilt/tool_node.py 的 _default_handle_tool_errors），\n"
             "    所以整个运行会中断，而不是变成一条模型能看见的错误消息。\n"
             "    想让这类异常转成消息、让模型自己补救 → 挂 ToolErrorMiddleware，\n"
@@ -358,7 +360,8 @@ if __name__ == "__main__":
 #    - Demo 3：违禁词短路后模型调用次数保持 1（用例 A 用掉的那次），即用例 B 模型 0 调用；
 #    - Demo 4：ToolRuntime 注入生效（工具拿到 u-1001/黄金）；**不传 context 时抛
 #      AttributeError: 'NoneType' object has no attribute 'user_id'** —— ToolNode 的
-#      _default_handle_tool_errors 对非 ToolException 直接 re-raise，运行中断（不是转成消息）；
+#      _default_handle_tool_errors 只处理 ToolInvocationError，其余（**含普通 ToolException**）
+#      一律 re-raise，运行中断（不是转成消息）；
 #      想转消息要挂 ToolErrorMiddleware（见 11_内置中间件_官方补充.py Demo 1）。
 #      另：传 context 时会打印两条 pydantic UserWarning（PydanticSerializationUnexpectedValue，
 #      源自 dataclass context 的序列化探测）—— 无害噪音，不影响运行结果。
@@ -373,7 +376,7 @@ if __name__ == "__main__":
 #       StopIteration —— 单元测试里记得按用例重建模型实例。
 #    B. 工具的 `runtime: ToolRuntime` 是保留参数，不会出现在给模型的 schema 里；
 #       同理别把自己的参数命名成 runtime/config（官方 tools.mdx 的保留字表）。
-#    C. 栈式队列别忘：context 不传不会在编译期报错，只会在工具执行时变成错误消息 ——
-#       生产建议在调用封装层统一注入，避免漏传。
+#    C. context 不传**不会在编译期报错**，而是在工具执行时抛 AttributeError 并**中断运行**
+#       （见 Demo 4 实测）—— 生产建议在调用封装层统一注入，避免漏传。
 #    D. 确定性护栏只是第一道闸：它挡不住「换个说法绕过违禁词」，开放式风险要叠模型护栏。
 #    E. 轨迹断言别写成「回复文本全等」——模型措辞天然会变，那是最脆的测试；断言流程与状态。

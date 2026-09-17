@@ -25,6 +25,8 @@ DeepAgents 官方补充篇②：自定义 Backend 协议（非课案内容）
        LsResult(error, entries) / GrepResult(error, matches, truncated) …
        这样模型看到的是「工具返回了一句错误说明」，而不是整个运行崩掉。
 
+缺口表对应：`Agent/官方文档缺口对照.md` 的 **DeepAgents 第 11 项**（自定义 Backend 协议）。
+
 运行方式（项目根目录下，**全离线、0 次真实模型调用**）：
     uv run Agent/03_deepagents/15_自定义后端_官方补充.py
 """
@@ -198,15 +200,20 @@ def demo_1_minimal_backend() -> None:
     )
     try:
         probe_agent.invoke({"messages": [{"role": "user", "content": "搜一下知识库"}]})
-        print("    调用竟然成功了（说明父类默认实现是可用的）")
     except Exception as exc:  # noqa: BLE001
         print(f"    抛错中断：{type(exc).__name__}: {str(exc)[:90]}")
-    print(
-        "    ↑ 实测结论：**没重写的方法走父类默认实现，调用时会直接抛错、把整个运行打断** ——\n"
-        "      因为 ToolNode 对非 ToolException 的异常是直接往外抛的。\n"
-        "      所以两种做法二选一：① 干脆实现它；② 显式重写成「返回带 error 的结果」，\n"
-        "      让模型看到一句说明而不是让运行崩掉（Demo 2 的只读后端就是 ② 的写法）。"
-    )
+        print(
+            "    ↑ 结论（本机实测路径）：**没重写的方法走父类默认实现，调用时直接抛错、把运行打断** ——\n"
+            "      因为 ToolNode 默认只把 ToolInvocationError 转成错误消息，其余异常一律 re-raise。\n"
+            "      所以两种做法二选一：① 干脆实现它；② 显式重写成「返回带 error 的结果」，\n"
+            "      让模型看到一句说明而不是让运行崩掉（Demo 2 的只读后端就是 ② 的写法）。"
+        )
+    else:
+        print(
+            "    ↑ 本次调用**成功**了 —— 说明这个版本的父类给该方法补了可用的默认实现。\n"
+            "      这也提醒我们：**别按印象断言「某个方法一定没有默认实现」**，以运行结果为准；\n"
+            "      但返回值是否可靠仍要看文档（Demo 2 的只读后端是更稳的写法：显式返回 error）。"
+        )
 
 
 # ================================================================
@@ -310,7 +317,11 @@ def demo_3_policy_hooks() -> None:
             ai_tool_call("write_file", {"file_path": "/work/a.txt", "content": "正常内容 A"}, "c1"),
             ai_tool_call("write_file", {"file_path": "/work/b.txt", "content": "正常内容 B"}, "c2"),
             ai_tool_call("write_file", {"file_path": "/work/c.txt", "content": "正常内容 C"}, "c3"),
-            ai_tool_call("write_file", {"file_path": "/work/secret.txt", "content": "sk-abcdefgh12345678"}, "c4"),
+            # 故意写一条"疑似密钥"的内容来触发策略拦截。
+            # 这里用一眼可辨的假 key（真实场景里是用户不小心把真 key 写进文件）；
+            # 用 FAKE 字样的另一个好处：不会被本仓库的密钥扫描脚本误报。
+            ai_tool_call("write_file", {"file_path": "/work/secret.txt",
+                                        "content": "sk-FAKEKEYFORDEMO1234567890"}, "c4"),
             AIMessage(content="有几次写入被策略拦下了。"),
         ]),
         backend=backend,
@@ -341,7 +352,7 @@ if __name__ == "__main__":
 #      全有默认实现；自定义后端只需重写自己支持的那几个（Demo 1 只写了 write/read/ls）；
 #    - **未重写的方法会在调用时抛 NotImplementedError 并打断整个运行**
 #      （Demo 1 Part B 实测：调 grep → NotImplementedError: 空消息 → 运行中断）。
-#      因为 ToolNode 对非 ToolException 的异常是直接 re-raise 的；
+#      因为 ToolNode 只把 ToolInvocationError 转成消息，其余（含普通 ToolException）直接 re-raise；
 #      要么实现它，要么显式重写成「返回带 error 的结果」（Demo 2 的写法）；
 #    - 所有操作返回带 error 字段的 dataclass（WriteResult/ReadResult/LsResult/…），
 #      字段**全部有默认值**，所以 `ReadResult(error="...")` 这种写法是合法的；

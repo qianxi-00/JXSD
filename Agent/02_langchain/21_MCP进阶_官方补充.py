@@ -49,8 +49,12 @@ from pathlib import Path
 # 本机开着 Clash 等系统代理时，127.0.0.1 的回环请求会被代理接管（课案排障一节记录过，
 # 表现为 McpError: Session terminated / 502）。Demo 4 要连本机进程内的 HTTP 服务端，
 # 所以这里给进程设上 NO_PROXY，保证回环直连。
-os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
-os.environ.setdefault("no_proxy", "127.0.0.1,localhost")
+# 追加式写法：环境里若已有 NO_PROXY（用户自己设的白名单），把回环补进去，
+# 而不是因为 setdefault 而整体失效。
+for _proxy_key in ("NO_PROXY", "no_proxy"):
+    _existing = os.environ.get(_proxy_key, "")
+    if "127.0.0.1" not in _existing:
+        os.environ[_proxy_key] = (_existing + "," if _existing else "") + "127.0.0.1,localhost"
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
@@ -390,7 +394,8 @@ if __name__ == "__main__":
 #    - 官方新 API `langchain.mcp.MCPAdapter` **不可用**：导入即报
 #      `No module named 'fastmcp.client.group'`（需要 fastmcp 4.x，本机是 3.4.7）；
 #    - 经典适配器 MultiServerMCPClient 可用：`await client.get_tools()` 拿到工具，
-#      `await tool.ainvoke({...})` 调用成功（实测 greet(小明) → 你好，小明！）；
+#      `await tool.ainvoke({...})` 调用成功（实测本文件服务端的 get_weather / search
+#      都能正常调用，返回值是 content block 列表）；
 #    - **MCP 工具的返回值是 content block 列表**（[{'type': 'text', 'text': ...}]），
 #      不是字符串 —— 直接 str() 会打出一坨字典（本文件提供了 tool_result_text 转换）；
 #    - MCP 工具是异步实现，agent 必须走 `ainvoke`（同步 invoke 不适用）；

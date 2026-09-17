@@ -53,7 +53,7 @@ def build_model(**overrides):
     return init_chat_model(**kwargs)
 
 
-# 用量累加器：核算成本的基础（官方字段见 Demo 4）
+# 用量累加器：核算成本的基础（官方字段见 Demo 5）
 USAGE_TOTAL = {"input_tokens": 0, "output_tokens": 0, "reasoning": 0, "cache_read": 0}
 
 
@@ -292,7 +292,8 @@ if __name__ == "__main__":
 # 2. 本机实测（这一跑的真实观察）：
 #    - Demo 1：参数被接受；response_metadata 含 model_name / finish_reason / token_usage；
 #      content_blocks 返回 [{'type': 'text', 'text': ...}]；usage 含 reasoning 与 cache_read；
-#    - Demo 2：**max_tokens=16 未被网关执行**（返回 4540 输出 token、finish_reason=stop）；
+#    - Demo 2：**max_tokens=16 未被网关执行** —— 多次实测分别返回 4574 / 6147 / 4729
+#      输出 token 且 finish_reason=stop（提示词缩短到 300 字后仍是数千 token）；
 #    - Demo 3：timeout=0.001 立即失败（证明参数确实传到 HTTP 层）；
 #    - Demo 4：requests_per_second=2 时，4 个令牌按约 0.5 秒间隔发放；
 #    - Demo 5：两次调用可累计出 input/output/reasoning/cache_read 四个口径；
