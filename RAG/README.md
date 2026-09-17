@@ -1255,6 +1255,47 @@ Invoke-RestMethod -Uri http://127.0.0.1:8099/api/chat -Method Post -ContentType 
 
 ---
 
+### 7.3 全链路真机实测（2026-09-17，收尾轮）
+
+一次从头跑到尾的实测：**依赖服务 → 数据链路①~⑥ → 图谱⑦ → 四条线路 → 接口层 → 评估抽检 → 用例**。
+机器可读的完整记录在同目录的 **`data/full_chain_verify.json`**（10 个阶段 + 读数 + 未覆盖项），
+下面是人读版。服务全程自起自收（验完 `taskkill /F /T`，8099 已释放）。
+
+| 阶段 | 命令 | 关键读数 | 结论 |
+|---|---|---|---|
+| **① OCR** | （**未在本地跑**） | 数据集 `ocr_engine=deepseek-ocr2-transformers`、模型在远端 GPU `/root/autodl-tmp/models/DeepSeek-OCR-2`；300 张 PNG 齐全；`ocr_status` success 282 / failed 18 | 远端产物，本机无法复跑该模型；**如实标注为未覆盖** |
+| **② 汇总成入库 JSON** | `build_ocr_json.py --dedupe consecutive --raw/--clean <临时路径>` | 写出 11 条、清洗 成功 11 / 失败 0；与仓库里已有的 11 条 local 产物比对 **source_file 一致、文本差异 0** | 通过（**改写临时路径**：默认路径会用 11 条覆盖 300 条真数据） |
+| **③ 抽取入 Milvus** | `tick_extract.py --insert --recreate` | `upserted 300`、`count(*) 300`、`row_count 300`（两者相等 ⇒ 确实是新建集合）、空文本 **18** ⇒ 可召回 **282** | 通过 |
+| **④ 向量回填** | `embed_tickets.py` | 读 300 / 回填 **282** / 跳过 18；落库后核对「有向量 282、空文本 18、空文本且有向量 0」 | 通过 |
+| **⑤ 预设问答** | `seed_qa_cache.py --force` | 相似度层 5 条标准问法 + 精确层 60 条明细（每条按 4 条线路各写一份） | 通过 |
+| **⑥ 导入 PG** | `import_tickets_to_pg.py` | 读到 300 / 写入(merge) 300 / 票号缺失或重复改用 id 兜底 **101** / 表内总数 300 | 通过（那 101 条是机票票号在样本里重复 + 18 条空 OCR 导致的，属既有数据特征） |
+| **⑦ 图谱重建** | `build_finance_graph.py --limit 3` | **40 实体 / 49 关系 / 3 社区**，92.46s；重建前基线 51/66/6 ⇒ 保留 38、新增 2、消失 13；重建后孤点 0 / 重名 0 / 未分配社区 0 | 通过（取样文档不同 ⇒ 图不同，脚本注释已写明） |
+| **四条线路** | `acceptance_4routes.py`（服务以 `QA_CACHE_ENABLED=false` 启动） | basic 2.65s / agentic 15.94s / graph 5.34s（社区 3）/ fusion 16.4s（SQL 路径命中）/ agentic 多轮 20.98s；**5/5 `ok=true`、`cache_hit` 全为 null** | 通过（关缓存 ⇒ 真的走了检索/工具/生成） |
+| **接口层** | 真服务 + SSE/WS 客户端 | health `status=ok` 四依赖全 ok；modes 四条；SSE 关缓存态两次都 `rag`（2.43s/2.37s）、开缓存态预置问法 `faq/0.004s`、非预置问题首跑 `rag/2.871s`→二跑 `exact/0.001s` 且答案一致；WS 一条连接两轮 | 通过 |
+| **评估抽检** | `run_stage_eval.py --eval-set data/eval_set.jsonl --limit 3 --llm-score` | 路由/筛选/Recall@5/Hit@5/事实准确率 **全 1.0**、缓存命中 0 条、LLM 评分均值 **5.00**（3 条） | 通过（**只是 36 条里的 3 条抽检**，全量基线见 §7.1） |
+| **用例/文档** | `pytest RAG` 离线 + 集成 | 离线 **823 passed / 0 errors**、集成 14 passed；README 13 个 mermaid 真渲染 13/13；34 张表列数一致 | 通过 |
+
+#### 这次实测抓到的 bug（已修 + 已留检查）
+
+**流式路径漏传 `use_cache` ⇒ `QA_CACHE_ENABLED=false` 对流式请求不生效。**
+
+- **怎么发现的**：关缓存起服务后，同一个标准问法用 SSE 连问两次 —— 第二次 **0.001s、`query_type=faq`、`cache_hit=exact`**；
+  而同一次运行的**非流式**四条线路验收用例 `cache_hit` 全是 null。
+- **根因**：`pipeline/modes.py::answer_events` 的 basic 分支调 `pipeline.run_events(question, stream=stream)` **漏传 `use_cache`**；
+  非流式那条路（`_run_basic`）一直传着 —— 所以**只跑单测、或只验收非流式接口，都发现不了**。
+- **修法**：补 `use_cache=cache_enabled()`（`modes.py`）。
+- **回归用例**：`tests/test_modes.py::TestBasicStreamingHonorsCacheSwitch`（假 pipeline 记录 `use_cache`，开关 true/false 两态都断言）。
+- **负向验证**：把修复回退 ⇒ 该用例 **failed**；还原 ⇒ 29 passed。
+- **修复后真机复验**：关缓存态 SSE 两次均 `query_type=rag`/`cache_hit=None`（2.43s、2.37s），WS 两轮同样无命中；
+  缓存开启态写入/读取仍正常（非预置问题首跑 2.871s → 二跑 0.001s，答案一致）。
+
+#### 这次**没**覆盖的（别把上表读成"整条链路都重跑过"）
+
+- ① OCR 本地复跑（模型在远端 GPU，本机没有）；
+- 图谱**全量**重建（300 篇 × 1 次 LLM 抽取；本轮按 `--limit 3` 与基线同口径，约 10 次调用）；
+- 36 条评估集**全量**重跑（本轮只抽 3 条；全量基线是 §7.1 里 Langfuse 的两轮记录）；
+- Chainlit 页面的人工交互（本机不起真 Edge，按约定只做无头/HTTP 层）。
+
 ## 八、已知差异与坑
 
 ### 8.1 本机环境与配置类
