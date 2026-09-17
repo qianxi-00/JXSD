@@ -692,6 +692,17 @@ def load_items(args) -> list[dict]:
     return items
 
 
+def blank_semantic_text_count(client, name: str) -> int:
+    """数 `semantic_text` 为空的行数（这些行永远召不回，却占着 `count(*)` 的分母）。
+
+    单独成函数只为一件事：**能被测**。它原先嵌在 `main()` 里，而 `main()` 要连真 Milvus、
+    真写库 —— 于是"空文本行到底有没有被如实报出来"这件事（B 表那条欠账的核心）
+    只有"连着真库跑一次"这一条验证路径。抽出来后可以用假 client 钉住。
+    """
+    rows = client.query(collection_name=name, filter='semantic_text == ""', output_fields=["count(*)"])
+    return int(rows[0].get("count(*)", 0)) if rows else 0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="提取票据字段并写入 Milvus tick 集合")
     # --type 的 choices 与 EXTRACTORS 的 key 是同源的三个值，新增票据类型要一起改。
@@ -791,10 +802,7 @@ def main() -> None:
         # 而那正是该被修的数据缺口（失败明细见 data/ocr_results_clean.json 的 ocr_status=failed）。
         blank = 0
         try:
-            blank_rows = client.query(
-                collection_name=name, filter='semantic_text == ""', output_fields=["count(*)"]
-            )
-            blank = int(blank_rows[0].get("count(*)", 0)) if blank_rows else 0
+            blank = blank_semantic_text_count(client, name)
         except Exception as exc:  # noqa: BLE001 - 统计失败不该让导入失败
             print(f"WARN 统计空文本行失败（不影响导入结果）: {exc}")
         if blank:

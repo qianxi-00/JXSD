@@ -91,7 +91,7 @@ def _extra_body(thinking: bool | None = None) -> dict:
     thinking=None 跟随配置；显式传 False 用于**必须立刻出正文**的短任务（如路由）。
 
     ⚠️ 关思考到底该发哪个字段，是**实测出来的**，不是照文档猜的
-    （探针 `RAG\script\probe_llm_thinking.py`，2026-09-17 在
+    （探针 `RAG/script/probe_llm_thinking.py`，2026-09-17 在
     `LLM_BASE_URL=https://api.deepseek.com` + `LLM_MODEL=deepseek-flash` 上测的）：
 
     | 发包内容                      | 域外问题（思考更长）的实测结果                        |
