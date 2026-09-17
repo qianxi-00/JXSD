@@ -90,6 +90,7 @@ $env:PYTHONUTF8 = "1"
 | `03_deepagents/14_上下文治理_官方补充.py` | 内置上下文压缩（卸载）、FilesystemPermission、write_todos opt-in | ✅ 剧本模型 |
 | `03_deepagents/15_自定义后端_官方补充.py` | 从零实现 BackendProtocol、只读后端、审计与限流/校验策略钩子 | ✅ 剧本模型 |
 | `03_deepagents/16_Rubric评分循环_官方补充.py` | RubricMiddleware 自评迭代、评分器带工具取证、迭代上限保护 | ⚠️ 需真实模型 |
+| `03_deepagents/17_RAG_检索卸载委派_官方补充.py` | 三种 RAG 架构 + 检索-卸载-委派（全文落盘、子代理读） | ⚠️ 需真实模型 + SiliconFlow |
 
 这些文件**不是课案内容**，所以不带 `_jxsd` 后缀；共同特点：全部可离线复现
 （用继承 `ChatOpenAI` 的剧本模型替代真模型），注释里标了官方文档路径与本地实测结论。
@@ -161,6 +162,25 @@ $env:PYTHONUTF8 = "1"
 | `05_mcp` 提示词 | `@mcp.prompt` 返回 `list[dict]` | FastMCP 3.4.7 会报 `messages[0] must be Message or str`，要用 `Message` 对象 |
 | `05_mcp` 权限 | `create_token` 只签 `sub/exp/iat` | 配 `required_scopes=["read"]` 会全部 401 —— 令牌里必须有 `scope` |
 | `05_mcp` 部署 | 内置工具含 `write_todos` | deepagents 0.7.13 已移除该工具，实际内置 9 个（`ls/read_file/write_file/edit_file/delete/glob/grep/execute/task`） |
+
+## 排障补充：脚本「跑到一半什么都没输出」多半是重定向的锅
+
+跑长脚本（尤其要调模型、跑 agent 的）时，**不要用 PowerShell 的 `*>` 或管道重定向收集输出**：
+它会把子进程的 stdout 缓冲住，一旦脚本中途被中断（Ctrl+C、网关抖动、超时），
+**缓冲区直接丢失，日志为空**，看起来像"代码崩了"，实际代码根本没报错。
+
+- ❌ `python script.py *> out.log`（中断后 out.log 可能是空的）
+- ❌ `python script.py 2>&1 | Select-Object -Last 20`（管道提前关闭还会**终止**上游进程）
+- ✅ 让 Python 自己写日志：
+  ```powershell
+  $code = 'import runpy, sys; sys.stdout = sys.stderr = open(r"out.log", "w", buffering=1, encoding="utf-8"); runpy.run_path(r"script.py", run_name="__main__")'
+  & .\.venv\Scripts\python.exe -u -X utf8 -c $code
+  ```
+- ✅ 或者干脆直接跑、让输出实时打到终端（不加任何重定向）
+
+这条踩坑在本项目的补充篇开发中真实发生过：一次 `03_deepagents/17_RAG_检索卸载委派_官方补充.py`
+的"崩溃"其实已经跑通（临时目录里留着落盘文件、日志却为空），换用上面第 3 种方式后
+一次通过。**结论：日志为空 ≠ 代码有问题，先怀疑缓冲。**
 
 ## 验证方式与结果
 

@@ -108,8 +108,7 @@ def demo_2_max_tokens_reality() -> None:
     model = build_model(max_tokens=16)
     try:
         # 只要 300 字就够证明问题：max_tokens=16 若真生效，输出会被截到十几个 token。
-        # （原先要求"至少两千字"时，本机网关偶发把连接掐断 —— 长文本生成是它最脆弱的场景，
-        #   所以这里刻意把请求缩短，既够验证又不至于把演示跑崩。）
+        # （早先要求"至少两千字"时更慢更费额度，结论完全一样，所以缩短。）
         response = model.invoke("用大约 300 字介绍 LangGraph 的持久化机制。")
     except Exception as exc:  # noqa: BLE001
         print(f"  本次调用失败（网关抖动/额度问题，非代码问题）：{type(exc).__name__}: {str(exc)[:100]}")
@@ -226,11 +225,12 @@ def demo_5_token_accounting() -> None:
 # ================================================================
 # Demo 6：内容块与多模态的现实
 # ================================================================
-# 是否真的发一次图片块请求。默认关闭，原因（实测）：
-#   本机网关收到 image 内容块时会**直接掐断连接**，而且不是每次都抛可捕获的异常 ——
-#   有时会让 Python 进程**硬退出**（exit -1，try/except 兜不住），从而把整个演示带崩。
-# 想亲自复现就把下面这行改成 True（结论仍然是"本机不支持多模态"）。
-MULTIMODAL_LIVE_TEST = False
+# 是否真的发一次图片块请求。默认开启 —— 实测它是**可捕获的异常**，不会带崩脚本：
+#     图片块调用失败：OpenAIConnectionError: Connection error.（纯文本调用同一端点正常）
+# 注意：如果直接跑本文件时曾在 Demo 6 处"整跑中断、日志为空"，那多半不是这里的问题，
+# 而是 **PowerShell 的 `*>` / 管道重定向会缓冲输出**，进程被中断时缓冲丢光导致的假象。
+# 排查这类脚本建议让 Python 自己写日志（见 README 排障一节）。
+MULTIMODAL_LIVE_TEST = True
 
 
 def demo_6_multimodal_reality() -> None:
@@ -252,9 +252,8 @@ def demo_6_multimodal_reality() -> None:
 
     if not MULTIMODAL_LIVE_TEST:
         print("\n  （已跳过真实调用：MULTIMODAL_LIVE_TEST=False）")
-        print("  实测结论（多次验证）：本机网关对图片块**不可用** ——")
-        print("    · 报 OpenAIConnectionError: Connection error（同一端点纯文本调用正常）；")
-        print("    · 更麻烦的是它有时会让进程硬退出，所以本文件默认不跑这段。")
+        print("  实测结论：本机网关对图片块**不可用** —— OpenAIConnectionError: Connection error，")
+        print("    而同一端点的纯文本调用正常。")
     else:
         model = build_model()
         try:
@@ -262,6 +261,7 @@ def demo_6_multimodal_reality() -> None:
             print(f"\n  ✔ 网关接受了图片块：{str(response.content)[:80]}")
         except Exception as exc:  # noqa: BLE001
             print(f"\n  ✘ 图片块调用失败：{type(exc).__name__}: {str(exc)[:120]}")
+            print("    （这是**可捕获的异常**，脚本会继续往下跑，不影响其它 Demo）")
 
     print(
         "  ↑ 结论：多模态相关缺口在本仓库继续挂「待补（要支持视觉的端点）」。\n"
