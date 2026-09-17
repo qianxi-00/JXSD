@@ -22,7 +22,7 @@
 | **自建公网素材托管**（`tools/asset_host.py` + nginx 只读 location） | **通过**（见 5.8①） |
 | **DeepAgents 视频剪辑真实出片** | **通过** —— 12 个 moviepy 动画素材 + 百炼 ASR 字幕 + 上下排布合成，产出 `mashup_final.mp4`（1280×960 / 20.0s / 30fps / 2.9MB，已逐帧核对），见 5.10 |
 | **数字人对口型真实出片（PixVerse）** | **通过** —— 6 秒素材 + edge-tts 配音，产出 `avatar_27280.mp4`（1280×720 / 6.3s / 44.7s 端到端），ASR 复核确认音轨被替换，见 5.11 |
-| 抖音真实采集 | 采集服务**已部署并连通**（`is_available=True`）；真实拉取待你填 Cookie（见第 8 节第 4 条） |
+| 抖音真实采集 | 服务**已部署并连通**、Cookie **已生效**（`/user/self` 解析成功、`handler_user_profile` 200）；**作品列表端点被 v4 镜像的上游签名缺陷挡住**（403，非 Cookie/非风控），详见第 8 节第 4 条 |
 
 > 第二轮验证（5.8）另外修掉 3 个真问题：`MediaAgentSettings` **漏写 `env_prefix`**
 > 导致所有 `MEDIA_*` 配置从未被读取；`asset_host.unpublish()` 的 **shell 注入隐患**；
@@ -934,28 +934,56 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
    过程中修掉了 4 个真缺陷（5.9 全节）。
    仍需注意：**HyperFrames 渲染链路在本机不可用**（见 5.9④），
    默认已由 `MEDIA_MASHUP_USE_HYPERFRAMES=false` 切到 moviepy 分支。
-4. **抖音数据采集的真实拉取** —— **服务已部署连通，卡在 Cookie**。
-   本轮完成的部分：
+4. **抖音数据采集的真实拉取** —— **服务已部署连通、Cookie 已生效，但被上游的签名缺陷挡住**。
+   结论一句话：**这不是你的 Cookie 问题，也不是本项目代码问题，是 v4 镜像本身已经过时。**
+
+   本轮完成并验证的部分：
 
    | 项 | 结果 |
    |---|---|
    | 镜像拉取 | ✅ `evil0ctal/douyin_tiktok_download_api:V4.1.2` |
-   | 服务部署 | ✅ 宿主机 `http://127.0.0.1:8080`，`GET /docs` → **200** |
+   | 服务部署 | ✅ `http://127.0.0.1:8080`，`GET /docs` → **200**（定义见 `Media_Agent/deploy/`） |
    | 项目客户端连通 | ✅ `tools/douyin_client.is_available()` → **True** |
-   | 接口真实调用 | ✅ 打到了 `/api/douyin/web/fetch_user_post_videos`，返回 400（缺 Cookie） |
+   | Cookie 生效 | ✅ `/user/self` 成功解析出 `sec_user_id = MS4wLjABAAAAzNta…RMMU` |
+   | 部分端点可用 | ✅ `/api/douyin/web/handler_user_profile` → **200 带真实用户数据** |
+   | **作品列表端点** | ❌ `/api/douyin/web/fetch_user_post_videos` → 上游 **403** |
 
-   ⚠️ **踩到一个部署坑（已修并写进 compose）**：镜像默认的 `start.sh` 跑的是
-   `uvicorn.run(..., reload=True)`，在本机 Docker Desktop 上**服务起不来** ——
-   容器状态 running、但容器内 80 端口始终没监听、`docker logs` 只有 DNS 报错、
-   前台跑 60 秒 stdout 一个字都没有。关掉 `reload` 后 45 秒内正常启动。
-   定义已固化为 `Media_Agent/deploy/douyin-api.compose.yml`。
+   **403 的根因（三条判据，逐条实测过）**：
+   1. 抖音 `aweme/v1/web/aweme/post/` 需要请求签名 `a_bogus`，而 V4.1.2 的算法停在
+      **2025-03**，跟不上抖音后续的改动；上游 README 也明说
+      *"v4 has **no identity pool**"*（v5 才有自维护的身份池，就是修这类问题的机制）。
+   2. **不是 Cookie 问题**：同一个容器、同一份 Cookie，
+      `handler_user_profile` 能正常返回 200 —— Cookie 与网络都是好的。
+   3. **不是账号被风控、也不是出口 IP 被墙**：换成**任意公开大号**请求同一端点，
+      同样返回 400/403；且宿主机与容器出口 IP 完全一致（`67.159.48.148`），
+      而同一出口下 `handler_user_profile` 正常。
 
-   **仍需你做的**：在根 `.env` 里填 `MEDIA_DOUYIN_COOKIE`（见 README 的步骤）。
-   填完后 `fetch_user_videos()` 的真实响应层级（`data.aweme_list` 还是别的键）、
-   `/user/self` 解析是否有效，才能最终确认 —— 本文件的 `_extract_aweme_list()`
-   已经按"常见层级都试一遍"写，但没有真实响应就无法收口。
-   ⚠️ 上游版本风险仍在：`Evil0ctal/Douyin_TikTok_Download_API` 的 `main` 已是 **v5**
-   （`/api/v1/...` 且需 API Key），本项目按 **v4** 形态实现、compose 里 pin 的是 `:V4.1.2`。
+   **另外试过、确认无效的两条路**（省得重复踩）：
+   - 把 Cookie 注入容器内 `crawlers/douyin/web/config.yaml`（**必须做**，见下），
+     做完了 `handler_user_profile` 立刻可用，但 `aweme/post` 仍 403 → 证明不是 Cookie；
+   - 换更新的镜像 tag `5be4838`（2025-10 构建）→ 里面**还是同一份 V4.1.2 代码**
+     （`config.yaml` 里 `Version: V4.1.2 / Update_Time: 2025/03/16`），签名不变，同样 403。
+
+   ⚠️ **踩到并已修掉的两个部署坑**（都写进 compose 与 `start_api.py` 的注释了）：
+   1. 镜像默认的 `start.sh` 跑 `uvicorn.run(..., reload=True)`，在本机 Docker Desktop 上
+      **服务起不来** —— 容器 running、但容器内 80 端口始终没监听、`docker logs` 只有
+      DNS 报错、前台跑 60 秒 stdout 一个字都不输出。关掉 `reload` 后 45 秒内正常启动。
+   2. 客户端在 **HTTP 请求头**里传的 Cookie **不会**被服务端转发给抖音 ——
+      实测「带 Cookie」与「不带 Cookie」返回完全相同的 400。
+      **必须把 Cookie 写进容器内的爬虫配置**（`start_api.py` 在启动时注入，
+      Cookie 的唯一真源仍是根 `.env`，不在别处留副本）。
+
+   **现在能用的路**：页面下方的「📋 手动粘贴作品数据」降级入口 ——
+   后面的漏斗诊断 / 内容评估 / 优化策略三个 LLM 节点**完全一样**（已于 5.3 验证通过），
+   只是数据要手工取。`fetch_user_videos()` 的失败信息现在会直接说明上述真因，
+   不再误导成「Cookie 过期」。
+
+   **长期要真采的话**：迁移到 **v5.1**（2026-09-15 构建）—— 它自带自维护身份池、REST 走
+   `/api/v1/...` + API Key。代价是一次独立改造：官方 compose 是 **4 个容器**
+   （api / worker / postgres(timescaledb-ha:pg17) / redis），其中
+   **`browser-rpc` 与 `downloader` 两个镜像要从源码构建**，另需写密钥、
+   进控制台建账号并生成 API Key，之后还要把 `douyin_client.py` 从 v4 端点改到 v5。
+   这是本报告里**唯一一处"已知可行但未做"**的改造。
 5. **`_read_edge_cookies()`（从 Edge 读抖音 Cookie）** —— 未实跑。
    它会 `taskkill` 掉所有 Edge 进程再起无头实例，副作用大，不适合在验证阶段触发。
    仅验证了端口探活函数不可达时返回 `False` 且不抛异常。

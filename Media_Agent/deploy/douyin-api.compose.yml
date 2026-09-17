@@ -4,18 +4,24 @@
 #     docker compose -f douyin-api.compose.yml up -d
 #     docker compose -f douyin-api.compose.yml logs -f
 #
-# 起来之后在根 .env 里配：
+# 起来之后根 .env 里要有这两项：
 #     MEDIA_DOUYIN_API_BASE=http://127.0.0.1:8080
 #     MEDIA_DOUYIN_COOKIE=<浏览器里复制的抖音 Cookie>
 #
-# ⚠️ 为什么不用镜像默认的 start.sh
-#   镜像的 start.sh 执行的是 `uvicorn.run(..., reload=True)`。reload 模式要起
-#   一个监督进程 + 子进程（走 multiprocessing / /dev/shm，容器里默认只有 64MB），
-#   在本机 Docker Desktop 实测**起不来**：容器状态 running、但容器内 80 端口
-#   始终没有监听，`docker logs` 里除了 DNS 报错什么都没有，前台跑 60 秒
-#   stdout 一个字都不输出。
-#   把 reload 关掉之后 45 秒内正常启动，`GET /docs` 返回 200。
-#   reload 本来就是开发特性，常驻服务不该开。
+# ⚠️ 为什么不用镜像默认的 start.sh（两处都实测踩过，详见 start_api.py 的注释）
+#   1. 它跑 `uvicorn.run(..., reload=True)`。reload 要起监督进程 + 子进程
+#      （多进程 + /dev/shm，容器里默认只有 64MB），在本机 Docker Desktop 上
+#      **服务起不来**：容器状态 running，但容器内 80 端口始终没有监听，
+#      `docker logs` 里除了 DNS 报错什么都没有，前台跑 60 秒 stdout 一个字不输出。
+#   2. 镜像内的 crawlers/douyin/web/config.yaml **自带一份早已过期的 Cookie**，
+#      抖音对采集接口直接回 403。而客户端在 HTTP 头里传的 Cookie **不会**被
+#      服务端转发给抖音（实测带与不带返回完全相同的 400）。
+#      所以必须把有效 Cookie 写进容器内那份配置。
+#   本 compose 用 start_api.py 同时解决这两点：先注入 Cookie，再以 reload=False 启动。
+#
+# ⚠️ Cookie 的唯一真源是根 .env
+#   compose 通过 env_file 把根 .env 的变量传进容器（只读环境变量，不落盘副本），
+#   start_api.py 再把它写进容器内的配置。改 Cookie 只需改根 .env 并重启容器。
 #
 # ⚠️ 端口
 #   容器内是 80（config.yaml 的 API.Host_Port），映射到宿主机 8080 ——
@@ -27,13 +33,10 @@ services:
     restart: unless-stopped
     ports:
       - "8080:80"
-    command:
-      - python3
-      - -u
-      - -c
-      - |
-        import uvicorn
-        uvicorn.run('app.main:app', host='0.0.0.0', port=80,
-                    reload=False, log_level='info')
+    env_file:
+      - ../../.env
+    volumes:
+      - ./start_api.py:/app/start_api.py:ro
+    command: ["python3", "-u", "/app/start_api.py"]
     environment:
       TZ: Asia/Shanghai

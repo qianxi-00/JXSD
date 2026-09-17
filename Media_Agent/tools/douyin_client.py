@@ -459,8 +459,22 @@ def fetch_user_videos(profile_url: str, limit: int = 20) -> dict:
         print(f"[复盘] 接口返回 {resp.status_code}: {detail}")
         return _fail(
             f"采集接口返回 {resp.status_code}: {detail}\n"
-            "常见原因：Cookie 已过期（v4 镜像里内置的 Cookie 早就失效了），"
-            "或该账号被风控。"
+            "\n"
+            "⚠️ 2026-09 实测：这个错误**多半不是你的问题**。自托管 v4 镜像"
+            "（`evil0ctal/douyin_tiktok_download_api:V4.1.2`，2025-03 构建）\n"
+            "调抖音 `aweme/v1/web/aweme/post/` 会固定被回 **403**，"
+            "因为该端点的请求签名 `a_bogus` 算法已过期。判据：\n"
+            "  · 同一个容器、同一份 Cookie，`/handler_user_profile` 能正常返回 200\n"
+            "    （说明 Cookie 与网络都没问题）；\n"
+            "  · 换成**任意公开大号**（不是本人主页）请求同一端点，同样 400/403\n"
+            "    （说明不是账号被风控）。\n"
+            "官方 README 也写明 **v4 没有自维护的身份池**，v5 才有。\n"
+            "\n"
+            "可行的出路：\n"
+            "  1. 短期：用页面下方的「📋 手动粘贴作品数据」降级入口 ——\n"
+            "     后面的漏斗诊断 / 内容评估 / 优化策略**完全一样**，只是数据要手工取；\n"
+            "  2. 长期：迁移到 v5（`/api/v1/...` + API Key + 控制台），\n"
+            "     但它要 4 个容器、且其中 2 个需从源码构建，是一次独立改造。"
         )
 
     try:
