@@ -190,6 +190,76 @@ def check_fixes() -> list[str]:
                 f"{_tag} 的任务仍渲染成蓝色提示（error={errs} info={infos}）",
             )
 
+    # ---- U1：三个上传框的「处理动作收敛成一次」 ----
+    # 背景：`st.file_uploader` 的值**跨 rerun 保留**，所以 `if some_file:` 每轮都为真。
+    # 后果分两档：
+    #   · 带 `st.rerun()` 的那处（BGM）会**无限自转**，页面卡死；
+    #   · 不带 `st.rerun()` 的两处（主口播视频、穿插素材）不自转，但每轮 rerun 都重写 ——
+    #     主视频白写几十 MB；素材那处更重，先清空整个目录再整批重写。
+    # 修法是「名字|字节数」指纹：只处理没见过的那一份。这里断言的就是**写盘会收敛**：
+    # 记录落盘文件的 mtime，再触发几轮 rerun，mtime 不许变。
+    #
+    # 写盘要重定向到临时目录，别把探针文件丢进项目 `.cache/`（那是 agent 的沙箱根）。
+    # 做法与修那个无限 rerun 时用的一致：直接改 `views.mashup` 的模块级常量
+    # （脚本 import 的 `views.mashup` 与这里拿到的是同一个模块对象）。
+    import tempfile
+
+    try:
+        import views.mashup as _vm
+
+        with tempfile.TemporaryDirectory(prefix="apptest_mashup_") as _tmp:
+            # ⚠️ 上下文变量是 **str**（不是 Path），必须先包一层 Path 才能用 `/`
+            _cache = Path(_tmp) / "cache"
+            _mats = Path(_tmp) / "materials"
+            _cache.mkdir()
+            _mats.mkdir()
+            _saved = (_vm.CACHE_DIR, _vm.MATERIALS_DIR)
+            _vm.CACHE_DIR = _cache
+            _vm.MATERIALS_DIR = _mats
+            try:
+                at = AppTest.from_file(str(_ROOT / "main.py"), default_timeout=60)
+                at.run()
+                at.sidebar.radio[0].set_value("🎬 视频剪辑").run()
+
+                # ⚠️ `FileUploader.set_value` 要的是 **3 元组** `(文件名, 内容, mime)`
+                # （2 元组会被当成「多文件序列」再去逐项解包，报 too many values to unpack）
+                # ① 主口播视频：上传后连跑两轮，落盘文件的时间戳不许变
+                at.file_uploader[0].set_value(("u1_probe.mp4", b"x" * 4096, "video/mp4")).run()
+                _written = list(_cache.glob("input_*.mp4"))
+                if not _written:
+                    want(False, "U1", "上传主视频后临时目录里没有落盘文件（重定向可能没生效）")
+                else:
+                    _m1 = _written[0].stat().st_mtime_ns
+                    at.run()
+                    at.run()
+                    _m2 = _written[0].stat().st_mtime_ns
+                    want(_m1 == _m2, "U1", f"重复 rerun 不再重写主视频（mtime {_m1} == {_m2}）")
+
+                # ② 穿插素材：同样连跑两轮，目录里的文件时间戳不许变
+                at.file_uploader[1].set_value(
+                    [("u1_a.png", b"y" * 2048, "image/png"),
+                     ("u1_b.png", b"z" * 2048, "image/png")]
+                ).run()
+                _mat = sorted(_mats.glob("*.png"))
+                if len(_mat) != 2:
+                    want(False, "U1", f"上传素材后临时目录里应当是 2 个文件，实际 {len(_mat)}")
+                else:
+                    _mm1 = [p.stat().st_mtime_ns for p in _mat]
+                    at.run()
+                    at.run()
+                    _mm2 = [p.stat().st_mtime_ns for p in _mat]
+                    want(_mm1 == _mm2, "U1", "重复 rerun 不再清空重写素材目录（时间戳未变）")
+                    # 跳过写入那几轮也要把「本次用哪些素材」报出来，条数不能变 0
+                    want(
+                        any("已加载 2 个素材" in (s.value or "") for s in at.success),
+                        "U1",
+                        "跳过写入的轮次仍报出正确的素材条数（不会变成「已加载 0 个」）",
+                    )
+            finally:
+                _vm.CACHE_DIR, _vm.MATERIALS_DIR = _saved
+    except Exception as exc:  # noqa: BLE001
+        want(False, "U1", f"上传收敛断言异常：{type(exc).__name__}: {exc}")
+
     return fails
 
 

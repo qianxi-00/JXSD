@@ -47,6 +47,12 @@
       ③ 上传那轮还要靠「名字|字节数」指纹把处理动作**收敛成一次**：``file_uploader``
       的值跨 rerun 保留，不设指纹时它每轮都为真、``st.rerun()`` 每轮都再来一次，
       ② 那条回填永远等不到「下一轮」—— 页面直接停在无限 rerun 里。
+    · **同一个指纹约定用在三个上传框上**（BGM / 主口播视频 / 穿插素材）。
+      后两个没有 ``st.rerun()``，所以不会自转，但同样每轮 rerun 都为真：
+      主视频那处会白写一次几十 MB 的文件；素材那处更重 —— 先把整个
+      ``materials/`` 清空再整批重写，用户在**别的框里**敲一个字符就触发一次，
+      而且清空与重写之间有个窗口，并发读方可能看到半截目录。
+      （上传框被清空时要把指纹 ``pop`` 掉，否则「清空后重传同一个文件」会被跳过。）
 
 运行方式（由 main.py 侧边栏路由调用）::
 
@@ -183,11 +189,21 @@ def show_mashup() -> None:
         # 与 workflows 共用一个沙箱目录（课案两边不一致，导致兜底查找扫不到）；
         # 文件名用 md5(原始名)[:8] 而不是 abs(hash(...)) —— 内置 hash 带进程级随机盐
         saved = CACHE_DIR / f"input_{hashlib.md5(video_file.name.encode('utf-8')).hexdigest()[:8]}{suffix}"
-        saved.write_bytes(video_file.getvalue())
+        # 同一个「名字|字节数」指纹约定（见下面 BGM 那处的注释）：这里没有 `st.rerun()`，
+        # 所以不会自转，但 `file_uploader` 的值同样跨 rerun 保留 —— 不设指纹的话，
+        # 用户在**别的任何输入框**里每敲一个字符都会白写一次几十 MB 的主视频。
+        sig = f"{video_file.name}|{video_file.size}"
+        if sig != st.session_state.get("_mashup_video_sig"):
+            st.session_state["_mashup_video_sig"] = sig
+            saved.write_bytes(video_file.getvalue())
+        # 落在守卫外：跳过写入的那几轮也要把路径交出去（文件第一轮就写好了）
         video_path = str(saved)
         # 预览直接传 UploadedFile：它本身就是 file-like，不必再从刚落盘的路径读回来
         st.video(video_file)
         st.success(f"已加载：{video_file.name}")
+    else:
+        # 清空上传框就把指纹一起忘掉，否则「清空后再传同一个文件」会被当成已处理而跳过
+        st.session_state.pop("_mashup_video_sig", None)
 
     path_input = st.text_input(
         "或输入视频路径", placeholder=r"例: F:\ProGram\Python_Base\Media_Agent\.cache\videos\xxx.mp4",
@@ -211,23 +227,35 @@ def show_mashup() -> None:
 
     material_paths = []
     if material_files:
-        # 清掉旧素材，避免和这一次混在一起（课案原有行为）：
-        # 「本次上传的才算数」，否则目录里会越堆越多、agent 拿到一堆没打算用的图
-        for old in MATERIALS_DIR.iterdir():
-            try:
-                if old.is_file():
-                    old.unlink()
-            except Exception:  # noqa: BLE001
-                # 文件可能正被上一次的渲染或别的进程占用：清不掉就算了，
-                # 不能让一次 unlink 失败中断整批上传
-                pass
-        for mf in material_files:
-            # 用原始文件名而不是哈希名：DeepAgents 在提示词里看到的就是文件名，
-            # 可读的名字能帮它判断素材内容，`input_a1b2c3.mp4` 那种没有信息量
-            mp = MATERIALS_DIR / mf.name
-            mp.write_bytes(mf.getvalue())
-            material_paths.append(str(mp))
+        # 同一根因、更重的后果：这里没有 `st.rerun()`（不会自转），但每轮 rerun 都会
+        # **先把整个素材目录清空、再整批重写** —— 用户在别的框里敲一个字符就触发一次，
+        # 而且清空与重写之间有个窗口，并发读方（或上一次渲染）可能看到半截目录。
+        # 指纹取全部文件的「名字|字节数」拼起来：只有**换了素材**才真的清+写。
+        sig = "|".join(f"{mf.name}|{mf.size}" for mf in material_files)
+        if sig != st.session_state.get("_mashup_material_sig"):
+            st.session_state["_mashup_material_sig"] = sig
+            # 清掉旧素材，避免和这一次混在一起（课案原有行为）：
+            # 「本次上传的才算数」，否则目录里会越堆越多、agent 拿到一堆没打算用的图
+            for old in MATERIALS_DIR.iterdir():
+                try:
+                    if old.is_file():
+                        old.unlink()
+                except Exception:  # noqa: BLE001
+                    # 文件可能正被上一次的渲染或别的进程占用：清不掉就算了，
+                    # 不能让一次 unlink 失败中断整批上传
+                    pass
+            for mf in material_files:
+                # 用原始文件名而不是哈希名：DeepAgents 在提示词里看到的就是文件名，
+                # 可读的名字能帮它判断素材内容，`input_a1b2c3.mp4` 那种没有信息量
+                mp = MATERIALS_DIR / mf.name
+                mp.write_bytes(mf.getvalue())
+        # 跳过写入那几轮也要报出「本次用的是哪些素材」：文件第一轮就落好了，
+        # 按名字取回同一批路径即可（下游据此拼 `edit_requirements`）。
+        # 放在守卫外还有个好处：`st.success` 的条数不会因为跳过而变成 0。
+        material_paths = [str(MATERIALS_DIR / mf.name) for mf in material_files]
         st.success(f"已加载 {len(material_paths)} 个素材")
+    else:
+        st.session_state.pop("_mashup_material_sig", None)
 
     # 没上传素材时，这次剪辑用的就是目录里已有的（见下面的 use_materials 兜底），
     # 所以这里要按 mtime 倒序列出最近的一批，让用户确认自己将跑到哪些素材
