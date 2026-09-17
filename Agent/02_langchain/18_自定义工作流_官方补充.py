@@ -36,6 +36,8 @@ LangChain 官方补充篇：自定义工作流（非课案内容，故不带 _jx
 
 ⚠️ 本文件需要真实模型（有 agent 节点），按仓库惯例带中文兜底提示。
 
+缺口表对应：`Agent/官方文档缺口对照.md` 的 **LangChain 第 5 项**（LangGraph 自定义工作流）。
+
 运行方式（项目根目录下）：
     uv run Agent/02_langchain/18_自定义工作流_官方补充.py
 """
