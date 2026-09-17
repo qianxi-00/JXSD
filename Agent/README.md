@@ -84,6 +84,7 @@ $env:PYTHONUTF8 = "1"
 | `02_langchain/21_MCP进阶_官方补充.py` | MCP 连接生命周期、多服务端命名空间、三原语取法、接 deepagents | ⚠️ 需真实模型 |
 | `02_langchain/22_自己组装harness_官方补充.py` | 五步手装 harness + 与 create_deep_agent 默认栈对照 | ⚠️ 需真实模型 |
 | `02_langchain/23_模型配置进阶_官方补充.py` | 模型参数与响应元数据、限流器、token 核算、超时验证、多模态现实 | ⚠️ 需真实模型 |
+| `02_langchain/24_RAG知识库_官方补充.py` | RAG 全链路：bge-m3 向量化 → 召回 → bge-reranker 精排 → 作答 → agentic RAG | ⚠️ 需真实模型 + SiliconFlow |
 | `02_langchain/11_内置中间件_官方补充.py` | ToolError / ModelFallback / ToolCallLimit / PII / LLMToolEmulator | ✅ 假模型 |
 | `03_deepagents/14_上下文治理_官方补充.py` | 内置上下文压缩（卸载）、FilesystemPermission、write_todos opt-in | ✅ 剧本模型 |
 | `03_deepagents/15_自定义后端_官方补充.py` | 从零实现 BackendProtocol、只读后端、审计与限流/校验策略钩子 | ✅ 剧本模型 |
@@ -114,6 +115,21 @@ $env:PYTHONUTF8 = "1"
 5. `08_skills`：`02_SKILL示例_jxsd.py` 会先在磁盘上生成一个真实 skill 目录
 6. `09_aegra_deploy`：`02_项目骨架_jxsd.py` 会生成一套 Aegra 项目骨架
 7. `10_workflow_platform`：Langflow 未启动时自动降级为 dry-run
+
+## 三个模型端点（都在根目录 `.env`，代码统一 `from config import settings`）
+
+| 用途 | 配置项 | 当前值 |
+|---|---|---|
+| 作答 / Agent 推理 | `API_KEY` / `BASE_URL` / `MODEL_NAME`（Agent 课案扁平字段） | `grok-4.6` @ 课案网关 |
+| 向量化 | `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` / `EMBEDDING_SIZE` | `BAAI/bge-m3`（**1024 维**）@ SiliconFlow |
+| 重排序 | `RERANK_API_KEY` / `RERANK_BASE_URL` / `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` @ SiliconFlow |
+
+两点实测提醒：
+- **rerank 分数按相对差距读**：有答案时 top1 能到 0.95、top2 只有 0.003（差几百倍）；
+  语料里没有答案时最高分也可能低到 0.03。所以别用固定阈值（`RERANK_RELEVANCE_P=0.65`
+  在这种尺度下会误判），看 top1 与 top2 的差距更可靠。
+- 走第三方 OpenAI 兼容端点做向量化时，`OpenAIEmbeddings` 要设
+  `check_embedding_ctx_length=False`，否则它会按 OpenAI 的 tiktoken 规则预切分文本。
 
 ## `_jxsd` 版的几处设计约定
 
