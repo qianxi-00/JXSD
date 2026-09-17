@@ -1193,6 +1193,7 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | FAQ 分层安全（`core/cache.py`） | 5 条标准问法进相似度层、60 条明细进精确层。实测「赵凡的登机牌座位号是多少?」（库里无此人）**不再命中**（修复前与「赵飞…」相似度 0.9008 会串）；原问题走精确层秒回；标准问法改写仍命中（0.9706） |
 | OCR 链路闭合（`data_process/build_ocr_json.py`） | `data/output/<分类>/*.md` → JSON 11 条（成功 11/失败 0，`--dedupe consecutive`）；抽取侧修复后登机牌姓名 **0/7 → 6/7** |
 | Langfuse 闭环（**36 条全量真跑两轮**，2026-09-17） | 数据集上传 36 条 → `run_experiment` **36/36、exit 0**，条目级与运行级分数写回（ClickHouse 落库）。两个批次对比：<br>• `rerun-4routes-final`（修复前）：Recall@K **0.759**、Answer Relevancy 0.715、Context Precision 0.731、Context Recall 0.808、延迟均值 25.45s / P95 50.74s、检索次数 2.861、错误 0；⚠️ **Faithfulness 缺失**（36 条里 26 条被打分截断）→ `runs/c73a2c5291b55682`<br>• `rerun-lines-final-thinkingoff`（评判模型关思考后）：**四个 Ragas 指标齐全** —— Faithfulness **0.583**、Answer Relevancy 0.612、Context Precision 0.720、Context Recall **0.900**、Recall@K 0.731、延迟均值 24.22s / P95 48.71s、检索次数 3.028、错误 0、**0 次打分失败** → `runs/869cf93821670f25`<br>Run 链接前缀：`http://localhost:3001/project/finance-rag/datasets/cmu48na1q0009nz07mnlia9th/`。根因与修法见 §8.1「Ragas 评判模型的输出被截断」 |
+| **Langfuse 全量复跑第三次（全链路实测轮，2026-09-17）** | `--run-name fullchain-36-20260917`，**36/36、exit 0**，耗时 26 分 15 秒（并发 2）：Recall@K **0.755**、Faithfulness **0.557**、Answer Relevancy **0.590**、Context Precision **0.720**、Context Recall **0.860**；延迟均值 **23.070s** / P95 **46.261s**、检索次数 2.972、LLM 调用 7.028、tokens 均值 30113 进 / 4877.333 出 / **34990.333 合计**、错误 **0**。与第二次（`rerun-lines-final-thinkingoff`）比：Recall@K +0.024、Context Precision 持平、Faithfulness −0.026、Answer Relevancy −0.022、Context Recall −0.040、延迟 −1.15s、P95 −2.45s。**这批波动量级与采样噪声同阶，不作为质量退化结论**（要判退化得固定同一批 evidence 做受控对比，本轮没做）。**独立核验**：Langfuse UI 需登录、SDK 4.15.1 与本地服务端 4.37.0 的 runs/scores 列表接口不匹配（404），因此直接查它自己的 ClickHouse —— 按 `dataset_run_id` 取到 **14 条运行级分数，与脚本自报逐项一致**（含 `batch_items=36`、`Recall@K=0.7546`、`error=0`），条目级 `Recall@K`/`latency_s`/`llm_calls`/`search_queries`/`tokens_*` 也各 36 行且均值一致。Run: `…/runs/bf22ce7d68c25f5b` |
 | **改造前基线数据** | 23 条样本已评估：**Recall@K 均值 0.42**、单题延迟均值 **22.1s**（最高 50.7s）、检索次数均值 **2.09**、Ragas Answer Relevancy 22 条（均值 0.26）、Context Recall 5 条（均值 0.6）、Context Precision 5 条（全 0 —— 已定位为待优化项：召回上下文与参考答案的事实对齐度不足，优先排查分块与召回过滤条件） |
 | **主链路 HTTP 端到端**（真服务 `python RAG\app\main.py`，`POST /api/chat`） | 问「万宁的火车票票号是多少？」→ `route=rag`、`cache_hit=null`（真跑链路，非缓存）、4.48s、回答 `T20230702063302` 与标准答案一致、来源 `ticket_6b0525b6cd77c83580b87211`（rerank 0.540）。域外问题走 direct 后不再浪费检索（见下一行） |
 | **SSE 流式**（`POST /api/chat/stream`） | 17 条 `data:` 事件逐字吐出、以 `data: [DONE]` 收尾、拼回「乐艳的火车票花费为 **498.90元** [1]。」（与标准答案一致），3.46s |
@@ -1272,7 +1273,7 @@ Invoke-RestMethod -Uri http://127.0.0.1:8099/api/chat -Method Post -ContentType 
 | **⑦ 图谱重建** | `build_finance_graph.py --limit 3` | **40 实体 / 49 关系 / 3 社区**，92.46s；重建前基线 51/66/6 ⇒ 保留 38、新增 2、消失 13；重建后孤点 0 / 重名 0 / 未分配社区 0 | 通过（取样文档不同 ⇒ 图不同，脚本注释已写明） |
 | **四条线路** | `acceptance_4routes.py`（服务以 `QA_CACHE_ENABLED=false` 启动） | basic 2.65s / agentic 15.94s / graph 5.34s（社区 3）/ fusion 16.4s（SQL 路径命中）/ agentic 多轮 20.98s；**5/5 `ok=true`、`cache_hit` 全为 null** | 通过（关缓存 ⇒ 真的走了检索/工具/生成） |
 | **接口层** | 真服务 + SSE/WS 客户端 | health `status=ok` 四依赖全 ok；modes 四条；SSE 关缓存态两次都 `rag`（2.43s/2.37s）、开缓存态预置问法 `faq/0.004s`、非预置问题首跑 `rag/2.871s`→二跑 `exact/0.001s` 且答案一致；WS 一条连接两轮 | 通过 |
-| **评估抽检** | `run_stage_eval.py --eval-set data/eval_set.jsonl --limit 3 --llm-score` | 路由/筛选/Recall@5/Hit@5/事实准确率 **全 1.0**、缓存命中 0 条、LLM 评分均值 **5.00**（3 条） | 通过（**只是 36 条里的 3 条抽检**，全量基线见 §7.1） |
+| **评估闭环** | ① `langfuse_evaluation.py --run-name fullchain-36-20260917`（**全量 36 条**，26 分 15 秒）；② `run_stage_eval.py --eval-set data/eval_set.jsonl --limit 3 --llm-score`（分阶段抽检） | 路由/筛选/Recall@5/Hit@5/事实准确率 **全 1.0**、缓存命中 0 条、LLM 评分均值 **5.00**（3 条） | 通过（**只是 36 条里的 3 条抽检**，全量基线见 §7.1） |
 | **用例/文档** | `pytest RAG` 离线 + 集成 | 离线 **823 passed / 0 errors**、集成 14 passed；README 13 个 mermaid 真渲染 13/13；34 张表列数一致 | 通过 |
 
 #### 这次实测抓到的 bug（已修 + 已留检查）
@@ -1293,7 +1294,7 @@ Invoke-RestMethod -Uri http://127.0.0.1:8099/api/chat -Method Post -ContentType 
 
 - ① OCR 本地复跑（模型在远端 GPU，本机没有）；
 - 图谱**全量**重建（300 篇 × 1 次 LLM 抽取；本轮按 `--limit 3` 与基线同口径，约 10 次调用）；
-- 36 条评估集**全量**重跑（本轮只抽 3 条；全量基线是 §7.1 里 Langfuse 的两轮记录）；
+- 固定同一批 evidence 的**受控对比**（要判断本次 Ragas 三项小降是采样噪声还是真退化，需要它；本轮只做了同口径复跑）；
 - Chainlit 页面的人工交互（本机不起真 Edge，按约定只做无头/HTTP 层）。
 
 ## 八、已知差异与坑
