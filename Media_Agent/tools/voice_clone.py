@@ -418,6 +418,28 @@ def list_cloned_voices() -> list:
     return items
 
 
+def forget_voice(source_media: str) -> bool:
+    """删掉某个源素材在本地的音色缓存记录。
+
+    什么时候要用：**音色在云端被删掉之后**（配额释放、控制台手工清理、
+    或跑完测试做清理）。不然缓存里留着一条指向失效 voice_id 的记录，
+    下次同样的素材会命中它，然后在合成阶段失败 —— 而且报错点离真正的原因很远。
+
+    Returns:
+        是否删掉了一条记录。
+    """
+    if not source_media or not Path(source_media).is_file():
+        return False
+    cache = _load_cache()
+    key = _fingerprint(source_media)
+    if key not in cache:
+        return False
+    removed = cache.pop(key)
+    _save_cache(cache)
+    print(f"[声音克隆] 已清除本地缓存: {removed.get('voice_id')}")
+    return True
+
+
 if __name__ == "__main__":
     print("=== 声音克隆模块自检（离线，不需要密钥）===")
 
