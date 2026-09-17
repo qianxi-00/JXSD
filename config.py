@@ -347,6 +347,12 @@ class MediaAgentSettings(BaseSettings):
     tts_fallback_voice: str = "zh-CN-XiaoxiaoNeural"
     # 克隆音色缓存文件（CosyVoice 建音色有配额，必须复用，不能每次重建）。
     voice_cache_file: str = str(MEDIA_AGENT_DIR / ".cache" / "voices.json")
+    # 声音克隆的参考音频公网 URL（可选）。
+    # ⚠️ 实测：create_voice 只收**真正的 http(s)**，百炼临时存储的 oss:// 会被拒
+    #    （400 InvalidParameter: audio url should start with http or https）。
+    # 本项目没有内置公网托管，所以要么在这里给一个已托管好的参考音频 URL，
+    # 要么不启用声音克隆（会自动降级到 edge-tts 通用音色 / PixVerse 内置 TTS）。
+    voice_ref_url: str = ""
 
     # ---- 数字人对口型（替代课案的本地 HeyGem）----
     # 爱诗 PixVerse 视频对口型：video + audio（或 video + TTS 文本）→ 对口型视频。

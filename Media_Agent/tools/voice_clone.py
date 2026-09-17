@@ -15,14 +15,37 @@
     | ``POST {TTS}/v1/invoke``（returns 音频二进制） | ``SpeechSynthesizer(model, voice=voice_id).call(text)``（returns bytes） | 合成 |
 
 三个必须知道的约束（都会真实咬人）
-    1. **参考音频必须是公网可访问 URL**，不接受本地路径。
-       所以先经 ``tools/dashscope_upload.py`` 换成 ``oss://`` 临时 URL。
+    1. ⚠️ **参考音频必须是真正的公网 http(s) URL —— 百炼临时存储的 oss:// 不行！**
+
+       实测（2026-09）：把参考音频走 ``tools/dashscope_upload.upload_file()`` 换成
+       ``oss://dashscope-instant/...`` 后调用 ``create_voice``，直接 400：
+
+           Code: InvalidParameter
+           Error Message: audio url should start with http or https
+
+       ``oss://`` 这套临时存储是给「多模态/图像/视频」类模型用的（走模型调用时带
+       ``X-DashScope-OssResourceResolve: enable`` 解析），**CosyVoice 不收**。
+       所以声音克隆这一环必须有自己的公网托管，可选：
+         · 阿里云 OSS（同账号最顺，需开 OSS 并配 AK/SK）
+         · 你自己的公网服务器（放一个静态目录 + HTTP 服务即可）
+         · 内网穿透（Cloudflare Tunnel / ngrok 之类）
+       没配托管时的行为：``clone_voice()`` 返回失败，``workflows/video.py`` 会自动
+       降级到 edge-tts 通用音色 / PixVerse 内置 TTS —— **数字人功能不受影响**，
+       只是用不上「克隆你自己的声音」。
+
     2. **音色有配额**：官方原话「避免频繁调用。每次调用都会创建新音色，
        达到配额上限后将无法创建。」—— 所以本项目**强制走缓存**：
        同一个源音频（按 路径+大小+修改时间 做指纹）只创建一次音色，
        voice_id 落在 ``MEDIA_AGENT_DIR/.cache/voices.json``。
+
     3. **``target_model`` 必须与合成时用的模型一致**，否则合成会失败。
        两边都取 ``settings.media.tts_model``，不要在调用处硬编码。
+
+    4. ⚠️ **dashscope SDK 不读我们传的密钥**（实测踩到）：
+       ``SpeechSynthesizer`` 的构造签名里**没有 api_key 参数**，它只认全局
+       ``dashscope.api_key`` 或环境变量；而本项目密钥在根 ``.env``，由
+       pydantic-settings 加载、**没进进程环境**。不显式绑定就会
+       ``InputRequired: apikey is required!``。见 ``_bind_dashscope_key()``。
 """
 
 import json
@@ -201,13 +224,18 @@ def clone_voice(source_media: str, prefix: str = "mediaclone", use_cache: bool =
         result["message"] = "参考音频准备失败（ffmpeg 转码失败）"
         return result
 
-    # ---- 上传到百炼临时存储换公网 URL ----
-    from tools.dashscope_upload import upload_file
-
-    # 文件与模型绑定：这里必须用将要驱动音色的那个 TTS 模型名
-    oss_url = upload_file(ref_wav, settings.media.tts_model)
-    if not oss_url:
-        result["message"] = "参考音频上传到百炼临时存储失败（见上方日志）"
+    # ---- 上传到公网可访问位置换 http(s) URL ----
+    #
+    # ⚠️ 实测：**不能**用百炼临时存储。走 tools/dashscope_upload 拿到的是
+    #    ``oss://...``，create_voice 会直接 400：
+    #        Code: InvalidParameter
+    #        Error Message: audio url should start with http or https
+    #    ``oss://`` 那套是给多模态/图像/视频模型用的（调用时靠
+    #    X-DashScope-OssResourceResolve 头解析），CosyVoice 不收。
+    ref_url, host_err = _publish_reference(ref_wav)
+    if not ref_url:
+        result["message"] = host_err
+        print(f"[声音克隆] {result['message']}")
         return result
 
     # ---- 创建音色 ----
@@ -222,7 +250,7 @@ def clone_voice(source_media: str, prefix: str = "mediaclone", use_cache: bool =
         voice_id = service.create_voice(
             target_model=settings.media.tts_model,
             prefix=prefix,
-            url=oss_url,
+            url=ref_url,
             language_hints=["zh"],
         )
     except Exception as exc:  # noqa: BLE001 —— 配额/网络/参数错都收成中文提示
@@ -253,6 +281,49 @@ def clone_voice(source_media: str, prefix: str = "mediaclone", use_cache: bool =
         }
         _save_cache(cache)
     return result
+
+
+def _publish_reference(ref_wav: str) -> tuple:
+    """把参考音频放到「真正的公网 http(s)」上，返回 ``(url, error)``。
+
+    ⚠️ 为什么不复用 ``tools/dashscope_upload``：
+
+        百炼临时存储返回的是 ``oss://`` 前缀，而 ``create_voice`` 明确拒绝它
+        （实测 400：``audio url should start with http or https``）。
+        那套临时存储是给多模态 / 图像 / 视频模型用的，TTS 不收。
+
+    项目目前**没有内置公网托管**，所以这里给出可执行的失败说明，让上层
+    （``workflows/video.py``）降级到 edge-tts 或 PixVerse 内置 TTS ——
+    数字人功能不受影响，只是用不上「克隆你自己的声音」。
+
+    想启用声音克隆，任选一种托管方式并在 ``.env`` 里落一个稳定的公网地址：
+
+        · **阿里云 OSS**（同账号最顺）：开 OSS → 建 Bucket → 拿 AK/SK
+          → 上传参考音频 → 把对象 URL 填到下面这个变量
+        · **自己的公网服务器**：把 wav 放到静态目录，URL 指过去
+        · **内网穿透**（Cloudflare Tunnel / ngrok）：本地目录映射成公网域名
+
+    当前支持的最简形态：直接给一个**已经托管好的参考音频 URL**
+    （``MEDIA_VOICE_REF_URL``），此时跳过本地文件直接用。
+    """
+    preset = (getattr(settings.media, "voice_ref_url", "") or "").strip()
+    if preset:
+        if not preset.startswith(("http://", "https://")):
+            return "", f"MEDIA_VOICE_REF_URL 必须以 http/https 开头，当前是 {preset!r}"
+        print(f"[声音克隆] 使用 .env 里预置的参考音频 URL: {preset[:80]}")
+        return preset, ""
+
+    return "", (
+        "声音克隆需要一个**真正的公网 http(s) 参考音频 URL**，"
+        "百炼临时存储的 oss:// 在 create_voice 上会被拒（实测 400："
+        "audio url should start with http or https）。\n"
+        "本项目目前没有内置公网托管，三种可选做法：\n"
+        "  ① 阿里云 OSS：开 OSS → 建 Bucket → 拿 AK/SK，把参考音频传上去；\n"
+        "  ② 你自己的公网服务器：把 wav 放进静态目录，用它的 URL；\n"
+        "  ③ 内网穿透（Cloudflare Tunnel / ngrok）。\n"
+        "拿到 URL 后填进根 .env 的 MEDIA_VOICE_REF_URL 即可启用。\n"
+        "（不配也不影响数字人：会自动降级到 edge-tts 通用音色 / PixVerse 内置 TTS）"
+    )
 
 
 def tts_with_cloned_voice(text: str, voice_id: str, output_path: str = None,

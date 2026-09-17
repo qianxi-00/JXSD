@@ -17,8 +17,9 @@
 | 真实联网检查（LLM / 热点 / 百炼接线） | **4/4 通过** |
 | Streamlit 应用启动 + 七页渲染 | **通过（0 console error / 0 stException）** |
 | 端到端链路（账号定位 / 热点监控 / 数据复盘 / 内容复刻） | **4/4 通过** |
-| 百炼 ASR 真实转写（208 秒音频 → 文本 + SRT） | **通过**，并**修复了 2 个真 bug**（见 5.4） |
-| 声音克隆 / 数字人出片 / DeepAgents 出片 / 抖音真实采集 | **未验证**（见第 8 节） |
+| 百炼 ASR 真实转写（英文歌 208s + **中文粤语新闻 158s**） | **通过**，并修复了 3 个真 bug（见 5.4） |
+| CosyVoice 开通状态 / 接口可达性 | **已开通且可达**；`create_voice` 暴露一个**架构级约束**（见 5.6） |
+| 声音克隆出音 / 数字人出片 / DeepAgents 出片 / 抖音真实采集 | **未验证**（见第 8 节） |
 
 **一键复现**：
 
@@ -346,7 +347,92 @@ We're no strangers to love, ... （更长的累加）
 
 > 内容复刻用的是课案自带的示例链接，而它是 Rick Astley 的《Never Gonna Give You Up》
 > （课案作者留的是个 rickroll），所以转写出来是英文歌词 ——
-> **中文口播的 ASR 质量没验到**，这是本节唯一的缺口。
+> **这个缺口已在 5.6 补上**（换成真实中文新闻素材重验）。
+
+### 5.6 中文（粤语）语音识别质量验证
+
+用一段**真实的粤语财经新闻**（TVB 翡翠台，158 秒，1280×720）抽音轨后跑 ASR。
+**粤语比普通话更难**（有专属字词、语序不同），能过就更能说明问题。
+
+**命令**：
+
+```powershell
+# 抽音频（16k 单声道，与项目内部处理一致）
+ffmpeg -y -i BV1dZYf6VEN2.mp4 -vn -acodec libmp3lame -b:a 128k -ar 16000 -ac 1 news_audio.mp3
+
+& '...\python.exe' -u -c "
+import sys; sys.path.insert(0, '.')
+from tools.audio_transcriber import transcribe, sentences_to_srt
+r = transcribe('.cache/fixtures/news_audio.mp3', want_timestamps=True)
+print(r['text']); sentences_to_srt(r['sentences'], 'news.srt')
+"
+```
+
+**结果**（exit 0，耗时 **31.6s**，527 字 / 49 句）：
+
+```
+睇下最新嘅金融行情，恒生指数最新报24698点，升30点，总成交超过1358亿。
+恒生科技指数升35点。最活跃港股：智普升39.5个，盈富基金升2仙，南方恒生科技升3.2仙，
+腾讯控股跌5.2个，恒生中国企业升4仙。mini max升3.4，中芯国际升2.65，长飞光纤光缆升6.4，
+宁德时代跌17.2，联想集团升2.64 … 内地股市方面，上证指数升27点，深证成分指数升150点。
+… 本港九九金每两报40485蚊。睇埋天气，大致天晴，吹和缓偏东风 … 而家嘅气温系31度，
+相对湿度64% … 紫外线指数系9，强度属于甚高。新闻报道完啦，再会。
+```
+
+**质量评估**（人工核对）：
+
+| 维度 | 表现 |
+|---|---|
+| 粤语专属字词 | ✅ `嘅` / `系` / `睇` / `蚊`（元）/ `而家`（现在）/ `升仙`（涨分）全部认对 |
+| 金融专有名词 | ✅ 恒生指数、恒生科技指数、盈富基金、中芯国际、宁德时代、蓝筹股 |
+| 数字准确度 | ✅ 24698 点 / 1358 亿 / 40485 蚊 / 31 度 / 64% —— 与画面对得上 |
+| 断句与标点 | ✅ 逗号句号落在正确位置，49 句平均 2.2 秒 |
+| 中英混排 | ✅ `mini max` 正确保留为英文 |
+
+**结论：中文 ASR 质量可用**，粤语都能到这个程度，普通话只会更好。
+
+同时暴露并修掉一个 off-by-one：最长句 **9235ms > 8000ms 上限**。
+根因是时长兜底判断用的是「上一个词的结束时间」，下一个词跳得远时仍会把当前句撑长。
+改成**把当前词算进去预判**后，最长句降到 **6820ms，超限句数 0**。已加回归断言。
+
+### 5.7 ⚠️ 声音克隆：实测暴露出一个架构级约束
+
+用上面裁出的 13 秒主播出镜段（播音腔、无人声背景音乐，理论上最理想的参考素材）
+跑 `clone_voice()`，`create_voice` 直接 **400**：
+
+```
+Code: InvalidParameter
+Error Message: audio url should start with http or https
+```
+
+**根因**：参考音频是经 `tools/dashscope_upload.upload_file()` 换成
+`oss://dashscope-instant/...` 临时 URL 的 —— 而 **CosyVoice 不收 `oss://`**。
+
+百炼那套免费临时存储是给**多模态 / 图像 / 视频类**模型用的
+（调用时靠 `X-DashScope-OssResourceResolve: enable` 头解析）；
+ASR 走 Base64 Data URI 是另一条路（**已实测可用**），但 **TTS 的声音复刻必须是真的 http(s)**。
+
+**影响面**：
+- ❌ 「克隆你自己的声音」这个能力**在本机现有条件下跑不通**；
+- ✅ **数字人功能不受影响** —— `workflows/video.py` 的降级链会自动走到
+  edge-tts 通用音色（免费）或 PixVerse 内置 TTS（一步出片）。
+
+**已经做的处理**：
+1. `clone_voice()` 新增 `_publish_reference()`，明确失败并给出三种可选托管方案，
+   不再拿 `oss://` 去撞墙；
+2. 新增配置 `MEDIA_VOICE_REF_URL` —— 只要有一个已托管的参考音频公网 URL，
+   填进去就能启用声音克隆（`.env` / `.env.example` / `config.py` 三处已同步，且已验证幂等）；
+3. 把这个约束写进 `tools/voice_clone.py` 的文件头 docstring。
+
+**可选托管方案**（需要定一个）：
+① 阿里云 OSS（同账号最顺，需开 OSS 并配 AK/SK）；
+② 自己的公网服务器（放静态目录 + HTTP 服务）；
+③ 内网穿透（Cloudflare Tunnel / ngrok）。
+
+> ⚠️ **同样的约束也可能影响数字人**：PixVerse 的 `video_url` / `audio_url` 同样要求公网 URL，
+> 是否能吃 `oss://` **尚未实测**（官方文档说「素材必须是公网可访问 URL」，
+> 而临时存储文档又说适用于「多模态、图像、视频或音频模型」—— 只有真提交一次才知道）。
+> 如果 PixVerse 也不收 `oss://`，数字人同样需要上面这套托管。
 
 ---
 
@@ -431,12 +517,17 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 
 以下是**本轮没有真实验证**的部分，不要当成已验证：
 
-1. **声音克隆（CosyVoice）的真实创建音色** —— 未验证。需要：
-   一段人声清晰的参考音频 + 百炼已开通 CosyVoice + 音色配额。
-   （ASR 那一段已经真跑通了，两者不是一回事：ASR 用的是 `Fun-ASR-Flash`，
-   声音复刻要另外在控制台开通 `CosyVoice`。）
+1. **声音克隆（CosyVoice）出音** —— **卡在公网托管上，不是代码问题**。
+   已实测到 `create_voice` 这一步，返回的是
+   `InvalidParameter: audio url should start with http or https` ——
+   即 **CosyVoice 不收百炼临时存储的 `oss://`**（详见 5.7）。
+   要跑通需先定一个公网托管（阿里云 OSS / 自己的公网服务器 / 内网穿透），
+   再把参考音频 URL 填进 `MEDIA_VOICE_REF_URL`。
+   （CosyVoice 本身的**开通状态与接口可达性已确认**：`list_voices()` 调用成功。）
 2. **数字人对口型（PixVerse）的真实出片** —— 未验证。需要：
-   百炼控制台**手动开通 PixVerse**、一段 10~30 秒人脸视频、`DASHSCOPE_WORKSPACE_ID`（如需）。
+   百炼控制台**手动开通 PixVerse**、一段 10~30 秒人脸视频。
+   ⚠️ 另有一个**未知项**：PixVerse 的素材 URL 是否接受 `oss://` 临时存储尚未实测
+   （CosyVoice 已证实不收，PixVerse 待定）。如果不收，数字人同样需要公网托管。
 3. **视频剪辑（DeepAgents）的真实出片** —— 未验证。只验证了：
    图结构、路径清洗、SKILL.md 格式、system_prompt 约束完整性、DeepAgents API 形状。
    真实跑一次要几分钟且会消耗不少 token。另：**HyperFrames 未安装**，会走 moviepy 降级分支。
@@ -449,8 +540,6 @@ from moviepy.video.tools.subtitles import SubtitlesClip   # ← 正确路径
 5. **`_read_edge_cookies()`（从 Edge 读抖音 Cookie）** —— 未实跑。
    它会 `taskkill` 掉所有 Edge 进程再起无头实例，副作用大，不适合在验证阶段触发。
    仅验证了端口探活函数不可达时返回 `False` 且不抛异常。
-6. **中文口播的 ASR 质量** —— 转写链路本身已真跑通，但用的素材是英文歌曲
-   （课案示例链接是个 rickroll），**中文语音的识别质量与标点准确度没有验证过**。
 
 ### 环境限制（影响验证方式，不是代码问题）
 

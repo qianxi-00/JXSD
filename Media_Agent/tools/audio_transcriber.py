@@ -411,21 +411,30 @@ def words_to_sentences(words: list) -> list:
         if not token and not punct:
             continue
 
-        # 时间只认有实际内容的词；纯空白词不参与，避免把句子起点带到空格上
-        if token.strip():
-            if cur_start is None and word.get("begin_time") is not None:
-                cur_start = word["begin_time"]
-            if word.get("end_time") is not None:
-                cur_end = word["end_time"]
+        begin = word.get("begin_time")
+        end = word.get("end_time")
 
-        # 时长兜底：模型长时间不吐标点时，靠这一条把字幕行截短（见 _MAX_SEGMENT_MS）
+        # 时长兜底：模型长时间不吐标点时，靠这一条把字幕行截短（见 _MAX_SEGMENT_MS）。
+        # ⚠️ 关键在判断时机 —— 必须把**当前这个词**算进去做预判，
+        #    而且要赶在它被并进 cur_text 之前：
+        #      · 用「上一个词」的结束时间判断 → 下一个词跳得远时仍会撑长当前句
+        #        （实测粤语新闻里切出过 9235ms > 8000ms）；
+        #      · 先并入再判断 → 本词的时间已经记进 cur_end，同样撑长。
+        #    预判命中就先收束上一句，让本词成为新句的开头。
         if (
             cur_start is not None
-            and cur_end is not None
             and cur_text
-            and int(cur_end) - int(cur_start) > _MAX_SEGMENT_MS
+            and end is not None
+            and int(end) - int(cur_start) > _MAX_SEGMENT_MS
         ):
             flush()
+
+        # 时间只认有实际内容的词；纯空白词不参与，避免把句子起点带到空格上
+        if token.strip():
+            if cur_start is None and begin is not None:
+                cur_start = begin
+            if end is not None:
+                cur_end = end
 
         cur_text.append(token)
         if punct:
@@ -503,9 +512,25 @@ if __name__ == "__main__":
     ]
     cut = words_to_sentences(long_run)
     assert len(cut) > 1, f"20 秒无标点应被 _MAX_SEGMENT_MS 截断，实际只有 {len(cut)} 句"
+    # 判据：收束出来的句子不能超过上限 + 一个词的长度（兜底是按「已收进来的词」判断的）
     assert all(s["end"] - s["start"] <= _MAX_SEGMENT_MS + 1000 for s in cut), cut
     print(f"  words_to_sentences(时长兜底) OK  20s → {len(cut)} 句，"
           f"最长 {max(s['end'] - s['start'] for s in cut)}ms")
+
+    # 4c) 回归：兜底必须把「当前词」算进去预判
+    #     （曾出现 9235ms > 8000ms：判断用的是上一个词的结束时间，下一个词跳得远照样撑长）
+    sparse = [
+        {"text": "a", "begin_time": 0, "end_time": 100, "punctuation": ""},
+        {"text": "b", "begin_time": 7000, "end_time": 7100, "punctuation": ""},
+        # 这一跳很大：若把它的 end 并进来再判断，首句就变成 0~9100ms
+        {"text": "c", "begin_time": 9000, "end_time": 9100, "punctuation": ""},
+    ]
+    sp = words_to_sentences(sparse)
+    assert len(sp) == 2, f"应被截成 2 句，实际 {sp}"
+    assert sp[0]["end"] <= _MAX_SEGMENT_MS, f"首句被下一个词撑长了: {sp}"
+    assert (sp[0]["text"], sp[1]["text"]) == ("ab", "c"), sp
+    print(f"  words_to_sentences(兜底预判) OK  首句 {sp[0]['start']}-{sp[0]['end']}ms / "
+          f"次句 {sp[1]['start']}-{sp[1]['end']}ms")
 
     # 5) 全空白词不应产出任何句子
     assert words_to_sentences([{"text": " ", "begin_time": 0, "end_time": 10}]) == []
