@@ -686,15 +686,29 @@ def langfuse_callbacks() -> list:
     return [_langfuse_handler]
 
 
-def tracing_config(session_id: str | None = None, user_id: str | None = None) -> dict:
-    """组装带追踪回调与 Session/User 标识的 invoke config。"""
+def tracing_config(
+    session_id: str | None = None, user_id: str | None = None, thread_id: str | None = None
+) -> dict:
+    """组装带追踪回调与 Session/User 标识的 invoke config。
+
+    `thread_id` 与 `session_id` **不是一回事**，别互相顶替：
+    - `session_id` 只进 Langfuse 的 metadata（`langfuse_session_id`），用来把一次会话的
+      trace 聚到一起，对 Agent 的行为没有任何影响；
+    - `thread_id` 是 **langgraph 的会话/检查点键**，只有它能让 `ModelCallLimitMiddleware`
+      的 `thread_limit` 真正累计、让 HITL 的 interrupt 能跨请求恢复 —— 而且**必须先给
+      Agent 配上 checkpointer**，否则 langgraph 会因为没有 saver 而忽略它（我们不去猜，
+      见调用方约定）。
+    """
     callbacks = langfuse_callbacks()
+    config: dict = {}
+    if callbacks:
+        config["callbacks"] = callbacks
+    # 追踪关掉（没有 Langfuse 回调）时也要能把 thread_id 传下去：
+    # 早期实现"没有回调就返回空 config"，那样 thread_id 会跟着一起丢掉。
+    if thread_id:
+        config["configurable"] = {"thread_id": thread_id}
     if not callbacks:
-        # 没有追踪时返回**空 dict**（而不是带空 callbacks 的 dict）：
-        # invoke_slow_agent 靠"config 是否为真"决定要不要传 config 参数，
-        # 传一个空壳 config 没有意义、也可能改变 Agent 的默认行为。
-        return {}
-    config: dict = {"callbacks": callbacks}
+        return config
     metadata = {}
     # 键名 langfuse_session_id / langfuse_user_id 是 Langfuse 的约定名，
     # 写成别的前缀不会被识别成会话/用户标识（trace 会因为缺 session 而聚不起来）。
@@ -704,7 +718,8 @@ def tracing_config(session_id: str | None = None, user_id: str | None = None) ->
         metadata["langfuse_user_id"] = user_id
     if metadata:
         config["metadata"] = metadata
-    # 两个 id 都没传时 config 里只有 callbacks —— 追踪照常上报，只是不参与按会话/用户聚合。
+    # 什么都没配时返回空 dict：invoke_slow_agent 靠"config 是否为真"决定要不要传 config
+    # 参数，传一个空壳 config 没有意义、也可能改变 Agent 的默认行为。
     return config
 
 
@@ -714,17 +729,24 @@ def invoke_slow_agent(
     session_id: str | None = None,
     user_id: str | None = None,
     extra_callbacks: list | None = None,
+    thread_id: str | None = None,
 ) -> str:
     """带历史消息调用 Deep Agent 并返回最终答复;配置了 Langfuse 时挂上追踪回调。
 
     `extra_callbacks`：额外挂上去的回调（评估侧用它采集 token 用量，见 `agentic/usage.py`）。
     与 Langfuse 回调**并存**，不是替代 —— 追踪和成本统计要同时可用。
+
+    `thread_id`：langgraph 的检查点键（跨请求恢复的落点）。**默认不传**，因为这里的
+    payload 已经把 `history` 显式拼进去了；再配上一个会累积的 thread，模型会同时看到
+    "显式 history"与"检查点里的历史"**两份上下文**（重复烧 token、还可能自我矛盾）。
+    真要用（例如接了 HITL 审批要跨请求恢复），必须同时满足：① Agent 带 checkpointer；
+    ② 调用方保证 history 与本线程的既有消息不重叠。
     """
     # 注意 payload 把 history 与当前问题拼在一起：DeepAgent 是无状态的（没有 checkpointer 时），
     # 多轮上下文**必须**由调用方显式带上，否则第二轮它会忘了第一轮说了什么。
     # `history + [{...}]` 生成新列表，不会改到调用方的 history（那由 update_history 负责）。
     payload = {"messages": history + [{"role": "user", "content": question}]}
-    config = tracing_config(session_id=session_id, user_id=user_id)
+    config = tracing_config(session_id=session_id, user_id=user_id, thread_id=thread_id)
     if extra_callbacks:
         # 合并而不是覆盖：没有 Langfuse 时 config 是空 dict，这里正好把它撑起来，
         # 于是"只有额外回调"的情况也会走带 config 的分支。
@@ -903,12 +925,45 @@ review_middleware = HumanInTheLoopMiddleware(
 )
 
 
+_CHECKPOINTER = None
+
+
+def default_checkpointer():
+    """进程内单例 checkpointer（`InMemorySaver`），供 `build_production_agent` 一键启用。
+
+    为什么是进程内而不是 Postgres/SQLite：本项目的生产 Agent 只用在演示与课程里
+    （`script/hitl_demo.py`），进程内足够让"中断 → 恢复"这条链跑通，且不引入外部依赖与
+    清理任务。**跨进程重启的持久化不在这一版的能力范围内** —— 那需要换
+    `langgraph-checkpoint-postgres`/`-sqlite` 并配套建表/迁移，属于另一件事。
+    所以别把 `InMemorySaver` 当成"恢复能力已具备"：进程一停，检查点就没了。
+    """
+    global _CHECKPOINTER
+    if _CHECKPOINTER is None:
+        from langgraph.checkpoint.memory import InMemorySaver
+
+        _CHECKPOINTER = InMemorySaver()
+    return _CHECKPOINTER
+
+
 def build_production_agent(checkpointer=None, extra_tools=None):
-    """生产版财务 Agent:在 build_finance_agent 上叠加全部中间件、审批与 Text-to-SQL 工具。"""
+    """生产版财务 Agent:在 build_finance_agent 上叠加全部中间件、审批与 Text-to-SQL 工具。
+
+    不传 `checkpointer` 时**明确告警**（而不是默默退化）：下面会连带两个能力一起失效 ——
+    `ModelCallLimitMiddleware(thread_limit=80)` 无法累计（没有线程状态可计），
+    HITL 审批的 interrupt 无法跨请求恢复。这两个都是"平时看不出来、真出事才发现"的缺口，
+    所以宁可在构建时吵一次，也不要让它静默。
+    """
     # 延迟导入：agentic/text_to_sql.py 依赖 sqlalchemy/sqlmodel，而且它的模块级
     # 代码虽然不连库，但这个 import 会让"只想跑基础版 RAG"的路径也多背一层依赖。
     # 放在函数里可以让 import finance_agent 保持轻量。
     from agentic.text_to_sql import query_ticket_db  # 延迟导入,避免 import 本模块就连 PostgreSQL
+
+    if checkpointer is None:
+        logger.warning(
+            "[Agent] build_production_agent 没传 checkpointer ⇒ "
+            "thread_limit=80 不会累计（无状态可计）、HITL 审批无法跨请求恢复。"
+            "要启用就传 `checkpointer=default_checkpointer()`（进程内）"
+        )
 
     return build_finance_agent(
         # 三个列表按"上下文管理 → 可靠性 → 审批"拼接，顺序与课案一致。
@@ -922,12 +977,11 @@ def build_production_agent(checkpointer=None, extra_tools=None):
         # 的 interrupt_on 名单里，否则它们就是无审批的真·副作用工具。
         # 加新副作用工具时，这里是第一个要改的地方，第二个是 interrupt_on。
         extra_tools=[delete_index, update_config, query_ticket_db, *(extra_tools or [])],
-        # ⚠️ checkpointer=None 的后果：HumanInTheLoop 依赖 langgraph 的 interrupt()
-        # 来暂停并等待人工决定，而 interrupt 需要 checkpointer 才能把状态存下来并续跑。
-        # 所以默认不传 checkpointer 时，审批**无法跨请求恢复**——
-        # 真要用审批链路，必须传一个 checkpointer（再加 thread_id）：
-        #     build_production_agent(checkpointer=MemorySaver())
-        # 现有测试只覆盖"审批配置的语义"，没有跑真实中断/恢复，所以这个缺口不会被测试发现。
+        # ⚠️ checkpointer=None 的后果（构建时已打 WARNING，不是只在注释里）：
+        # HumanInTheLoop 依赖 langgraph 的 interrupt() 来暂停并等待人工决定，而 interrupt
+        # 需要 checkpointer 才能存下状态并续跑；thread_limit 也需要线程状态才能累计。
+        # 真要用这两条，传 `checkpointer=default_checkpointer()`（进程内单例，见该函数）
+        # 或自备的 saver，并且调用时带上 thread_id（invoke_slow_agent(thread_id=...)）。
         checkpointer=checkpointer,
     )
 

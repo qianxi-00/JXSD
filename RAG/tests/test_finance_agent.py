@@ -488,6 +488,46 @@ class TestAgentConstruction:
         assert captured["middleware"] == [sentinel_middleware]
         assert captured["checkpointer"] == "cp"
 
+    def test_production_agent_warns_when_not_checkpointed(self, captured, monkeypatch):
+        """不传 checkpointer 时必须**明确告警**：它连带两个能力一起失效。
+
+        没有这条告警的话，`thread_limit=80` 就是个看起来在跑、其实永不累计的死旋钮，
+        HITL 也会在"能中断但恢复不了"时才暴露。都是平时看不出来的那种缺口。
+        """
+        warnings: list[str] = []
+        monkeypatch.setattr(finance_agent.logger, "warning", lambda msg, *a, **kw: warnings.append(str(msg)))
+        finance_agent.build_production_agent()
+        assert len(warnings) == 1
+        assert "thread_limit" in warnings[0] and "checkpointer" in warnings[0]
+
+        warnings.clear()
+        finance_agent.build_production_agent(checkpointer=finance_agent.default_checkpointer())
+        assert warnings == [], "传了 checkpointer 就不该再吵"
+
+    def test_default_checkpointer_is_a_process_singleton(self):
+        first = finance_agent.default_checkpointer()
+        assert finance_agent.default_checkpointer() is first, "每次新建会让 thread 状态凭空消失"
+
+    def test_thread_id_reaches_langgraph_config(self, monkeypatch):
+        """`thread_id` 要进 `configurable`（langgraph 的检查点键），且与 Langfuse 的
+        `session_id` 分属两个字段 —— 前者影响 Agent 行为，后者只是追踪聚合的标签。"""
+        config = finance_agent.tracing_config(session_id="s1", user_id="u1", thread_id="t1")
+        assert config["configurable"] == {"thread_id": "t1"}
+        assert config["metadata"]["langfuse_session_id"] == "s1"
+        assert config["metadata"]["langfuse_user_id"] == "u1"
+        # 没给 thread_id 时不该凭空造一个 configurable（否则 langgraph 会去找并不存在的线程）
+        assert "configurable" not in finance_agent.tracing_config(session_id="s1")
+
+    def test_tracing_config_keeps_thread_id_without_langfuse(self, monkeypatch):
+        """追踪关掉时（没有 Langfuse 回调）thread_id 仍要能传下去。
+
+        早期实现是"没有回调就返回空 dict"，那样 thread_id 会被一起丢掉 —— 而这两件事
+        本来无关（一个有追踪才有意义，一个没有追踪也需要）。
+        """
+        monkeypatch.setattr(finance_agent, "langfuse_callbacks", list)
+        config = finance_agent.tracing_config(thread_id="t9")
+        assert config == {"configurable": {"thread_id": "t9"}}
+
     def test_production_agent_adds_guardrails_and_side_effect_tools(self, captured):
         finance_agent.build_production_agent()
         names = [getattr(t, "name", None) for t in captured["tools"]]

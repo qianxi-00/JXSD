@@ -66,6 +66,36 @@ def test_metadata_omitted_when_no_session_or_user(monkeypatch):
     assert "metadata" not in agent.calls[0]["config"]
 
 
+def test_thread_id_reaches_the_agent_config(monkeypatch):
+    """`thread_id` 必须真的进到 `agent.invoke(config=...)` 里，而不是只停在 tracing_config。
+
+    这是"跨请求恢复"那条路的接口：调用方给了 thread_id，langgraph 才找得到对应的检查点
+    （前提是 Agent 带了 checkpointer，见 build_production_agent 的 WARNING）。
+    没有这条用例的话，`tracing_config(thread_id=...)` 就是个没人跑的死参数。
+    """
+    agent = install(monkeypatch)
+    finance_agent.invoke_slow_agent("问题", [], thread_id="conv-42")
+    assert agent.calls[0]["config"]["configurable"] == {"thread_id": "conv-42"}
+    # 与 Langfuse 的 session 是**两个字段**：混用一个会导致"改了追踪标识就悄悄改了线程"
+    assert "langfuse_session_id" not in (agent.calls[0]["config"].get("metadata") or {})
+
+
+def test_thread_id_works_without_langfuse(monkeypatch):
+    """追踪关掉时也要能把 thread_id 传下去（两件事本来无关）。"""
+    agent = FakeAgent()
+    monkeypatch.setattr(finance_agent, "agent", agent)
+    monkeypatch.setattr(finance_agent, "langfuse_callbacks", list)
+    finance_agent.invoke_slow_agent("问题", [], thread_id="conv-7")
+    assert agent.calls[0]["config"] == {"configurable": {"thread_id": "conv-7"}}
+
+
+def test_no_thread_id_keeps_config_without_configurable(monkeypatch):
+    """不给 thread_id 时**不能**凭空造一个 —— langgraph 会去找一个并不存在的线程。"""
+    agent = install(monkeypatch)
+    finance_agent.invoke_slow_agent("问题", [])
+    assert "configurable" not in agent.calls[0]["config"]
+
+
 def test_handler_creation_failure_is_fail_open(monkeypatch):
     """Langfuse 挂不上不能拖垮问答 —— 只警告、继续跑。"""
     monkeypatch.setattr(finance_agent.settings, "langfuse_public_key", "pk-x")

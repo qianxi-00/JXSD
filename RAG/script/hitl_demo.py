@@ -13,8 +13,8 @@
 ★ 两个关键实现细节(缺一就演示不出审批):
 1. **必须持久化 checkpointer + 同一 thread_id**:暂停与恢复是两次独立的 invoke,
    中间状态存在 checkpoint 里;没有 checkpointer 就没有"暂停"这回事
-   (注意本项目 `build_production_agent` 的 checkpointer 参数**默认是 None**,
-   所以这里显式传 `InMemorySaver()`);
+   (注意本项目 `build_production_agent` 的 checkpointer 参数**默认是 None**（不传会在构建时打 WARNING），
+   所以这里显式传 `default_checkpointer()`（进程内单例）);
 2. **提示词不能是"让模型删东西"**:思考型 LLM 会先检索、再以"证据不足/不会执行删除"
    收尾,或者直接拒绝调用危险工具(这是模型的安全行为,**不是中间件缺陷**)
    ⇒ 演示改用副作用较小的 `update_config`,验的是"拦不拦得住"而不是"删不删得掉"。
@@ -46,10 +46,8 @@ import warnings  # noqa: E402
 # 所以这里适合一次性冒烟,不适合放进生产链路(见报告)
 warnings.filterwarnings("ignore")
 
-from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 from langgraph.types import Command  # noqa: E402
-
-from agentic.finance_agent import build_production_agent  # noqa: E402
+from agentic.finance_agent import build_production_agent, default_checkpointer  # noqa: E402
 
 # 两次 invoke 共用同一个 thread_id ⇒ 第二次能读回第一次的 checkpoint(恢复点)。
 # 用模块级常量而不是写两遍字面量:两处的 thread_id 必须**完全一致**,
@@ -98,7 +96,7 @@ def main() -> int:
     `isinstance(value, dict)` 再兜一层,防止对非 dict 调 .get 而崩 ——
     这里**故意不做更严格的校验**:冒烟脚本要能容忍框架的小版本差异。
     """
-    agent = build_production_agent(checkpointer=InMemorySaver())
+    agent = build_production_agent(checkpointer=default_checkpointer())
 
     print(f"[1] 发起运行: {PROMPT!r}")
     result = agent.invoke({"messages": [{"role": "user", "content": PROMPT}]}, config=THREAD)
