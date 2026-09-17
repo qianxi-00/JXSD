@@ -165,6 +165,46 @@ class TestTrainFields:
         assert te.extract_train(self.TEXT)["counterparty"] is None
 
 
+class TestBlankSemanticTextCount:
+    """空 `semantic_text` 的行数必须能被数出来（B 表"18 条 OCR 失败记录"那条欠账的落点）。
+
+    这些行的 `vec` 恒为 NULL、BM25 也切不出词 ⇒ 语义/关键词两路**永远召不回**，
+    却照样占着 `count(*)` 的分母（"300 条票据" vs "实际能召回 282 条"）。
+    所以导入收尾要同时报两个数，而不是只报一个。
+    """
+
+    def test_counts_rows_with_empty_semantic_text(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def query(self, **kwargs):
+                self.calls.append(kwargs)
+                return [{"count(*)": 18}]
+
+        client = FakeClient()
+        assert te.blank_semantic_text_count(client, "tick") == 18
+        # 过滤表达式与输出字段是契约的一部分：写成别的过滤条件会静默数错人
+        assert client.calls[0]["filter"] == 'semantic_text == ""'
+        assert client.calls[0]["output_fields"] == ["count(*)"]
+        assert client.calls[0]["collection_name"] == "tick"
+
+    def test_empty_result_is_zero_not_crash(self):
+        class EmptyClient:
+            def query(self, **kwargs):
+                return []
+
+        assert te.blank_semantic_text_count(EmptyClient(), "tick") == 0
+
+    def test_string_count_is_coerced(self):
+        """Milvus 的聚合结果有时是字符串（不同版本/网关行为不一致），要能转成 int。"""
+        class StrClient:
+            def query(self, **kwargs):
+                return [{"count(*)": "7"}]
+
+        assert te.blank_semantic_text_count(StrClient(), "tick") == 7
+
+
 class TestBuildRecord:
     def test_record_shape_matches_milvus_schema(self):
         item = {
