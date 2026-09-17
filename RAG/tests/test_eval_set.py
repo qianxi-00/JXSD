@@ -78,8 +78,8 @@ class TestValidateSample:
 
 
 class TestJsonlIO:
-    def test_roundtrip(self, tmp_path):
-        path = tmp_path / "eval_set.jsonl"
+    def test_roundtrip(self, tmp_dir):
+        path = tmp_dir / "eval_set.jsonl"
         samples = [
             validate_sample(minimal_sample(ground_truth="共 1 张,合计 436.00 元")),
             validate_sample(minimal_sample(question="1+1 等于几?", task_type="faq")),
@@ -88,16 +88,16 @@ class TestJsonlIO:
         loaded = load_jsonl(path)
         assert loaded == samples
 
-    def test_skips_blank_lines(self, tmp_path):
-        path = tmp_path / "eval_set.jsonl"
+    def test_skips_blank_lines(self, tmp_dir):
+        path = tmp_dir / "eval_set.jsonl"
         path.write_text(
             json.dumps(minimal_sample(), ensure_ascii=False) + "\n\n   \n",
             encoding="utf-8",
         )
         assert len(load_jsonl(path)) == 1
 
-    def test_reports_line_number_on_invalid_sample(self, tmp_path):
-        path = tmp_path / "eval_set.jsonl"
+    def test_reports_line_number_on_invalid_sample(self, tmp_dir):
+        path = tmp_dir / "eval_set.jsonl"
         path.write_text(
             json.dumps(minimal_sample(), ensure_ascii=False)
             + "\n"

@@ -52,10 +52,10 @@ class TestDedupe:
 
 
 class TestBuildRecords:
-    def test_builds_expected_schema(self, tmp_path):
-        (tmp_path / "train").mkdir()
-        (tmp_path / "train" / "001_T2023.md").write_text("# 票\n青岛站", encoding="utf-8")
-        records = b.build_records(tmp_path, ("train",))
+    def test_builds_expected_schema(self, tmp_dir):
+        (tmp_dir / "train").mkdir()
+        (tmp_dir / "train" / "001_T2023.md").write_text("# 票\n青岛站", encoding="utf-8")
+        records = b.build_records(tmp_dir, ("train",))
         assert len(records) == 1
         record = records[0]
         assert record["source_file"] == "data/train/001_T2023.png"
@@ -63,26 +63,26 @@ class TestBuildRecords:
         assert record["ocr_status"] == "success"
         assert record["ocr_engine"] == "paddleocr-cloud"
 
-    def test_missing_category_is_skipped(self, tmp_path):
-        assert b.build_records(tmp_path, ("flight",)) == []
+    def test_missing_category_is_skipped(self, tmp_dir):
+        assert b.build_records(tmp_dir, ("flight",)) == []
 
-    def test_blank_markdown_marked_failed(self, tmp_path):
-        (tmp_path / "flight").mkdir()
-        (tmp_path / "flight" / "ticket-001.md").write_text("   \n\n", encoding="utf-8")
-        assert b.build_records(tmp_path, ("flight",))[0]["ocr_status"] == "failed"
+    def test_blank_markdown_marked_failed(self, tmp_dir):
+        (tmp_dir / "flight").mkdir()
+        (tmp_dir / "flight" / "ticket-001.md").write_text("   \n\n", encoding="utf-8")
+        assert b.build_records(tmp_dir, ("flight",))[0]["ocr_status"] == "failed"
 
 
 class TestEndToEnd:
-    def test_written_json_is_readable_by_tick_extract_schema(self, tmp_path, monkeypatch):
+    def test_written_json_is_readable_by_tick_extract_schema(self, tmp_dir, monkeypatch):
         """产物必须能被 tick_extract 直接消费:字段名与课案 ocr_results.json 一致。"""
-        out = tmp_path / "output" / "train"
+        out = tmp_dir / "output" / "train"
         out.mkdir(parents=True)
         (out / "001_T2023.md").write_text("青岛站\n\n¥155.6元", encoding="utf-8")
-        clean = tmp_path / "ocr_results_clean.json"
+        clean = tmp_dir / "ocr_results_clean.json"
 
         from data_process import tick_extract
 
-        records = b.build_records(tmp_path / "output", ("train",))
+        records = b.build_records(tmp_dir / "output", ("train",))
         for record in records:
             record["ocr_text"], _ = b.clean_text(record["ocr_text"], "consecutive")
         clean.write_text(
