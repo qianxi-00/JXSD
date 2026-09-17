@@ -1,0 +1,241 @@
+{
+  "report": "RAG 全链路真机实测",
+  "generated_at": "2026-09-17",
+  "scope": "依赖服务 → 数据链路①②③④⑤⑥ → 图谱⑦ → 四条线路 → 接口层 → 评估抽检 → 用例",
+  "environment": {
+    "docker_services": "MySQL/PostgreSQL/Redis/Milvus(standalone)/Neo4j/Langfuse(web+worker+clickhouse+db+redis+minio) 全部 Up",
+    "llm": "生成 deepseek-flash / 评判 deepseek-chat",
+    "embedding_rerank": "BAAI/bge-m3(1024) / BAAI/bge-reranker-v2-m3"
+  },
+  "commits": {
+    "code_commit_at_run": "f9218e2",
+    "fix_commit": "b0dd5e0"
+  },
+  "stages": [
+    {
+      "stage": "① OCR",
+      "ran_locally": false,
+      "why": "数据集由远端 GPU 上的 DeepSeek-OCR-2 产出（ocr_results_clean.json 的 ocr_engine=deepseek-ocr2-transformers，模型路径 /root/autodl-tmp/models/DeepSeek-OCR-2），本机无法复跑该模型；本仓的 paddle_ocr.py 是另一条链路",
+      "verified": {
+        "输入": "data/{flight,invoice,train}/*.png 各 100 张，共 300 张齐全",
+        "产物契约": "ocr_results_clean.json: results=300，ocr_status success=282 / failed=18（与 Milvus 空文本行数一致）",
+        "清洗元数据": "cleaning.script=clean_ocr_json.py（课案脚本，不在本仓）、dedupe=all、empty_after_clean=18"
+      }
+    },
+    {
+      "stage": "② Markdown 汇总成入库 JSON（本地等价链路）",
+      "command": "python RAG/data_process/build_ocr_json.py --dedupe consecutive --raw .dsh_tmp/ocr_raw_probe.json --clean .dsh_tmp/ocr_clean_probe.json",
+      "pass": true,
+      "readings": {
+        "写出条数": 11,
+        "清洗": "处理 11 / 改动 11 / 删除重复行 0 / 成功 11 / 失败 0",
+        "与已入库的 ocr_results_local_clean.json 比对": "source_file 集合一致、文本差异 0 条"
+      },
+      "note": "默认输出路径会覆盖 300 条真数据，因此本轮改写到 .dsh_tmp；仓库里原先的 11 条 local 产物也是这么来的"
+    },
+    {
+      "stage": "③ 抽取字段写入 Milvus（--insert --recreate）",
+      "command": "python -m data_process.tick_extract --insert --recreate",
+      "pass": true,
+      "readings": {
+        "upserted": 300,
+        "count(*)": 300,
+        "row_count": 300,
+        "空 semantic_text": 18,
+        "可召回": 282
+      },
+      "note": "row_count 与 count(*) 相等 ⇒ 集合确实是新建的（老集合在 upsert 后 row_count 会虚高）"
+    },
+    {
+      "stage": "④ 向量回填",
+      "command": "python RAG/data_process/embed_tickets.py",
+      "pass": true,
+      "readings": {
+        "读入行": 300,
+        "回填": 282,
+        "跳过(空文本)": 18,
+        "落库后核对": "有向量 282 / 空文本 18 / 空文本且有向量 0"
+      }
+    },
+    {
+      "stage": "⑤ 预设问答写入 Redis",
+      "command": "python RAG/data_process/seed_qa_cache.py --force",
+      "pass": true,
+      "readings": {
+        "相似度层标准问法": 5,
+        "精确层明细问答": 60,
+        "作用域": "每条明细按 4 条线路各写一份"
+      }
+    },
+    {
+      "stage": "⑥ 结构化字段导入 PostgreSQL",
+      "command": "python RAG/script/import_tickets_to_pg.py",
+      "pass": true,
+      "readings": {
+        "Milvus 读到": 300,
+        "写入(merge)": 300,
+        "票号缺失/重复改用 Milvus id 兜底": 101,
+        "tickets 表总数": 300
+      }
+    },
+    {
+      "stage": "⑦ GraphRAG 建图",
+      "command": "python RAG/script/build_finance_graph.py --limit 3 --report .dsh_tmp/graph_rebuild_verify.json",
+      "pass": true,
+      "readings": {
+        "耗时秒": 92.46,
+        "实体": null,
+        "关系": null,
+        "社区": null,
+        "子图(检索演示)": "None 节点 / None 关系",
+        "重建前基线": "51 实体 / 66 关系 / 6 社区",
+        "与基线差异": "保留 38 / 新增 2 / 消失 13 —— 脚本注释已说明同一 --limit 两次取到的文档集合可能不同",
+        "重建后健康度": "孤点 0 / 归一化重名 0 / 未分配社区 0"
+      }
+    },
+    {
+      "stage": "四条线路端到端（basic / agentic / graph / fusion / agentic 多轮）",
+      "command": "python RAG/script/acceptance_4routes.py（服务以 QA_CACHE_ENABLED=false 启动，强制真检索）",
+      "pass": true,
+      "readings": [
+        {
+          "mode": "basic",
+          "question": "何海燕的火车票票号是多少？",
+          "ok": true,
+          "seconds": 2.65,
+          "cache_hit": null,
+          "has_sql": false,
+          "graph_communities": 0,
+          "system_error": "",
+          "answer_head": "何海燕的火车票票号是 **T20191003124392**。[1]"
+        },
+        {
+          "mode": "agentic",
+          "question": "于慧的机票票号是多少？",
+          "ok": true,
+          "seconds": 15.94,
+          "cache_hit": null,
+          "has_sql": false,
+          "graph_communities": 0,
+          "system_error": "",
+          "answer_head": "## 结论  **于慧的机票票号为 8762369777769**（13 位数字，票面写作 `ETKT876236977"
+        },
+        {
+          "mode": "graph",
+          "question": "董文的航班是从哪到哪的？",
+          "ok": true,
+          "seconds": 5.34,
+          "cache_hit": null,
+          "has_sql": false,
+          "graph_communities": 3,
+          "system_error": "",
+          "answer_head": "根据给定的知识图谱信息，**董文的航班没有提供出发地信息**，因此无法确定“从哪到哪”。  仅能得知董文的相关航班信息如"
+        },
+        {
+          "mode": "fusion",
+          "question": "黄帅今年高铁票一共报销了多少钱？",
+          "ok": true,
+          "seconds": 16.4,
+          "cache_hit": null,
+          "has_sql": true,
+          "graph_communities": 3,
+          "system_error": "",
+          "answer_head": "黄帅今年高铁票（票据类型为 train）一共报销了 **1691 元**。   依据：结构化统计结果为 **1691 元"
+        },
+        {
+          "mode": "agentic",
+          "question": "那乐艳的呢？",
+          "ok": true,
+          "seconds": 20.98,
+          "cache_hit": null,
+          "has_sql": false,
+          "graph_communities": 0,
+          "system_error": "",
+          "answer_head": "## 结论  **乐艳的火车票票号是 `T20220709684589`**（对应票面文件 `data/train/07"
+        }
+      ]
+    },
+    {
+      "stage": "接口层（health / modes / SSE / WS）",
+      "pass": true,
+      "readings": {
+        "GET /api/health": "status=ok，四依赖全 ok（milvus collections=1、postgres tickets=300、redis True、neo4j connected）",
+        "GET /api/modes": "四条线路 + supports_history/streaming 标记，默认 basic",
+        "SSE 缓存关闭态": "同一标准问法两次均 query_type=rag、cache_hit=None（2.43s / 2.37s）",
+        "SSE 缓存开启态": "预置问法直接命中精确层(faq/0.004s)；非预置问题首跑 rag/2.871s→二跑 exact/0.001s 且答案一致",
+        "WS": "一条连接连问两轮，帧形状 {type: token|done}，关缓存态两轮 cache_hit=None"
+      }
+    },
+    {
+      "stage": "评估闭环抽检",
+      "command": "python RAG/script/run_stage_eval.py --eval-set RAG/data/eval_set.jsonl --limit 3 --llm-score",
+      "pass": true,
+      "readings": {
+        "样本数": 3,
+        "路由准确率": 1.0,
+        "筛选字段准确率": {
+          "fields": {
+            "person": {
+              "hit": 3,
+              "count": 3,
+              "false_positive": 0,
+              "accuracy": 1.0
+            },
+            "ticket_type": {
+              "hit": 3,
+              "count": 3,
+              "false_positive": 0,
+              "accuracy": 1.0
+            }
+          },
+          "overall": {
+            "hit": 6,
+            "count": 6,
+            "false_positive": 0,
+            "accuracy": 1.0
+          }
+        },
+        "Recall@5": 1.0,
+        "Rerank Hit@5": 1.0,
+        "答案事实准确率": 1.0,
+        "缓存命中": 0,
+        "大模型评分均值": 5.0
+      },
+      "note": "这是 36 条评估集里的 3 条**抽检**，不是全量；全量基线见 §7.1 的 Langfuse 两轮记录"
+    }
+  ],
+  "bugs_found": [
+    {
+      "title": "流式路径（SSE/WS）漏传 use_cache ⇒ QA_CACHE_ENABLED=false 对流式请求不生效",
+      "how_found": "关缓存起服务后，同一个标准问法连问两次：第二次 0.001s、query_type=faq、cache_hit=exact；而非流式的四条线路验收用例全部 cache_hit=null",
+      "root_cause": "pipeline/modes.py::answer_events 的 basic 分支调 run_events(question, stream=stream) 漏传 use_cache；非流式那条路（_run_basic）一直传着",
+      "fix": "补上 use_cache=cache_enabled()",
+      "regression_test": "tests/test_modes.py::TestBasicStreamingHonorsCacheSwitch（假 pipeline 记录 use_cache，开关 true/false 两态都断言）",
+      "negative_verification": "把修复回退 ⇒ 该用例 failed；还原 ⇒ 29 passed",
+      "live_verification": "重启后关缓存态：SSE 两次均 query_type=rag / cache_hit=None（2.43s、2.37s）；WS 两轮同样无命中"
+    }
+  ],
+  "test_summary": {
+    "offline": "823 passed / 0 errors",
+    "integration": "14 passed",
+    "mermaid": "README 13 个 mermaid 块，浏览器真渲染 13/13",
+    "readme_tables": "34 张表列数全部一致"
+  },
+  "artifacts_archived": [
+    ".dsh_tmp/fullchain_artifacts/acceptance_4routes.json",
+    ".dsh_tmp/fullchain_artifacts/graph_rebuild_verify.json",
+    ".dsh_tmp/fullchain_artifacts/graph_baseline_before_rebuild.json",
+    ".dsh_tmp/fullchain_artifacts/stage_eval_report.json",
+    ".dsh_tmp/fullchain_artifacts/tick_extract_report.json"
+  ],
+  "tracked_artifacts_restored": [
+    "RAG/data/tick_extract_report.json（重跑后 25 个叶子字段零差异，纯键序 churn）",
+    "RAG/data/stage_eval_report.json + stage_eval_records.jsonl（3 条抽检会把它缩成 3 行，破坏原来的 8 行证据 ⇒ 还原，抽检读数记在本报告里）"
+  ],
+  "not_covered": [
+    "① OCR 本地复跑（模型在远端 GPU）",
+    "图谱全量重建（300 篇 × 1 次 LLM 抽取，本轮按 --limit 3 与基线同口径）",
+    "36 条评估集全量重跑（本轮只抽 3 条；全量基线是 §7.1 里 Langfuse 的两轮记录）",
+    "Chainlit 页面的人工交互（本机不起真 Edge）"
+  ]
+}
