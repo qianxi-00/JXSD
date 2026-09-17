@@ -252,6 +252,20 @@ def show_hot_topic() -> None:
             "你的赛道/领域", placeholder="科技测评 / 职场成长 / 美妆护肤..."
         )
 
+    # 选中一个当前不可用的平台 → **当场**说明原因，不必先点一次按钮。
+    # 之前这句只写在按钮分支里，用户得先点「获取热点选题」才知道自己选了个抓不到的源；
+    # 而那一次点击本来会白等十几秒（上一轮才在按钮分支里拦掉）。现在两处都有：
+    # 这里是「选中即告知」，按钮分支那道保留作纵深防御（别的地方直接调
+    # `run_hot_topic()` 时仍然拦得住）。文案与按钮分支保持同一口径。
+    _selected_reason = _platform_block_reason(platform)
+    if _selected_reason:
+        st.warning(
+            f"「{platform}」当前不可用，选中它不会发起抓取。\n\n"
+            f"原因：{_selected_reason}\n\n"
+            "这不是你的网络问题，也不是今天没有热搜 —— 请换一个平台；"
+            "选「全部」时该平台已被自动跳过，不影响其它平台。"
+        )
+
     # ========== 抓取 + 分析 ==========
     if st.button("🔍 获取热点选题", type="primary", width="stretch"):
         # 平台有默认值、赛道没有：空赛道时 LLM 没有筛选判据，所以这是唯一的必填项
@@ -259,15 +273,9 @@ def show_hot_topic() -> None:
             st.warning("请输入你的赛道")
             return
 
-        # 选中已知失效的平台：直接拦住，连那十几秒都别让用户等
-        block_reason = _platform_block_reason(platform)
-        if block_reason:
-            st.warning(
-                f"「{platform}」当前不可用，本轮不发起抓取。\n\n"
-                f"原因：{block_reason}\n\n"
-                "这不是你的网络问题，也不是今天没有热搜 —— 请换一个平台；"
-                "选「全部」时该平台已被自动跳过，不影响其它平台。"
-            )
+        # 选中已知失效的平台：再拦一次（上面那句是「选中即告知」，这里是点按钮时的
+        # 最后一道；两处用的是同一个 `_platform_block_reason()`，不会漂移）
+        if _selected_reason:
             return
 
         # 两段耗时分开写（抓取 10~30 秒 / AI 30~90 秒）：用户觉得慢了，

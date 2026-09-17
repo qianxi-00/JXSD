@@ -136,8 +136,15 @@ def check_fixes() -> list[str]:
                 "B1",
                 f"选中带标注的那项后，底层 value 仍是纯名（实际 value={got!r}）",
             )
-            # 真正要验的是「页面拦住了」：填上赛道再点按钮 →
-            # 出黄条说明原因 + **不发起抓取**（否则就是白白等十几秒）。
+            # U2：**选中即告知** —— 不用点按钮就该看到原因。
+            # 之前那句提示只在按钮分支里，用户得先点一次（而那一次会白等十几秒）才知道。
+            sel_warns = [(w.value or "") for w in at.warning]
+            want(
+                any("当前不可用" in w and "原因" in w for w in sel_warns),
+                "U2",
+                f"选中失效平台**当场**出黄条说明原因（不点按钮；黄条：{sel_warns}）",
+            )
+            # 再点按钮：仍然拦住，且不抛异常
             at.text_input[0].set_value("科技测评").run()
             at.button[0].click().run()
             warns = [(w.value or "") for w in at.warning]

@@ -121,24 +121,53 @@ def _find_debug_port() -> int | None:
     return None
 
 
+def _edge_running() -> bool:
+    """当前有 Edge 或 WebView2 宿主进程在跑吗。
+
+    为什么要问这个：Edge 用**同一个 `--user-data-dir`** 时会复用已有进程，
+    新起的实例不会去监听调试端口 —— 也就是说「用你自己的 profile 拿登录态」
+    和「你正开着自己的 Edge」这两件事天然互斥。
+
+    Returns:
+        bool：`tasklist` 里出现 ``msedge.exe`` 或 ``msedgewebview2.exe`` 就是 True。
+        查不到（命令不存在 / 超时）一律返回 False —— 宁可走后面那条会给出明确
+        失败原因的路径，也不要因为一次探测失败就拒绝服务。
+    """
+    for image in ("msedge.exe", "msedgewebview2.exe"):
+        try:
+            r = subprocess.run(
+                ["tasklist", "/fi", f"imagename eq {image}", "/nh"],
+                capture_output=True, timeout=10,
+                # 中文 Windows 的 tasklist 输出是 GBK；不指定的话解码会抛，
+                # 用 errors="replace" 兜住（我们只关心有没有那个镜像名）
+                text=True, encoding="utf-8", errors="replace",
+            )
+        except Exception:  # noqa: BLE001
+            return False
+        if image.lower() in (r.stdout or "").lower():
+            return True
+    return False
+
+
 def _launch_edge(port: int):
     """起一个带调试端口的无头 Edge；返回 Popen 句柄（失败返回 None）。
 
-    先 taskkill 掉后台 msedge，否则用户数据目录被锁、新实例会直接复用旧进程而
-    不监听调试端口 —— 课案踩过的坑，保留同样处理。
+    ⚠️ **这里不再 `taskkill` 了**（改前会把 ``msedge.exe`` 与 ``msedgewebview2.exe``
+    按进程名全杀）。原因是那个做法会连带关掉：
+        · 用户当前打开的所有 Edge 窗口（标签页一般能恢复，没保存的表单不能）；
+        · **别的应用里内嵌的 WebView2**（Electron / Office / 各种小程序容器），
+          它们不会自动恢复，用户甚至不会把这件事跟「我点了个获取 Cookie」联系起来。
+
+    而它又**没法收窄**：本函数要的是 `%LOCALAPPDATA%` 下**用户自己的 profile**
+    （只有那里才有抖音登录态），所以「只杀我们自己那个 ``--user-data-dir`` 下的进程」
+    这个念头在这里不成立 —— 我们用的就是用户那个目录。
+
+    所以改成：**已经有 Edge 在跑就干脆不启动**，由调用方给出明确指引让用户自己
+    决定要不要关（关掉自己的浏览器窗口该由用户拍板）。没在跑时直接起，无需杀任何东西。
     """
-    for proc_name in ("msedge.exe", "msedgewebview2.exe"):
-        try:
-            # 必须先杀干净：Edge 用同一个 --user-data-dir 时会**复用已有进程**，
-            # 新实例不会监听调试端口（课案踩过的坑）。msedgewebview2.exe 也要杀 ——
-            # 它同样占着那个用户数据目录
-            subprocess.run(["taskkill", "/f", "/im", proc_name],
-                           capture_output=True, timeout=10)
-        except Exception:
-            pass
-    # 等进程真正退出、文件锁释放：taskkill 是异步的，
-    # 不睡这一下就可能紧接着启动失败（拿不到用户数据目录）
-    time.sleep(1.5)
+    if _edge_running():
+        print("[复盘] 检测到 Edge/WebView2 正在运行，不自动杀进程（会让用户丢失窗口）")
+        return None
 
     user_data = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data")
     # 两个安装路径都试：Edge 一般装在 x86 那个目录，但 64 位安装包会在另一个
@@ -313,6 +342,18 @@ def _read_edge_cookies() -> tuple[str, "str | None"]:
         launched = edge_proc is not None
         # 三种失败各给各的中文指引，页面直接把这段文本 st.error 出来
         if not launched:
+            # 先区分「因为 Edge 在跑所以没启动」与「压根找不到 msedge.exe」：
+            # 前者是可操作的（关掉再来），后者是环境问题，给错的指引会让人白折腾
+            if _edge_running():
+                return "", (
+                    "检测到 Edge（或某个内嵌 WebView2 的程序）正在运行，已**跳过自动读取**。\n\n"
+                    "原因：读取用的是你自己的 Edge profile（只有那里才有抖音登录态），"
+                    "而 Edge 对同一个 profile 会复用已有进程、新实例不会监听调试端口。\n"
+                    "程序**不会**替你关掉浏览器 —— 那会连带关掉你所有 Edge 窗口、"
+                    "以及别的应用里内嵌的 WebView2 窗口，且后者不会自动恢复。\n\n"
+                    "要继续，请自行全部关闭 Edge（含其它内嵌 WebView2 的程序）后重试；"
+                    "或者直接用下面的「手动粘贴 Cookie」。"
+                )
             return "", "无法启动 Edge（未找到 msedge.exe），请确认 Edge 已安装"
         if not _port_alive(debug_port):
             return "", (
@@ -555,26 +596,22 @@ def _render_cookie_panel() -> None:
     with st.expander("🍪 抖音 Cookie 配置", expanded=False):
         st.caption("两种方式：① 点按钮自动从 Edge 读取　② 手动复制粘贴。"
                    "本次会话内生效，重启后回到根目录 .env 的配置。")
-        # ⚠️ 必须在按钮**旁边**先说清楚这个副作用：`_launch_edge()` 在
-        # 9222~9225 都没有监听时会 `taskkill /f /im msedge.exe` **再
-        # `taskkill /f /im msedgewebview2.exe`**，然后自己起一个 ——
-        # 也就是会关掉用户当前打开的所有 Edge 窗口，**并且连带杀掉别的应用里
-        # 内嵌的 WebView2**（两种进程名是同一个列表，见 `_launch_edge()`）；
-        # 课案原有做法，为了拿到那个带登录态的 user-data-dir，用户自己开着的
-        # Edge 是补不了 --remote-debugging-port 的。标签页通常能被 Edge 恢复，
-        # 但别的应用被牵连关掉的窗口不一定，不该让人点完才发现，所以这里明写。
-        st.caption("⚠️ 点这个按钮时，若检测不到已开启的调试端口，程序会**重启 Edge**"
-                   "（你当前打开的所有 Edge 窗口会被关掉，标签页一般可由 Edge 自行恢复）；"
-                   "**其它应用里内嵌的 WebView2 窗口也会被一起关掉**，它们不会被自动恢复。"
-                   "不想被打扰时请改用下面的手动粘贴。")
+        # ⚠️ 说清这一步的**前置条件**：读取用的是你自己的 Edge profile
+        # （只有那里才有抖音登录态），而 Edge 对同一个 profile 会复用已有进程、
+        # 新实例不会监听调试端口 —— 所以「先自己把 Edge 关干净」是必须的。
+        # 程序**不会**替你关：那会连带关掉所有 Edge 窗口与别的应用里内嵌的
+        # WebView2（后者不会自动恢复），代价远大于这个按钮带来的便利。
+        st.caption("⚠️ 若 Edge 正在运行，程序会直接跳过自动读取并说明原因 —— "
+                   "**它不会替你关闭浏览器**。想用自动读取，请先自行关掉 Edge"
+                   "（含其它内嵌 WebView2 的程序）再点；否则请用下面的手动粘贴。")
 
         # 1:3 的宽度比：左边按钮窄，右边那行提示文字长
         col_auto, col_tip = st.columns([1, 3])
         with col_auto:
             if st.button("🔍 从 Edge 浏览器获取", width="stretch",
                          help="自动读取 Edge 里已登录的抖音 Cookie（走 CDP，不需要解密）"):
-                # 只有点下去才会去找/启动 Edge（``_launch_edge()`` 会 taskkill 掉
-                # 现有 msedge 进程），不做任何后台自动探测
+                # 只有点下去才会去找/启动 Edge（Edge 在跑时 `_launch_edge()`
+                # 会直接放弃并给出指引，不会去杀任何进程），不做任何后台自动探测
                 cookie_str, err = _read_edge_cookies()
                 if err:
                     st.error(err)

@@ -357,13 +357,80 @@ if _pick_page_target(_only_browser) != "":
 if _pick_page_target([]) != "" or _pick_page_target(None) != "":
     _view_problems.append("_pick_page_target: 空输入应当返回空串")
 
+# 第二条：**本文件不得按进程名杀浏览器**。
+# 改前 `_launch_edge()` 会 `taskkill /f /im msedge.exe` + `msedgewebview2.exe` ——
+# 那会关掉用户所有 Edge 窗口，还会连带关掉别的应用里内嵌的 WebView2（不会自动恢复），
+# 而它又没法收窄（要拿登录态就必须用用户自己的 profile）。现在改成「Edge 在跑就直接
+# 放弃并给出指引」。这条断言把「别再把 taskkill 加回来」钉死。
+#
+# ⚠️ 断言必须**打桩**跑：真调一次 `_launch_edge` 会去起真 Edge，甚至在旧实现下
+#    杀掉用户正在用的浏览器 —— 那是硬红线。
+import subprocess as _sp
+
+from views import review as _rv
+
+_popen_real, _run_real = _sp.Popen, _sp.run
+_edge_running_real, _port_alive_real = _rv._edge_running, _rv._port_alive
+_seen: list = []
+
+
+class _FakeProc:
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def _recording_popen(args, *a, **kw):
+    _seen.append(list(args) if isinstance(args, (list, tuple)) else [str(args)])
+    return _FakeProc()
+
+
+def _recording_run(args, *a, **kw):
+    _seen.append(list(args) if isinstance(args, (list, tuple)) else [str(args)])
+
+    class _R:
+        stdout = ""
+        returncode = 0
+
+    return _R()
+
+
+try:
+    _sp.Popen, _sp.run = _recording_popen, _recording_run
+    _rv._port_alive = lambda p, timeout=0.5: True   # 别真等那 7.5 秒
+
+    _rv._edge_running = lambda: True                # ① Edge 在跑
+    if _rv._launch_edge(9223) is not None:
+        _view_problems.append("_launch_edge: Edge 在跑时应当直接放弃，不该起进程")
+    if _seen:
+        _view_problems.append(f"_launch_edge: Edge 在跑时不该调用任何子进程，实际 {_seen}")
+
+    _seen.clear()
+    _rv._edge_running = lambda: False               # ② Edge 没在跑
+    if _rv._launch_edge(9223) is None:
+        _view_problems.append("_launch_edge: Edge 没在跑时应当能起一个")
+    _killed = [c for c in _seen if "taskkill" in " ".join(c).lower()]
+    if _killed:
+        _view_problems.append(
+            f"_launch_edge 里又出现了按进程名杀浏览器：{_killed} —— "
+            "那会关掉用户所有 Edge 窗口与其它应用内嵌的 WebView2"
+        )
+finally:
+    _sp.Popen, _sp.run = _popen_real, _run_real
+    _rv._edge_running, _rv._port_alive = _edge_running_real, _port_alive_real
+
 if _view_problems:
     print("视图层断言失败:")
     for p in _view_problems:
         print("  " + p)
     raise SystemExit(1)
 
-print("视图层断言通过（_pick_page_target 3 种 CDP 形状）")
+print("视图层断言通过（_pick_page_target 3 种 CDP 形状 + 不按进程名杀浏览器）")
 '''.replace("%HERE%", str(HERE)).replace("%MODS%", repr(VIEW_MODULES))
 
 
