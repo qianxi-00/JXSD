@@ -179,8 +179,11 @@ class TestBasicRunnerIsSingleTurn:
         captured = {}
 
         class FakePipeline:
-            async def run_and_collect(self, question):
+            # 签名必须与真类一致（`use_cache` 是 QA_CACHE_ENABLED 总开关的落点）：
+            # 替身少一个参数，改真类时就会以 TypeError 炸在**测试里**而不是产品代码里。
+            async def run_and_collect(self, question, use_cache=True):
                 captured["question"] = question
+                captured["use_cache"] = use_cache
                 return {"answer": "答", "sources": [], "cache_hit": None}
 
         monkeypatch.setattr(modes, "_basic_pipeline", lambda: FakePipeline())

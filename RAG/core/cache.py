@@ -254,6 +254,29 @@ class AnswerCache:
         )
         return len(faq_pairs)
 
+    def warmup(self) -> dict:
+        """启动预热：把两层数据准备好**并把进程内的预设矩阵真正载入**。
+
+        为什么不能只调 `seed_preset()` / `seed_details()`（我第一版就是这么写的，日志暴露了问题）：
+        那两个只保证 **Redis 里有数据**，而相似度层的实际匹配靠的是**进程内的
+        `_preset_matrix`**（`_ensure_preset_loaded()` 才会把它从 Redis 读回来并做一次归一化）。
+        只播种不载入 ⇒ 启动日志写着"预热完成"，可第一个请求仍要现做归一化，
+        等于**预热了个寂寞**（日志里那行"0 条"就是当时的症状：两次 seed 都因幂等提前返回）。
+
+        返回 {"faq": 相似度层问法条数, "details": 本轮新播条数, "matrix": 载入的问法条数}，
+        调用方据此打日志 —— 让"到底预热到了什么"在启动日志里可核对。
+        """
+        faq_seeded = self.seed_preset()
+        details_seeded = self.seed_details()
+        # 关键的一步：把矩阵载入进程（内部会先 seed_preset，所以上面那步失败也能兜住）
+        self._ensure_preset_loaded()
+        return {
+            "faq": len(self._preset_questions or []),
+            "details": details_seeded,
+            "matrix": len(self._preset_questions or []),
+            "faq_seeded": faq_seeded,
+        }
+
     def seed_details(self, force: bool = False) -> int:
         """把明细问答写进**精确缓存层**(按归一化问题精确命中,不做相似度匹配)。
 

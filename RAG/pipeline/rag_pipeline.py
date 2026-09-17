@@ -713,8 +713,12 @@ class RAGPipeline:
         # conservative=False：前端据此追加引用块。
         yield {"type": "done", "answer": answer, "sources": sources, "cache_hit": None, "route": "rag", "conservative": False}
 
-    async def run_and_collect(self, question: str) -> dict:
-        """消费事件流,组装为最终的问答结果(供非流式接口使用)"""
+    async def run_and_collect(self, question: str, use_cache: bool = True) -> dict:
+        """消费事件流,组装为最终的问答结果(供非流式接口使用)
+
+        `use_cache` 一路透传给 `run_events`（读写一起开关，见该函数说明）：
+        HTTP 层把它接到 `QA_CACHE_ENABLED` 上，好让"关缓存"这件事四条线路统一生效。
+        """
         # 预置全部"稳定存在"的键，让返回值的形状对调用方（HTTP 层）可预期；
         # 下面几个键是**条件性新增**的，消费方必须用 .get：
         #   similarity / matched_question → 仅缓存命中时
@@ -732,8 +736,8 @@ class RAGPipeline:
             "rewrite": None,
         }
         # stream=False：非流式接口要的是完整答案，不需要边算边推。
-        # ⚠ 这里仍然会写缓存（run_events 内部的行为），与本函数的读取无关。
-        async for ev in self.run_events(question, stream=False):
+        # `use_cache` 透传：关缓存时**读写一起关**（评估口径），不能只跳过读。
+        async for ev in self.run_events(question, stream=False, use_cache=use_cache):
             t = ev["type"]
             if t == "token":
                 # 正文是**分片**给的（流式路径分 chunk、缓存/保守路径按 6 字切块），
