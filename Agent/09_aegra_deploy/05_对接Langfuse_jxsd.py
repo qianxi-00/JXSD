@@ -503,9 +503,18 @@ def section_5_keys_and_demo() -> None:
         print("     检查 .env 里的 API_KEY / BASE_URL / MODEL_NAME 是否可用。")
         return
 
-    print(f"\n  本次共捕获 {len(handler.events)} 个回调事件")
-    for kind, detail in handler.events:
-        print(f"      · {kind:<18} {detail}")
+    # 结尾汇总：只有「打印型」handler 会把事件同时存进 `.events`；真实的
+    # `langfuse.langchain.CallbackHandler` **没有**这个属性（它把事件直接发去服务端，
+    # 本地不留），无条件取会 `AttributeError` —— 实测踩坑，故用 getattr 判空。
+    # 事件明细在上面已经边收边打印过了，这里只报个数 + 说明事件与 span 的对应关系。
+    events = getattr(handler, "events", None)
+    if events is None:
+        print("\n  （真实 Langfuse handler 不在本地留事件，去控制台看这条 trace 的 span 树。）")
+    else:
+        print(f"\n  本次共捕获 {len(events)} 个回调事件")
+        print("    · chat_model_start / llm_end 成对出现 → 合成一个 generation span")
+        print("    · chain_start / chain_end             → 合成一个 chain span（父节点）")
+        print("    · tool_start / tool_end               → 合成一个 tool span")
 
 
 # ================================================================

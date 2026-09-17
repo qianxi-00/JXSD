@@ -49,6 +49,7 @@ sys.stdout.reconfigure(encoding="utf-8")   # Windows 控制台默认 GBK，防�
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -192,6 +193,29 @@ def stop_agent_protocol_server(process) -> None:
         process.kill()
 
 
+def remove_temp_dir(path: Path) -> None:
+    """删掉临时目录；在 Windows 上删不掉**也不算失败**。
+
+    ⚠️ 实测踩坑：`langgraph dev` 的进程树刚被 taskkill 掉时，Windows **不会立刻**
+    释放它占用的文件句柄。紧接着 `shutil.rmtree` 就会抛
+    `PermissionError: [WinError 32] 另一个程序正在使用此文件，进程无法访问。`
+    —— 整份演示明明全部跑完了，却崩在最后一行清理上。
+    所以这里：先小步重试（等句柄释放），最后一步容忍失败 ——
+    清理不掉只是留下一个临时目录，绝不该让演示报错。
+    """
+    for _ in range(5):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            time.sleep(1.0)      # 给 Windows 一点时间释放进程持有的句柄
+    shutil.rmtree(path, ignore_errors=True)
+    if path.exists():
+        print(f"  （临时目录未能删除，可手动清理：{path}）")
+
+
 def tool_sequence(result: dict) -> list[str]:
     return [
         call["name"]
@@ -316,8 +340,11 @@ def demo_2_check_and_list() -> None:
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(prefix="ap_server_") as tmp:
-        workdir = Path(tmp)
+    # 不用 `with tempfile.TemporaryDirectory(...)`：它的退出清理一旦撞上 Windows
+    # 文件锁就会抛异常（见 remove_temp_dir 的说明），这里改成显式、容忍失败的清理。
+    tmp = tempfile.mkdtemp(prefix="ap_server_")
+    workdir = Path(tmp)
+    try:
         # 先判断端口上是否已有服务：有就复用（那时**不会**生成应用文件，也不该打印"已生成"）
         if server_is_up():
             print(f"检测到 {BASE_URL} 已有服务 → 复用（本次不生成应用、不新起进程）")
@@ -346,6 +373,9 @@ if __name__ == "__main__":
             stop_agent_protocol_server(process)
             if process is not None:
                 print("\n本地 Agent Protocol 服务已关闭（含子进程树）。")
+    finally:
+        # 关服务之后再删目录：服务收不干净时句柄还占着，删不掉也无所谓
+        remove_temp_dir(workdir)
     print("全部 Demo 执行完毕。")
 
 
