@@ -559,8 +559,13 @@ def cmd_coverage(args: argparse.Namespace) -> int:
 
 
 # ---------------- 预期输出核对 ----------------
-# 匹配 markdown 里的 `### 预期输出` + ```text 围栏
-EXPECT_RE = re.compile(r"###\s*预期输出[^\n]*\n+```text\n(.*?)```", re.DOTALL)
+# 匹配 markdown 里的 `### 预期输出` + ```text 围栏。
+#
+# ⚠️ 中间允许夹说明段落（`.*?` + DOTALL）：第一版要求标题**紧挨着**围栏
+# （`### 预期输出\n+```text`），结果「标题 → 一段解释 → 代码块」这种写法
+# 整段静默漏检 —— 01_langgraph/02 的 subagent 自己发现并挪动了说明段才暴露出来。
+# 漏检比误报危险得多：它让「没核对」看起来像「核对通过」。
+EXPECT_RE = re.compile(r"###\s*预期输出[^\n]*\n.*?```text\n(.*?)```", re.DOTALL)
 
 # 「本段输出不确定」的标注词。写 notebook 的人已经把易变内容标出来了
 # （时间戳、随机 UUID、模型自己的措辞……），核对器必须认这些标注，
