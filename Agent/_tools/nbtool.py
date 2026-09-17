@@ -594,6 +594,24 @@ VOLATILE_RE = re.compile(
     r"由模型决定|最不稳定|不稳定|重跑一次|别逐字比对"
 )
 
+# **否定用法**要先剔除，否则会把「讲确定性」的句子反过来当成「声明不确定」。
+# 实测踩到的例子（`03_deepagents/01` 的 subagent 报上来的）：
+#   它在确定性输出的那一格写「所以它不带『不确定』声明」——
+#   那三个字反而让整段被判定为「已声明非确定」而**跳过比对**。
+#   看起来通过，其实根本没核。这是核对器最危险的一类错：把「没核」伪装成「核过了」。
+VOLATILE_NEGATION_RE = re.compile(
+    r"(?:不带|不含|不是|并非|没有|无需|不需要|不谈|不算|非)[^\n。；]{0,8}"
+    r"(?:不确定|非确定|随机|会变|每次[^\n。；]{0,6}(?:不同|不一样)|时间戳|实测值)"
+)
+
+
+def is_declared_volatile(region: str) -> bool:
+    """这段预期输出是否被**明确声明**为「不确定」。
+
+    先剔掉否定用法再匹配（见 VOLATILE_NEGATION_RE 的说明）。
+    """
+    return bool(VOLATILE_RE.search(VOLATILE_NEGATION_RE.sub("", region)))
+
 
 def block_region(text: str, start: int, end: int) -> str:
     """取「这一段的预期输出」的说明范围：从它自己的小标题，到下一个同级/更高级标题之前。
@@ -701,7 +719,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
                 want = norm_lines(block.group(1))
                 if not want:
                     continue
-                if VOLATILE_RE.search(block_region(cell.source, block.start(), block.end())):
+                if is_declared_volatile(block_region(cell.source, block.start(), block.end())):
                     skipped += 1
                     continue
                 total_blocks += 1
