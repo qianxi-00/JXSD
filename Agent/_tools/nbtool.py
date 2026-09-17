@@ -675,6 +675,33 @@ def cell_output_text(cell) -> str:
     return "".join(parts)
 
 
+def slow_timeout_for(path: Path) -> int:
+    """按 notebook 决定单格超时：慢本（评估类）给 2700 秒，其余 900 秒。
+
+    与 `run_notebooks.py` 的 `timeout_of()` 保持同一套口径 —— 两个工具各定一套的结果是
+    同一本 notebook 一个工具 PASS、另一个超时（真的发生过，见 cmd_verify 里的注释）。
+
+    ⚠️ **必须 resolve 之后再算相对路径**：`cmd_verify` 接到的是命令行原文
+    （可能是 `Agent\\05_mcp\\xx.ipynb`，也可能已经是绝对路径），未 resolve 的 Path
+    直接 `relative_to(AGENT)` 会抛 `ValueError: ... is not in the subpath of ...`。
+    这是「相对路径没 resolve」这一类坑**第三次**咬到我（前两次在 `disp()` 与 `block_region()`），
+    所以这次写成不会炸的形式：**两种相对写法都试**，都算不出来才退回默认值，
+    绝不让超时口径把整条命令搞崩。
+
+    两种写法都要试的原因：命令行可能给「相对仓库根」的 `Agent\\06_langfuse\\x.ipynb`，
+    也可能给「相对 Agent/」的 `06_langfuse\\x.ipynb` —— 后者直接 `resolve()` 会按 CWD
+    解析成仓库根下的 `06_langfuse\\...`，落到 AGENT 之外，于是慢本被误判成普通本（900 秒）。
+    这正是 `06_langfuse/02` 超时的形态。
+    """
+    for cand in (Path(path), AGENT / path):
+        try:
+            rel = cand.resolve().relative_to(AGENT.resolve()).as_posix()
+        except ValueError:
+            continue
+        return 2700 if "06_langfuse" in rel else 900
+    return 900
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     """执行 notebook，核对每个「预期输出」块是否真的能在实跑输出里找到。
 
@@ -695,8 +722,13 @@ def cmd_verify(args: argparse.Namespace) -> int:
     for path in targets:
         rel = disp(path)
         nb = read_notebook(path)
+        # 单格超时按「是不是慢本」自动取 —— 与 run_notebooks.py 用同一套口径。
+        # 踩坑记录：这两个工具原来各有一套超时（这里固定 900 秒、那边对 06_langfuse 给 2700 秒），
+        # 结果 `06_langfuse/02_评估与打分`（实测要跑 1399.8 秒）在 run_notebooks 里 PASS、
+        # 在 verify 里却 CellTimeoutError —— 看起来像内容缺陷，其实是同一台机器两套标准。
+        tmo = args.timeout or slow_timeout_for(path)
         client = NotebookClient(
-            nb, timeout=args.timeout, kernel_name=KERNEL_NAME, allow_errors=True,
+            nb, timeout=tmo, kernel_name=KERNEL_NAME, allow_errors=True,
             startup_timeout=120,
             resources={"metadata": {"path": str(path.parent)}},
         )
@@ -791,7 +823,8 @@ def main() -> int:
     p6 = sub.add_parser("verify", help="执行并按「预期输出」块核对真实输出")
     p6.add_argument("paths", nargs="*")
     p6.add_argument("--all", action="store_true")
-    p6.add_argument("--timeout", type=int, default=900, help="单格超时秒数（默认 900）")
+    p6.add_argument("--timeout", type=int, default=0,
+                    help="单格超时秒数；0=按 notebook 自动（慢本 2700，其余 900，与 run_notebooks.py 一致）")
     p6.set_defaults(func=cmd_verify)
 
     args = ap.parse_args()
