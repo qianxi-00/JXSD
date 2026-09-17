@@ -66,6 +66,8 @@ class _CoreSettings(BaseSettings):
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
+    # RAG 评估用的 Langfuse 数据集名(优化篇 script/langfuse_evaluation.py)
+    langfuse_dataset_name: str = "finance-rag-validation"
 
     # ---- Agent 课案里额外用到的第三方平台密钥（全部留空，只在本地 .env 提供）----
     # 百度千帆：课案「多 Agent / 子Agent」用它的联网搜索 MCP
@@ -94,6 +96,8 @@ class _CoreSettings(BaseSettings):
     postgres_user: str = ""
     postgres_password: str = ""
     postgres_db: str = ""
+    # RAG 优化篇 Text-to-SQL 的票据库(与 LangGraph 记忆用的默认库分开)
+    finance_db: str = "finance"
 
     # Redis
     redis_host: str = "127.0.0.1"
@@ -136,6 +140,18 @@ class _CoreSettings(BaseSettings):
         return (
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def finance_pg_url(self) -> str:
+        """Text-to-SQL 票据库的连接 URL(SQLAlchemy + psycopg3 驱动)。
+
+        必须显式带 `+psycopg`:环境里装的是 psycopg 3,SQLAlchemy 默认的
+        `postgresql://` 会去找未安装的 psycopg2 并报 ModuleNotFoundError。
+        """
+        return (
+            f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.finance_db}"
         )
 
 
@@ -308,6 +324,21 @@ class PaddleOCRSettings(BaseSettings):
     model: str = "PaddleOCR-VL-1.6"
 
 
+class Neo4jSettings(BaseSettings):
+    """RAG 优化篇 GraphRAG 的 Neo4j 图数据库配置"""
+
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_prefix="NEO4J_", extra="ignore")
+
+    # 用户名/口令只在 .env 提供(.env 里是 NEO4J_USER / NEO4J_PASSWORD)
+    uri: str = "bolt://127.0.0.1:7687"
+    user: str = "neo4j"
+    password: str = ""
+    database: str = "neo4j"
+    # 原生向量索引名(Neo4j 5.11+)
+    entity_index: str = "entity_embedding_index"
+    community_index: str = "community_embedding_index"
+
+
 # ============================================================
 # 三、聚合对象：settings 同时支持扁平字段与分组字段
 # ============================================================
@@ -338,6 +369,7 @@ class Settings:
         self.redis = RagRedisSettings()
         self.milvus = RagMilvusSettings()
         self.paddleocr = PaddleOCRSettings()
+        self.neo4j = Neo4jSettings()
 
     def __getattr__(self, name: str):
         # 只在实例属性里找不到时才会走到这里：转发给扁平配置
