@@ -271,32 +271,41 @@ DeepSeek 是**思考模型**（两个模型都是），两条结构化输出的�
 的"崩溃"其实已经跑通（临时目录里留着落盘文件、日志却为空），换用上面第 3 种方式后
 一次通过。**结论：日志为空 ≠ 代码有问题，先怀疑缓冲。**
 
-## 验证方式与结果
+## 验证方式与结果（Notebook 版）
 
-每个 `_jxsd.py` 交付前都按同一套标准过检：
+32 个 notebook 全部通过四道闸门：
 
-| 检查 | 做法 | 结果 |
-|---|---|---|
-| 语法 | `python -m py_compile` | 78/78 通过 |
-| 真跑 | 独立子进程实跑，记录退出码与输出 | 78/78 退出码 0、无顶层 traceback |
-| 配置引用 | AST 级扫描「真代码」（注释/docstring 不计） | 78 个文件里，用到 `settings.*` 的**全部** `from config import settings`；不存在的字段 0 处；非白名单环境变量 0 处；硬编码凭据 0 处 |
-| 脱敏 | 正则扫描连接串 / Key / 内网 IP | 0 处命中（课案原文里的 `postgres:postgres@localhost` 已改成 `<用户名>:<口令>@127.0.0.1`） |
-| 讲解密度 | （注释行 + docstring 行 + 含中文的字符串行）/ 总行数 | 平均 **57%**，最低 42% |
+| 闸门 | 命令 | 查什么 | 结果 |
+|---|---|---|---|
+| **结构检查** | `nbtool.py check --all` | 内核名对不对、首格是不是 markdown 标题、有没有「运行条件」三档标记、有没有环境引导格、每个 code cell 能否 `ast.parse`、有没有泄漏绝对路径、有没有残留执行输出、markdown 有没有被多加一层 `#` | **32 / 32 通过** |
+| **无头执行** | `run_notebooks.py` | 每个 notebook 起独立内核从头跑到尾；会起服务的走串行车道、其余 4 条并行；判定 PASS / PASS-降级 / TRACEBACK / TIMEOUT | **32 / 32 PASS**（其中 7 个 `PASS-降级`，见下） |
+| **预期输出核对** | `nbtool.py verify --all` | 执行后逐段检查每个 `### 预期输出` 能否在**真实输出**里找到；汇总把「核对一致」与「已声明非确定而跳过」分开计 | 见下 |
+| **零丢失审计** | `nbtool.py coverage` | 159 个源 `.py` 逐个映射到目标 notebook，按**整行指纹**核对代码行是否都进了 notebook | **159 / 159 达标**，孤儿 1（已登记排除） |
 
-### 全仓库运行复核（最新一轮 2026-09-17：162 个 `.py`，16.6 分钟）
+### `PASS-降级` 不是失败
 
-用独立子进程逐个真跑（`run_all.py`：串行/并行分道、端口类文件串行、超时保护、喂空行给
-`input()`），结果：**160 个 PASS/SERVER-OK + 2 个异常**，两个都已定位清楚并处理：
+那 7 个是**源文件里本来就设计好的降级路径被走到了** —— 代码没错，是这台机器缺东西：
 
-| 异常 | 真相 | 处理 |
-|---|---|---|
-| `05_mcp/09_权限_客户端.py` 连接被拒 | 它是**客户端**，要求先手工起认证服务(9000) + 权限服务(8000) | 编排两个前置服务后实跑通过（见下表末行）；单独跑必然连不上 |
-| `03_deepagents/19_异步子代理_官方补充.py` `PermissionError: [WinError 32]` | Windows **不会立刻**释放刚被 taskkill 的进程持有的文件句柄，紧接着删临时目录就撞锁 | 清理改成「小步重试 + 容忍失败」的显式清理；连跑 2 次均 PASS |
+| notebook | 为什么降级 |
+|---|---|
+| `02_langchain/01`、`02_langchain/04`、`02_langchain/05`、`03_deepagents/04`、`04_function_call/02` | 本机 `.env` 指向 DeepSeek，而它是**思考模型、不支持结构化输出**：原生 `json_schema` 报 `This response_format type is unavailable now`，强制 `tool_choice` 报 `Thinking mode does not support this tool_choice`。换支持 `json_schema` 的端点即可跑通，代码一行不用改 |
+| `03_deepagents/02` | ContextHub / Sandbox 两节需要 docker 与云 Store |
+| `07_protocols/02`、`09_aegra_deploy/02` | 缺 `crewai` / `a2a_auto_wrapper` / `aegra` CLI 等包，源文件已有 `try/except` 兜底 |
 
-> 文件数口径：`Agent/` 下共 **169 个 `.py`**，harness 实跑 162 个 —— 另外 7 个在
-> `03_deepagents/tmp_jxsd_deepagents_*/` 里，那是课案脚本**运行时自己生成**的工作目录
-> （已被 `.gitignore` 的 `Agent/*/tmp_*/` 覆盖，删掉后重跑会重新生成，已实测）。
-> 组成：78 个课案 `_jxsd` + 63 个课案精简版 + 21 个官方补充篇。
+### 源脚本归档回归（`_py_source/`）
+
+把 160 个课案 `.py` 搬进 `_py_source/` 之后，重跑 `.py` 时代的回归执行器：
+**160 个文件、158 PASS、2 个异常**，两个都已定位清楚：
+
+| 异常 | 真相 |
+|---|---|
+| `05_mcp/09_权限_客户端.py` 连接被拒 | 它是**客户端**，要求先手工起认证服务 + 权限服务；编排前置服务后实跑通过，单独跑必然连不上 |
+| `05_mcp/02_客户端_jxsd.py` `McpError: Session terminated` | **并发 artifact**：当时同一台机器上还在跑 notebook 的全量执行，两边抢端口、压模型 API。单独重跑 PASS（14.7 秒） |
+
+> 一条经验：**同一台机器上别同时跑两套会调模型的验证**。它造成的失败长这样 ——
+> `httpx.ReadTimeout`、`McpError: Session terminated`、`DeadKernelError: Kernel died`，
+> 全是**环境争抢**、不是内容缺陷。我自己踩过一次（notebook 全量执行和 `.py` 回归重迭），
+> 表面看两个 notebook 挂了，实际单独重跑都是 15~30 秒 PASS。
 
 ### 历史轮次记录（2026-09-16，142 个 `.py`）
 
