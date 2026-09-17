@@ -92,6 +92,7 @@ $env:PYTHONUTF8 = "1"
 | `03_deepagents/16_Rubric评分循环_官方补充.py` | RubricMiddleware 自评迭代、评分器带工具取证、迭代上限保护 | ⚠️ 需真实模型 |
 | `03_deepagents/17_RAG_检索卸载委派_官方补充.py` | 三种 RAG 架构 + 检索-卸载-委派（全文落盘、子代理读） | ⚠️ 需真实模型 + SiliconFlow |
 | `03_deepagents/18_解释器与PTC_官方补充.py` | eval 沙箱（QuickJS）、沙箱边界、PTC、动态子代理扇出 | ⚠️ 需真实模型 + `uv add "deepagents[quickjs]"` |
+| `03_deepagents/19_异步子代理_官方补充.py` | 自助起 Agent Protocol 服务（langgraph dev）、异步任务 start/check/list | ⚠️ 需真实模型 + `uv add "langgraph-cli[inmem]"` |
 
 这些文件**不是课案内容**，所以不带 `_jxsd` 后缀；共同特点：全部可离线复现
 （用继承 `ChatOpenAI` 的剧本模型替代真模型），注释里标了官方文档路径与本地实测结论。

@@ -34,6 +34,7 @@ dependencies = [
     "langgraph-checkpoint>=4.2.0",
     "langgraph-checkpoint-postgres>=3.1.2",
     "langgraph-checkpoint-sqlite>=3.1.1",
+    "langgraph-cli[inmem]>=0.4.31",
     "lightgbm>=4.7.0",
     "loguru>=0.7.3",
     "matplotlib==3.11.1",

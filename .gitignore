@@ -135,3 +135,6 @@ output.txt
 
 # .env 的备份文件同样含密钥，绝不允许进仓库
 .env.bak*
+
+# DSH harness 的工作区临时目录
+/.dsh_tmp/
