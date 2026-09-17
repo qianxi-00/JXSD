@@ -126,7 +126,12 @@ def demo_1_todo_opt_in() -> None:
         show_tool_messages(result)
         todos = result.get("todos")
         print(f"    state 里的 todos：{todos!r}")
-        print("    ↑ 默认栈里没有 TodoListMiddleware，write_todos 不是可用工具")
+        todos = result.get("todos")
+        if not todos:
+            print("    ↑ 默认栈里没有 TodoListMiddleware，write_todos 不是可用工具")
+        else:
+            print(f"    ↑ 本次默认栈**居然带了** TodoList（todos={todos}）—— "
+                  "说明这个版本的默认栈变了，结论要以运行结果为准")
     except Exception as exc:  # noqa: BLE001
         print(f"    调用 write_todos 直接失败：{type(exc).__name__}: {str(exc)[:80]}")
         print("    ↑ 同样证明：默认代理没有这个工具")
@@ -253,6 +258,8 @@ def demo_3_permission_interrupt() -> None:
     rejected = agent.invoke(Command(resume={"decisions": [{"type": "reject"}]}), config)
     print("\nB. 拒绝路径")
     show_tool_messages(rejected, limit=110)
+    rejected_msgs = [str(m.content) for m in rejected.get("messages", []) if getattr(m, "type", "") == "tool"]
+    print(f"    （本次工具消息：{rejected_msgs[-1][:70] if rejected_msgs else '（无）'}）")
     print("    ↑ 拒绝后文件没有被写入 —— 权限 + 人工审核的组合，比单纯的 deny 更适合\n"
           "      「本来该允许、但要有人签字」的场景")
 

@@ -179,7 +179,13 @@ def stop_agent_protocol_server(process) -> None:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     else:
-        process.terminate()
+        # POSIX：langgraph dev 会 fork uvicorn，只 terminate 父进程会留下子进程占端口
+        try:
+            import os as _os
+            import signal as _signal
+            _os.killpg(_os.getpgid(process.pid), _signal.SIGTERM)
+        except Exception:  # noqa: BLE001
+            process.terminate()
     try:
         process.wait(timeout=15)
     except subprocess.TimeoutExpired:

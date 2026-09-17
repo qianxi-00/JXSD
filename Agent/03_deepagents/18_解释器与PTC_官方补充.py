@@ -203,7 +203,8 @@ def demo_3_ptc() -> None:
         config={"recursion_limit": 30},
     )
     print(f"  工具调用序列（模型层面的）：{tool_sequence(result)}")
-    print(f"  lookup_price 实际被调用次数：{PTC_CALLS['count']}（发生在解释器代码里）")
+    print(f"  lookup_price 被调用的总次数：{PTC_CALLS['count']}"
+          "（含模型直连工具的次数；若模型按提示走 PTC，这些调用都发生在解释器里）")
     for output in eval_outputs(result):
         print(f"  eval 返回：{output[:200]}")
     print(f"  最终回答（{time.time()-started:.1f}s）：{str(result['messages'][-1].content)[:200]}")
@@ -271,7 +272,7 @@ def demo_4_dynamic_subagents() -> None:
         print("  ✔ 本次确实在沙箱里跑起来了（工具序列里有 eval）")
     else:
         print(
-            "  ⚠️ 本次模型只把代码**写出来**、没调用 eval 执行（工具序列为空）——\n"
+            "  ⚠️ 本次模型只把代码**写出来**、没调用 eval 执行（工具序列里没有 eval）——\n"
             "     这是模型行为：它更习惯「给答案」而不是「动手跑」。\n"
             "     实践上要么在提示词里把「必须执行」写得更硬，要么用 Rubric 校验（见 16 号文件）。"
         )
@@ -287,10 +288,13 @@ if __name__ == "__main__":
     if CodeInterpreterMiddleware is None:
         print(MISSING_HINT)
         raise SystemExit(0)
-    demo_1_eval_basics()
-    demo_2_sandbox_boundary()
-    demo_3_ptc()
-    demo_4_dynamic_subagents()
+    # 逐 Demo 兜底：本文件依赖真实模型与解释器，网关抖动时打印提示并继续（与 17 的做法一致）
+    for _demo in (demo_1_eval_basics, demo_2_sandbox_boundary, demo_3_ptc, demo_4_dynamic_subagents):
+        try:
+            _demo()
+        except Exception as _exc:  # noqa: BLE001
+            print(f"\n  ⚠️ {_demo.__name__} 本次未跑完（网关抖动/超时，非代码问题）：{type(_exc).__name__}")
+            print("  重跑一次通常即可。")
     print("\n全部 Demo 执行完毕。")
 
 
