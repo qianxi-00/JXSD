@@ -201,6 +201,9 @@ class LLMSettings(BaseSettings):
     temperature: float = 0.2
     max_tokens: int = 4096
     enable_thinking: bool = False
+    # 单次请求超时(秒)。必须显式设置:SDK 默认 600 秒 × 重试 3 次 ≈ 30 分钟,
+    # 网关断连时表现为整个应用卡死(实测卡过 46 分钟),对 Web 应用是不可接受的失败模式。
+    timeout: float = 180.0
 
 
 class EvalLLMSettings(BaseSettings):
@@ -264,6 +267,12 @@ class EmbeddingSettings(BaseSettings):
     model: str = ""
     embedding_size: int = 1024
     batch_size: int = 32
+    # 单次请求超时(秒)。不设会用 SDK 默认值(600 秒 × 重试 3 次)。
+    timeout: float = 60.0
+    # 是否把 embedding_size 作为 dimensions 参数下发。
+    # 默认 False:不少模型（如 BAAI/bge-m3）不接受该参数，传了直接 400；
+    # 需要 MRL 截断的模型（如 Qwen/Qwen3-Embedding-4B，原生 2560 维）才开成 True。
+    send_dimensions: bool = False
 
 
 class RerankSettings(BaseSettings):
