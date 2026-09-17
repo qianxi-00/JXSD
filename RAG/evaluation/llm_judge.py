@@ -35,7 +35,7 @@ for _p in (str(_BASE), str(_BASE / "RAG")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from config import settings  # noqa: E402
+from config import eval_llm_target  # noqa: E402
 from core.logger import logger  # noqa: E402
 from core.prompts import EVALUATION_PROMPT  # noqa: E402
 
@@ -88,16 +88,24 @@ def score_answer(question: str, answer: str, ground_truth: str, context: str = "
       所以本模块的分数只能当趋势看,不能当精确量;
     - `context or "(未提供检索上下文)"`:留给"没有检索上下文也能评"的调用方式,
       用占位串而不是空串,让模型知道这是**没给上下文**而不是**上下文是空的**;
-    - 模型用 `settings.llm.model`(与生成用的是同一个模型),这与课案
-      「评估模型与生成模型分开配置」有出入(见报告)。
+    - 模型走 `eval_llm_target()`（配置 `EVAL_LLM_*`）——课案要求"评估模型与生成模型分开
+      配置"，分开是为了避免**自我偏好**（同一个模型给自己的回答打分偏高）。
+      未配置时回退生成模型并打一条 WARNING，不让这件事静默。
     """
     from openai import OpenAI
 
+    target = eval_llm_target()
+    if target["from_fallback"]:
+        logger.warning(
+            "[评判] 未配置 EVAL_LLM_MODEL，本次评判用的就是生成模型 %s —— 存在自我偏好风险"
+            "（课案要求评估模型与生成模型分开配置）",
+            target["model"],
+        )
     # 显式超时：SDK 默认 600 秒 × 重试 3 次，上游挂住时整轮评估会跟着卡死
     client = OpenAI(
-        api_key=settings.llm.api_key,
-        base_url=settings.llm.base_url,
-        timeout=settings.llm.timeout,
+        api_key=target["api_key"],
+        base_url=target["base_url"],
+        timeout=target["timeout"],
     )
     prompt = EVALUATION_PROMPT.format(
         context=context or "(未提供检索上下文)",
@@ -106,9 +114,9 @@ def score_answer(question: str, answer: str, ground_truth: str, context: str = "
         ground_truth=ground_truth,
     )
     resp = client.chat.completions.create(
-        model=settings.llm.model,
+        model=target["model"],
         messages=[{"role": "user", "content": prompt}],
-        temperature=0,
+        temperature=target["temperature"],
     )
     text = resp.choices[0].message.content or ""
     score = parse_result_score(text)

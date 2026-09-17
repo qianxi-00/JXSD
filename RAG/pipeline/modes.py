@@ -170,6 +170,65 @@ def _basic_pipeline():
     return _BASIC_PIPELINE
 
 
+_ANSWER_CACHE = None
+
+
+def _answer_cache():
+    """进程内复用的 AnswerCache（③④ 线路读写缓存用）。
+
+    为什么不每次 `AnswerCache()`：它的 `_ensure_preset_loaded()` 会在首次 lookup 时
+    把预设问法向量从 Redis 拉回来并**做一次 numpy 归一化**；每次请求新建实例 =
+    每次问一句都重做一遍（矩阵只有 5 行，但这是纯浪费，且让"缓存命中"的耗时看起来忽高忽低）。
+    与 `_basic_pipeline` 同样的取舍：进程级单例，单进程串行没问题，多 worker 各自一份也正确
+    （Redis 是共享的，缓存语义不受影响）。
+    注意它只被 ③④ 用；① 的缓存由 `RAGPipeline` 自己持有，② 由 `answer_financial_question` 管。
+    """
+    global _ANSWER_CACHE
+    if _ANSWER_CACHE is None:
+        from core.cache import AnswerCache
+
+        _ANSWER_CACHE = AnswerCache()
+    return _ANSWER_CACHE
+
+
+def _cached_route(question: str, history: list[dict], route: str, produce):
+    """给"不依赖多轮、或本轮没有历史"的线路套一层**线路作用域**缓存。
+
+    课案流程图把"QA 缓存命中 → 直接返回"画在**所有**线路的最前面；本轮之前只有
+    ①（`RAGPipeline` 自带）与 ②（`answer_financial_question` 内部）接了缓存，
+    ③④ 每次都真跑 —— ④ 的聚合问题要跑三路取证（约 24s），答案却往往与上一句一字不差。
+
+    三条纪律：
+    - **history 非空就既不查也不写**：缓存键只含问题文本，"那乐艳的呢？"在不同上下文里
+      含义不同。只跳过"读"是**不够的** —— 那样会把"依赖历史的答案"存成"只看问题文本的答案"，
+      之后有人单问同一句就直接命中它（等于把上一轮的语境偷偷复用）。与 ② 的
+      `use_cache=not history`（读写一起关）同一口径。
+    - **作用域按线路分**：③=graph、④=fusion（`core/routes.py::cache_scope`），
+      四线路互不串答案。
+    - **命中时不返回 `extra` 明细**：`extra`（图谱社区/关系/SQL 结果）是本次链路的产物，
+      上次那次的明细与本次问题只有"文本相同"这一层关系；给前端一个 `from_cache=True`
+      比把上次的社区摘要冒充成本次证据要诚实（① 命中缓存时同样不给链路明细）。
+    """
+    cache = _answer_cache()
+    use_cache = not history
+    if use_cache:
+        cached = cache.lookup(question, route=route)
+        if cached and cached.get("answer"):
+            logger.info(f"[线路] mode={route} 命中缓存({cached.get('cache_hit')})，跳过检索与生成")
+            return {
+                "answer": cached["answer"],
+                "sources": cached.get("sources") or [],
+                "cache_hit": cached.get("cache_hit"),
+                "extra": {"from_cache": True},
+            }
+
+    payload = produce()
+    if use_cache and payload.get("answer"):
+        # route 必须与上面的 lookup 一致，否则"存了但读不到"（永不命中且不报错）
+        cache.store(question, payload["answer"], payload.get("sources") or [], route=route)
+    return {**payload, "cache_hit": None}
+
+
 def _run_agentic(question: str, history: list[dict]) -> dict:
     """优化篇 Agentic RAG：Deep Agents 主控 + 工具 + 子代理核验。支持多轮。"""
     from agentic.finance_agent import answer_financial_question
@@ -199,44 +258,58 @@ def _run_agentic(question: str, history: list[dict]) -> dict:
 
 
 def _run_graph(question: str, history: list[dict]) -> dict:
-    """GraphRAG 线路：社区摘要 + 实体多跳。**不吃 history**（见 ROUTE_SUPPORTS_HISTORY）。"""
-    from graph_rag.retriever import answer_query, retrieve_hierarchical
+    """GraphRAG 线路：社区摘要 + 实体多跳。**不吃 history**（见 ROUTE_SUPPORTS_HISTORY）。
 
-    subgraph = retrieve_hierarchical(question, top_k=5, max_hops=2, max_nodes=10) or {}
-    answer = answer_query(question, subgraph)
-    return {
-        "answer": answer,
-        "sources": [],
-        "cache_hit": None,
-        "extra": {
-            "communities": subgraph.get("communities") or [],
-            "nodes": subgraph.get("nodes") or [],
-            "relationships": subgraph.get("relationships") or [],
-        },
-    }
+    接缓存（线路作用域 `graph`）：图谱问答的答案只取决于问题与图谱状态，重复问一句
+    没有理由再跑一遍"社区召回 + 多跳遍历 + LLM 生成"。
+    """
+
+    def produce() -> dict:
+        from graph_rag.retriever import answer_query, retrieve_hierarchical
+
+        subgraph = retrieve_hierarchical(question, top_k=5, max_hops=2, max_nodes=10) or {}
+        return {
+            "answer": answer_query(question, subgraph),
+            "sources": [],
+            "extra": {
+                "communities": subgraph.get("communities") or [],
+                "nodes": subgraph.get("nodes") or [],
+                "relationships": subgraph.get("relationships") or [],
+            },
+        }
+
+    return _cached_route(question, history, ROUTE_GRAPH, produce)
 
 
 def _run_fusion(question: str, history: list[dict]) -> dict:
-    """融合线路（本项目的第四种编排）：三路取证 + 分层门控 + 数字核验。支持多轮。"""
-    from pipeline.fusion import answer_fusion
+    """融合线路（本项目的第四种编排）：三路取证 + 分层门控 + 数字核验。支持多轮。
 
-    result = answer_fusion(question, history=history)
-    payload = result.as_dict()
-    return {
-        "answer": payload["answer"],
-        "sources": payload["tickets"],
-        "cache_hit": None,
-        "extra": {
-            "communities": payload["communities"],
-            "relationships": payload["relationships"],
-            "sql": payload["sql"],
-            "unmatched_numbers": payload["unmatched_numbers"],
-            "queries": payload["queries"],
-            "filter_expr": payload["filter_expr"],
-            "rewrite": payload["rewrite"],
-            "system_error": payload["system_error"],
-        },
-    }
+    接缓存（线路作用域 `fusion`）：这是四条线路里最贵的一条（三路取证 + 可能一次
+    Text-to-SQL，聚合问题实测约 24s），而"同一句话问第二遍"完全可复用上次答案。
+    ⚠️ 多轮时 `_cached_route` 会自动跳过缓存（历史变了，答案就未必一样）。
+    """
+
+    def produce() -> dict:
+        from pipeline.fusion import answer_fusion
+
+        result = answer_fusion(question, history=history)
+        payload = result.as_dict()
+        return {
+            "answer": payload["answer"],
+            "sources": payload["tickets"],
+            "extra": {
+                "communities": payload["communities"],
+                "relationships": payload["relationships"],
+                "sql": payload["sql"],
+                "unmatched_numbers": payload["unmatched_numbers"],
+                "queries": payload["queries"],
+                "filter_expr": payload["filter_expr"],
+                "rewrite": payload["rewrite"],
+                "system_error": payload["system_error"],
+            },
+        }
+
+    return _cached_route(question, history, ROUTE_FUSION, produce)
 
 
 MODES: dict[str, ModeSpec] = {

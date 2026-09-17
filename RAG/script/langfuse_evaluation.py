@@ -55,7 +55,7 @@ import warnings
 from collections import defaultdict
 from typing import Any
 
-from config import settings
+from config import eval_llm_target, settings
 from evaluation.retrieval_metrics import recall_at_k
 
 logger = logging.getLogger(__name__)
@@ -171,10 +171,9 @@ def _ragas_bundle() -> dict:
         _ragas_metrics = {}
         return _ragas_metrics
 
-    # ⚠ 这个评判 LLM 用的就是生成链路的 `settings.llm.model`（AsyncOpenAI 也复用生成侧
-    # 的 api_key/base_url）—— 与模块头"评估模型与线上生成模型分开配置"的自述不符，
-    # 属**未兑现的欠账**（自我偏好风险，见 README 的欠账表 T4）。要分开配置只需在这两处
-    # 换成 `EVAL_LLM_*` 一类独立设置。
+    # 评判模型走 `eval_llm_target()`（配置 `EVAL_LLM_*`）—— 课案要求"评估模型与生成模型
+    # **分开配置**"，理由是避免自我偏好：同一个模型给自己的回答打分偏高。
+    # 未配置 `EVAL_LLM_MODEL` 时回退生成模型（行为同以前），但会在下面打一条 WARNING。
     #
     # ⚠ 评判模型必须**显式关思考**，否则四指标会大面积失败（真机实测的坑）：
     #
@@ -191,11 +190,27 @@ def _ragas_bundle() -> dict:
     # `The output is incomplete due to a max_tokens length limit`
     #（真实评判提示词比探针里的更长，思考轻松超 4096）。关掉思考后 completion 只要 ~264，
     # 且输出是完整 JSON —— 这也是四指标的可靠性前提。
-    # `enable_thinking` 只对 Qwen 系网关有效，本端点认的是 `thinking`（与路由同一处实测）。
+    # `enable_thinking` 只对 Qwen 系网关有效，本端点认的是 `thinking`（与路由同一处实测）；
+    # 换成非思考模型（如 `deepseek-chat`）时这个字段是无害的多余参数。
+    judge = eval_llm_target()
+    if judge["from_fallback"]:
+        logger.warning(
+            "未配置 EVAL_LLM_MODEL：本次评判用的就是生成模型 %s —— 存在自我偏好风险，"
+            "课案要求评估模型与生成模型分开配置（.env 里设 EVAL_LLM_MODEL 即可）",
+            judge["model"],
+        )
+    else:
+        logger.info("评判模型: %s @ %s（与生成模型分开配置）", judge["model"], judge["base_url"])
+    # 同时 print 一行：本脚本的 logger 级别在生产运行时可能只放 WARNING/ERROR，
+    # 而"这次到底用哪个模型评判的"是评估结论可信度的前提，必须让人在终端看得到。
+    print(
+        f"评判模型: {judge['model']} @ {judge['base_url']}"
+        + ("（⚠️ 未配置 EVAL_LLM_MODEL，回退生成模型 ⇒ 有自我偏好风险）" if judge["from_fallback"] else "（与生成模型分开配置）")
+    )
     eval_llm = llm_factory(
-        settings.llm.model,
-        client=AsyncOpenAI(api_key=settings.llm.api_key, base_url=settings.llm.base_url),
-        max_tokens=settings.llm.max_tokens,
+        judge["model"],
+        client=AsyncOpenAI(api_key=judge["api_key"], base_url=judge["base_url"]),
+        max_tokens=judge["max_tokens"],
         extra_body={"thinking": {"type": "disabled"}},
     )
     # 评估用的 embedding 与生成链路**同源**(同一个 bge-m3 空间)。
