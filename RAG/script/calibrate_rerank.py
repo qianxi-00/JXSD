@@ -1,12 +1,3 @@
-# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
-import sys as _sys
-from pathlib import Path as _Path
-
-_BASE = _Path(__file__).resolve()
-while _BASE.parent != _BASE and _BASE.name != "Python_Base":
-    _BASE = _BASE.parent
-_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
-_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 """重排序阈值标定:用带标注的评估集标定 `RERANK_RELEVANCE_P`。
 
 和 `search_threshold.py`(FAQ 相似度阈值)是同一套方法,只是分数来源不同:
@@ -36,6 +27,16 @@ _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 ⚠ 本脚本是**只读标定**:只算分数、写 json、打印建议,**不会改 .env**。
    改配置由人在确认后执行(本项目约定 agent 不动 .env)。
 """
+
+# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
+import sys as _sys
+from pathlib import Path as _Path
+
+_BASE = _Path(__file__).resolve()
+while _BASE.parent != _BASE and _BASE.name != "Python_Base":
+    _BASE = _BASE.parent
+_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
+_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 
 import argparse
 import json

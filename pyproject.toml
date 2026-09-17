@@ -30,6 +30,7 @@ dependencies = [
     "requests==2.34.2",
     "pydantic==2.13.4",
     "pydantic-settings==2.15.0",
+    "tqdm>=4.66",
     # ---------- Crawler（Scrapling 抓取 + 解析） ----------
     "scrapling[fetchers]==0.4.14",
     "beautifulsoup4==4.15.0",

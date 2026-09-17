@@ -1,3 +1,5 @@
+"""应用主入口:FastAPI API 服务 + Chainlit 前端界面(端口可配置,默认 8099)"""
+
 # --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
 # 启动方式通常是 `python RAG\app\main.py` 或 `uvicorn` 按文件路径加载本模块，
 # 两种情况下 sys.path[0] 都不含仓库根（Python_Base，放着 config.py），
@@ -17,10 +19,8 @@ _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 # 两次 insert(0) 之后顺序是 [RAG 根, Python_Base 根, ...]，即项目自己的
 # core / llm / pipeline 优先于同名的第三方包被解析到。
 # 别名用 _sys / _Path，避免给模块命名空间留下易与业务变量重名的 sys / Path。
-# 注意：下面这条字符串**不是**模块 docstring —— 它前面已有 import 语句，而 `__doc__`
-# 只在「模块第一条语句就是字符串字面量」时才会赋值，所以 app.main.__doc__ 实际是 None
-# （help()/pydoc 看不到这段说明）。保留原位置不动，仅补此说明。
-"""应用主入口:FastAPI API 服务 + Chainlit 前端界面(端口可配置,默认 8099)"""
+# （这份 docstring 原先写在这段引导**之后**，因而 `app.main.__doc__` 是 None；
+# 已挪到文件首个语句。挪位置不影响引导顺序：docstring 是惰性字符串，不执行任何东西。）
 
 # 一个进程同时提供两种前端形态，这是本文件的核心设计：
 #   - /api/chat、/api/chat/stream 给程序调用（JSON / SSE）；

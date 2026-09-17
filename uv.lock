@@ -4702,6 +4702,7 @@ dependencies = [
     { name = "redis" },
     { name = "requests" },
     { name = "scrapling", extra = ["fetchers"] },
+    { name = "tqdm" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -4739,6 +4740,7 @@ requires-dist = [
     { name = "redis", specifier = "==7.4.0" },
     { name = "requests", specifier = "==2.34.2" },
     { name = "scrapling", extras = ["fetchers"], specifier = "==0.4.14" },
+    { name = "tqdm", specifier = ">=4.66" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.3" },
 ]
 

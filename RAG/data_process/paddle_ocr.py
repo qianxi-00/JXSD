@@ -1,3 +1,5 @@
+"""PaddleOCR 图片识别:调用 AI Studio 的 PaddleOCR API,将 data 目录下的图片批量转换为 Markdown"""
+
 # =============================================================================
 # OCR 第一步：图片 → Markdown（PaddleOCR 云 API，基础篇「OCR 识别」）
 #
@@ -28,7 +30,6 @@ while _BASE.parent != _BASE and _BASE.name != "Python_Base":
     _BASE = _BASE.parent
 _sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
 _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
-"""PaddleOCR 图片识别:调用 AI Studio 的 PaddleOCR API,将 data 目录下的图片批量转换为 Markdown"""
 
 import argparse
 import json

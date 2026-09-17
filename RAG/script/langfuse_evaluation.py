@@ -1,12 +1,3 @@
-# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
-import sys as _sys
-from pathlib import Path as _Path
-
-_BASE = _Path(__file__).resolve()
-while _BASE.parent != _BASE and _BASE.name != "Python_Base":
-    _BASE = _BASE.parent
-_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
-_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 """Langfuse 实验评估脚本(优化篇课案「RAG 评估 · 实验评估脚本」)。
 
 对数据集每条样本跑一次 Agentic RAG 链路并自动创建 trace;
@@ -43,6 +34,16 @@ ragas 未安装或单指标失败时跳过该指标,不拖垮整个 run。
 改配置就换名字重跑,然后在 UI 里按 run 对比 —— 这是"单变量变更 + 可对比证据"
 在评估工具上的落地方式(与阈值标定"改一个变量、复验一次"是同一套纪律)。
 """
+
+# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
+import sys as _sys
+from pathlib import Path as _Path
+
+_BASE = _Path(__file__).resolve()
+while _BASE.parent != _BASE and _BASE.name != "Python_Base":
+    _BASE = _BASE.parent
+_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
+_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 
 import argparse
 import logging

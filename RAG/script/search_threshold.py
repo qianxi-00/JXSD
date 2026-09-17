@@ -1,12 +1,3 @@
-# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
-import sys as _sys
-from pathlib import Path as _Path
-
-_BASE = _Path(__file__).resolve()
-while _BASE.parent != _BASE and _BASE.name != "Python_Base":
-    _BASE = _BASE.parent
-_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
-_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 """阈值标定第二步:算相似度分数 → 按 F1 搜最优阈值(基础篇「阈值搜索」)。
 
 流程与课案一致:
@@ -34,6 +25,16 @@ _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 ⚠ 注意 `--stop` 默认 **0.99** 而不是 1.0:配合 `np.arange` 的半开区间语义,
 实际扫到 0.98。想覆盖到 0.99 需要传 1.0(见 evaluation/threshold.py 的说明)。
 """
+
+# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
+import sys as _sys
+from pathlib import Path as _Path
+
+_BASE = _Path(__file__).resolve()
+while _BASE.parent != _BASE and _BASE.name != "Python_Base":
+    _BASE = _BASE.parent
+_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
+_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 
 import argparse
 import json

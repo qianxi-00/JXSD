@@ -1,3 +1,5 @@
+"""Milvus 初始化:创建业务数据库与业务用户(需使用 root 账号连接),可重复执行"""
+
 # --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
 # 为什么必须手写这段（三个理由，缺一个都会 ImportError）：
 #   1) RAG 不是一个已安装的包，`from config import settings`（仓库根 Python_Base\config.py）
@@ -22,11 +24,8 @@ _sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 # 保证 `core` / `llm` / `pipeline` 这些通用词优先解析到本项目的目录。
 # 用 _sys / _Path 这种带下划线的别名，是为了不给模块命名空间留下 sys / Path
 # 这两个极易与业务变量重名的名字。
-# 注意：下面这条字符串**不是**模块 docstring —— `__doc__` 只在「模块的第一条语句
-# 就是字符串字面量」时才被赋值，而这里前面已经有 import 了，所以
-# `core.milvus_init.__doc__` 实际是 None（help()/pydoc 看不到这段说明）。
-# 保留原位置不动，只在此补一句说明：要让它真正生效，需把字符串挪到 import 之前。
-"""Milvus 初始化:创建业务数据库与业务用户(需使用 root 账号连接),可重复执行"""
+# （这份 docstring 原先写在这段引导**之后**，因而 `core.milvus_init.__doc__` 是 None；
+# 已挪到文件首个语句 —— 原先那句"要让它真正生效，需把字符串挪到 import 之前"已经做了。）
 
 # 本脚本只做 Milvus 的「库 / 账号」级初始化，三件事，且都可重复执行（幂等）：
 #   1) 建业务数据库（.env 的 MILVUS_DB_NAME，本机是 finance_rag）；

@@ -1,26 +1,8 @@
-# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
-# 注意 **insert(0, ...) 的顺序**:先插 Python_Base 根、再插 RAG 根 ⇒ 最终
-# sys.path 里 RAG 根排在前面。两个目录都要在,因为 config 在仓库根、core/llm/pipeline
-# 在 RAG 根下,缺任何一个都会 import 失败。
-# ⚠ 用 insert 而不是 append 是刻意的:本机仓库根/PATH 里可能有同名模块
-# (比如另一个项目的 config.py),放前面才能确保 import 到的是本项目这份。
-import sys as _sys
-from pathlib import Path as _Path
-
-# 从脚本位置向上找到仓库根(目录名 `Python_Base`)。这是**硬编码的停止条件**,
-# 仓库目录改名后循环会一直退到盘符根,得到一个错误的 _BASE(见报告)。
-_BASE = _Path(__file__).resolve()
-while _BASE.parent != _BASE and _BASE.name != "Python_Base":
-    _BASE = _BASE.parent
-_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
-_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 """按基础篇课案「系统评估」跑完整链路,输出分阶段指标报告。
 
-⚠ 这份 docstring 的位置在 import 语句**之后**,不是文件首个语句 ⇒ 它**不是**
-模块 docstring,而是一个被丢弃的字符串表达式(所以 `python -c "import ...; print(__doc__)"`
-打印出来的是 None)。放在这里是为了让路径引导代码占据文件最前几行(在 import
-config 之前就必须生效)。功能上无害 —— 本文档是给读代码的人看的,`help()` 拿不到,
-本次只加注释不动位置(见报告)。
+（原先这份 docstring 写在 `import` 语句**之后**，因而不是模块 docstring、`__doc__` 为 None。
+已挪到文件首个语句 —— 挪位置不影响路径引导：docstring 是惰性字符串，不执行任何东西，
+真正的约束只是"引导代码要排在 `import config` 之前"，它依旧满足。）
 
 对应课案的三步:
 1. 第二步「记录每个阶段的真实输出」:每个问题跑完整链路,保存路由、筛选条件、
@@ -44,6 +26,23 @@ config 之前就必须生效)。功能上无害 —— 本文档是给读代码�
 两份都落盘是刻意的 —— 报告是结论,records 是证据;指标算法改动后可以用同一批
 records 离线复算,不必重跑链路(链路每次跑都要花钱调 API)。
 """
+
+# --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
+# 注意 **insert(0, ...) 的顺序**:先插 Python_Base 根、再插 RAG 根 ⇒ 最终
+# sys.path 里 RAG 根排在前面。两个目录都要在,因为 config 在仓库根、core/llm/pipeline
+# 在 RAG 根下,缺任何一个都会 import 失败。
+# ⚠ 用 insert 而不是 append 是刻意的:本机仓库根/PATH 里可能有同名模块
+# (比如另一个项目的 config.py),放前面才能确保 import 到的是本项目这份。
+import sys as _sys
+from pathlib import Path as _Path
+
+# 从脚本位置向上找到仓库根(目录名 `Python_Base`)。这是**硬编码的停止条件**,
+# 仓库目录改名后循环会一直退到盘符根,得到一个错误的 _BASE(见报告)。
+_BASE = _Path(__file__).resolve()
+while _BASE.parent != _BASE and _BASE.name != "Python_Base":
+    _BASE = _BASE.parent
+_sys.path.insert(0, str(_BASE))          # Python_Base 根（config.py）
+_sys.path.insert(0, str(_BASE / "RAG"))  # RAG 根（core/llm/pipeline 等包）
 
 import argparse
 import asyncio
