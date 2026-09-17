@@ -1,0 +1,137 @@
+{
+  "ocr_engine": "paddleocr-cloud",
+  "results": [
+    {
+      "image_path": "data/flight/ticket-001.png",
+      "source_file": "data/flight/ticket-001.png",
+      "source_dir": "flight",
+      "image_name": "ticket-001.png",
+      "ticket_type": "flight",
+      "ticket_no": "ticket-001",
+      "ocr_text": "<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_0_2_1141_284.jpg\" alt=\"Image\" width=\"100%\" /></div>\n\n\n姓名Name\n\nZHAOFEI\n\n赵飞\n\n自From 阿克苏机场 AKESUJICHANG\n\n航班号Flight/日期Date/舱位Class CA1276 Jan01 G\n\n至To 首都机场\n\nSHOUDUJICHANG\n\n登机时间Boarding Time\n\n17:00\n\n座位区域\n\nATING\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_581_389_797_453.jpg\" alt=\"Image\" width=\"18%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_252_607_322_678.jpg\" alt=\"Image\" width=\"6%\" /></div>\n\n\nETKT8762369777769/1\n\n座位号Seat No. 31B\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_331_595_629_681.jpg\" alt=\"Image\" width=\"26%\" /></div>\n\n\n票价含税Fare\n\nGATES CLOSED 10 MINUTES BEFORE DEPARTURE TIME 登机口于起飞前10分钟关闭\n\n姓名Name\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_1015_287_1058_334.jpg\" alt=\"Image\" width=\"3%\" /></div>\n\n\nZHAOFEI\n\n赵飞\n\n自Fro AKESUJICHANG\n\n至To SHOUDUJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nCA1276 Jan01 G\n\n座位号Seat No.\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_943_523_966_545.jpg\" alt=\"Image\" width=\"2%\" /></div>\n\n\n31B\n\nETKT 8762369777769/1049\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_882_665_910_698.jpg\" alt=\"Image\" width=\"2%\" /></div>\n\n\nAIR CHINA 中国邮政航空公司",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    },
+    {
+      "image_path": "data/flight/ticket-002.png",
+      "source_file": "data/flight/ticket-002.png",
+      "source_dir": "flight",
+      "image_name": "ticket-002.png",
+      "ticket_type": "flight",
+      "ticket_no": "ticket-002",
+      "ocr_text": "<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_0_1_1141_284.jpg\" alt=\"Image\" width=\"100%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_142_306_294_358.jpg\" alt=\"Image\" width=\"13%\" /></div>\n\n\n姓名Name\n\nGAO\n\n高婷\n\n自From 阿克苏机场 AKESUJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nCA4576 Jan01 G\n\n登机口Gate\n\nE8\n\n至 $ ^{10} $江北机场\n\nJIANGBEIJICHANG\n\n登机时间Boarding Time\n\n20:30\n\n座位区域\n\nETKT8762369777769/1\n\nATING\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_252_607_322_678.jpg\" alt=\"Image\" width=\"6%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_580_389_797_453.jpg\" alt=\"Image\" width=\"19%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_331_595_629_681.jpg\" alt=\"Image\" width=\"26%\" /></div>\n\n\n座位号Seat No.\n\n24F\n\n票价含税Fare\n\nGATES CLOSED 10 MINUTES BEFORE DEPARTURE TIME 登机口于起飞前10分钟关闭\n\n姓名Name\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_1015_287_1058_333.jpg\" alt=\"Image\" width=\"3%\" /></div>\n\n\n自Fro AKESUJICHANG\n\n至To JIANGBEIJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nCA4576 Jan01 G\n\n座位号Seat No.\n\n\n\n24F\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_944_523_965_545.jpg\" alt=\"Image\" width=\"1%\" /></div>\n\n\nETKT 8762369777769/1049\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_882_665_910_698.jpg\" alt=\"Image\" width=\"2%\" /></div>\n\n\nAIR CHINA 中国邮政航空公司",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    },
+    {
+      "image_path": "data/flight/ticket-003.png",
+      "source_file": "data/flight/ticket-003.png",
+      "source_dir": "flight",
+      "image_name": "ticket-003.png",
+      "ticket_type": "flight",
+      "ticket_no": "ticket-003",
+      "ocr_text": "<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_0_2_1141_283.jpg\" alt=\"Image\" width=\"100%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_143_306_294_357.jpg\" alt=\"Image\" width=\"13%\" /></div>\n\n\n姓名Name\n\nHUANGGANG\n\n黄刚\n\n自From 阿克苏机场 AKESUJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nCZ6919 Jan01 G\n\n登机口Gate\n\nD5\n\n至To 萧山机场\n\nXIAOSHANJICHANG\n\n登机时间Boarding Time\n\n20:30\n\n座位区域\n\nATING\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_252_607_322_678.jpg\" alt=\"Image\" width=\"6%\" /></div>\n\n\nETKT8762369777769/1\n\n座位号Seat No. 37D\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_581_389_797_453.jpg\" alt=\"Image\" width=\"18%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_330_595_629_681.jpg\" alt=\"Image\" width=\"26%\" /></div>\n\n\n票价含税Fare\n\nGATES CLOSED 10 MINUTES BEFORE DEPARTURE TIME 登机口于起飞前10分钟关闭\n\nHUANGGANG\n\n黄刚\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_1015_287_1058_334.jpg\" alt=\"Image\" width=\"3%\" /></div>\n\n\n自Fro AKESUJICHANG\n\n至To XIAOSHANJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nCZ6919 Jan01 G\n\n座位号Seat No.\n\n\n\n37D\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_944_523_965_545.jpg\" alt=\"Image\" width=\"1%\" /></div>\n\n\nETKT 8762369777769/1049\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_882_665_910_698.jpg\" alt=\"Image\" width=\"2%\" /></div>\n\n\nAIR CHINA 中国邮政航空公司",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    },
+    {
+      "image_path": "data/flight/ticket-004.png",
+      "source_file": "data/flight/ticket-004.png",
+      "source_dir": "flight",
+      "image_name": "ticket-004.png",
+      "ticket_type": "flight",
+      "ticket_no": "ticket-004",
+      "ocr_text": "<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_0_2_1141_283.jpg\" alt=\"Image\" width=\"100%\" /></div>\n\n\n姓名Name\n\nZHAOXIA\n\n赵霞\n\n自From 阿克苏机场\n\nAKESUJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nMF4475 Jan01 G\n\n登机口Gate B22\n\n至To 萧山机场\n\nXIAOSHANJICHANG\n\n登机时间Boarding Time\n\n15:00\n\n座位区域\n\nETKT8762369777769/1\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_252_607_322_678.jpg\" alt=\"Image\" width=\"6%\" /></div>\n\n\nATING\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_581_389_798_453.jpg\" alt=\"Image\" width=\"19%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_330_595_629_681.jpg\" alt=\"Image\" width=\"26%\" /></div>\n\n\n座位号Seat No. 30C\n\n票价含税Fare\n\nGATES CLOSED 10 MINUTES BEFORE DEPARTURE TIME 登机口于起飞前10分钟关闭\n\n姓名Name\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_1015_287_1058_333.jpg\" alt=\"Image\" width=\"3%\" /></div>\n\n\n自Fro AKESUJICHANG\n\n至To XIAOSHANJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nMF4475 Jan01 G\n\n座位号Seat No.\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_944_523_965_545.jpg\" alt=\"Image\" width=\"1%\" /></div>\n\n\n30C\n\nETKT 8762369777769/1049\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_882_665_910_698.jpg\" alt=\"Image\" width=\"2%\" /></div>\n\n\nAIR CHINA 中国邮政航空公司",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    },
+    {
+      "image_path": "data/flight/ticket-005.png",
+      "source_file": "data/flight/ticket-005.png",
+      "source_dir": "flight",
+      "image_name": "ticket-005.png",
+      "ticket_type": "flight",
+      "ticket_no": "ticket-005",
+      "ocr_text": "<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_0_2_1141_284.jpg\" alt=\"Image\" width=\"100%\" /></div>\n\n\n姓名Name\n\nZHENGYONG\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_144_302_806_566.jpg\" alt=\"Image\" width=\"58%\" /></div>\n\n\n自From 阿克苏机场 AKESUJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nCZ6859 Jan01 G\n\n至 $ ^{10} $和田机场HETIANJICHANG\n\n登机时间Boarding Time\n\n15:00\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_252_607_322_678.jpg\" alt=\"Image\" width=\"6%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_330_595_629_681.jpg\" alt=\"Image\" width=\"26%\" /></div>\n\n\n票价含税Fare\n\nGATES CLOSED 10 MINUTES BEFORE DEPARTURE TIME 登机口于起飞前10分钟关闭\n\n自Fro AKESUJICHANG\n\n至To HETIANJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nCZ6859 Jan01 G\n\n座位号Seat No.\n\n\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_1015_287_1058_334.jpg\" alt=\"Image\" width=\"3%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_944_523_965_545.jpg\" alt=\"Image\" width=\"1%\" /></div>\n\n\n50D\n\nETKT 8762369777769/1049\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_882_665_910_699.jpg\" alt=\"Image\" width=\"2%\" /></div>\n\n\nAIR CHINA 中国邮政航空公司",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    },
+    {
+      "image_path": "data/flight/ticket-006.png",
+      "source_file": "data/flight/ticket-006.png",
+      "source_dir": "flight",
+      "image_name": "ticket-006.png",
+      "ticket_type": "flight",
+      "ticket_no": "ticket-006",
+      "ocr_text": "<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_0_1_1141_283.jpg\" alt=\"Image\" width=\"100%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_142_306_294_357.jpg\" alt=\"Image\" width=\"13%\" /></div>\n\n\n姓名Name\n\nXUDAN\n\n徐丹\n\n自From 阿克苏机场 AKESUJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nMF4427 Jan01 G\n\n登机口Gate\n\nJ14\n\n至10和田机场HETIANJICHANG\n\n登机时间Boarding Time\n\n座位区域\n\n21:00\n\nETKT8762369777769/1\n\nATING\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_252_607_322_678.jpg\" alt=\"Image\" width=\"6%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_581_389_797_453.jpg\" alt=\"Image\" width=\"18%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_331_596_629_681.jpg\" alt=\"Image\" width=\"26%\" /></div>\n\n\n座位号Seat No. 33E\n\n票价含税Fare\n\nGATES CLOSED 10 MINUTES BEFORE DEPARTURE TIME 登机口于起飞前10分钟关闭\n\n姓名Name\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_1015_287_1058_333.jpg\" alt=\"Image\" width=\"3%\" /></div>\n\n\n自Fro AKESUJICHANG\n\n至To HETIANJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nMF4427 Jan01 G\n\n座位号Seat No.\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_944_523_965_545.jpg\" alt=\"Image\" width=\"1%\" /></div>\n\n\n33E\n\nETKT 8762369777769/1049\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_882_665_910_698.jpg\" alt=\"Image\" width=\"2%\" /></div>\n\n\nAIR CHINA 中国动限公司",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    },
+    {
+      "image_path": "data/flight/ticket-007.png",
+      "source_file": "data/flight/ticket-007.png",
+      "source_dir": "flight",
+      "image_name": "ticket-007.png",
+      "ticket_type": "flight",
+      "ticket_no": "ticket-007",
+      "ocr_text": "<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_0_2_1141_283.jpg\" alt=\"Image\" width=\"100%\" /></div>\n\n\n姓名Name\n\nLIANGWEN\n\n梁文\n\n自From 阿克苏机场 AKESUJICHANG\n\n航班号Flight/日期Date/舱位Class HU7354 Jan01 G\n\n登机口Gate\n\nA1\n\n\n\n至To虹桥机场\n\nHONGQIAOJICHANG\n\n登机时间Boarding Time\n\n21:00\n\n座位区域\n\nETKT8762369777769/1\n\nATING\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_252_607_322_678.jpg\" alt=\"Image\" width=\"6%\" /></div>\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_580_389_797_453.jpg\" alt=\"Image\" width=\"19%\" /></div>\n\n\n049\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_330_596_629_681.jpg\" alt=\"Image\" width=\"26%\" /></div>\n\n\n座位号Seat No.\n\n27B\n\n票价含税Fare\n\nGATES CLOSED 10 MINUTES BEFORE DEPARTURE TIME 登机口于起飞前10分钟关闭\n\n姓名Name\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_1015_287_1058_333.jpg\" alt=\"Image\" width=\"3%\" /></div>\n\n\nLIANGWEN\n\n梁文\n\n自Fro AKESUJICHANG\n\n至To HONGQIAOJICHANG\n\n航班号Flight/日期Date/舱位Class\n\nHU7354 Jan01 G\n\n座位号Seat No.\n\n\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_944_523_965_545.jpg\" alt=\"Image\" width=\"1%\" /></div>\n\n\n27B\n\nETKT 8762369777769/1049\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_883_665_910_698.jpg\" alt=\"Image\" width=\"2%\" /></div>\n\n\nAIR CHINA 中国动限公司",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    },
+    {
+      "image_path": "data/invoice/001_INV20250101.png",
+      "source_file": "data/invoice/001_INV20250101.png",
+      "source_dir": "invoice",
+      "image_name": "001_INV20250101.png",
+      "ticket_type": "invoice",
+      "ticket_no": "001_INV20250101",
+      "ocr_text": "## 发票\n\nCNY · VAT\n\n发票编号：INV20250101  \n\n开具日期：2025-11-04  \n\n到期日期：2025-11-20\n\n\n\n\n\n卖方\n\n客户\n\n腾讯科技有限公司\n\n91133548126054643\n\n武汉通信有限公司\n\n91215400344428713\n\n重庆市建设路404号\n\nCN / China\n\n深圳市解放大道202号\n\nCN / China\n\n\n<table border=1 style='margin: auto; word-wrap: break-word;'><tr><td style='text-align: center; word-wrap: break-word;'>项目名称</td><td style='text-align: center; word-wrap: break-word;'>数量</td><td style='text-align: center; word-wrap: break-word;'>单位</td><td style='text-align: center; word-wrap: break-word;'>单价</td><td style='text-align: center; word-wrap: break-word;'>税费</td><td style='text-align: center; word-wrap: break-word;'>折扣</td><td style='text-align: center; word-wrap: break-word;'>行总计</td></tr><tr><td style='text-align: center; word-wrap: break-word;'>云服务费\\n商品类别：软件服务</td><td style='text-align: center; word-wrap: break-word;'>15</td><td style='text-align: center; word-wrap: break-word;'>项</td><td style='text-align: center; word-wrap: break-word;'>2,576.24 CNY</td><td style='text-align: center; word-wrap: break-word;'>3.00%</td><td style='text-align: center; word-wrap: break-word;'></td><td style='text-align: center; word-wrap: break-word;'>38,643.60 CNY</td></tr></table>\n\n备注\n\nVIP客户；发票类型：电子普通发票\n\n条款\n\n支付方式：信用卡；支付状态：未付款；支付日期：无\n\n\n<table border=1 style='margin: auto; word-wrap: break-word;'><tr><td style='text-align: center; word-wrap: break-word;'>小计</td><td style='text-align: center; word-wrap: break-word;'>38,643.60 CNY</td></tr><tr><td style='text-align: center; word-wrap: break-word;'>总税费 (VAT)</td><td style='text-align: center; word-wrap: break-word;'>1,159.31 CNY</td></tr><tr><td style='text-align: center; word-wrap: break-word;'>总金额</td><td style='text-align: center; word-wrap: break-word;'>39,802.91 CNY</td></tr></table>",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    },
+    {
+      "image_path": "data/invoice/002_INV20250102.png",
+      "source_file": "data/invoice/002_INV20250102.png",
+      "source_dir": "invoice",
+      "image_name": "002_INV20250102.png",
+      "ticket_type": "invoice",
+      "ticket_no": "002_INV20250102",
+      "ocr_text": "## 发票\n\nCNY · VAT\n\n发票编号：INV20250102  \n\n开具日期：2025-11-23  \n\n到期日期：2026-01-11\n\n\n\n\n\n卖方\n\n阿里巴巴集团\n\n客户\n\n91275055470498697\n\n武汉通信有限公司\n\n成都市人民街303号\n\n91107318062921547\n\nCN / China\n\n武汉市发展大道505号\n\nCN / China\n\n\n<table border=1 style='margin: auto; word-wrap: break-word;'><tr><td style='text-align: center; word-wrap: break-word;'>项目名称</td><td style='text-align: center; word-wrap: break-word;'>数量</td><td style='text-align: center; word-wrap: break-word;'>单位</td><td style='text-align: center; word-wrap: break-word;'>单价</td><td style='text-align: center; word-wrap: break-word;'>税费</td><td style='text-align: center; word-wrap: break-word;'>折扣</td><td style='text-align: center; word-wrap: break-word;'>行总计</td></tr><tr><td style='text-align: center; word-wrap: break-word;'>员工培训费\\n商品类别：培训服务</td><td style='text-align: center; word-wrap: break-word;'>7</td><td style='text-align: center; word-wrap: break-word;'>项</td><td style='text-align: center; word-wrap: break-word;'>554.45 CNY</td><td style='text-align: center; word-wrap: break-word;'>3.00%</td><td style='text-align: center; word-wrap: break-word;'></td><td style='text-align: center; word-wrap: break-word;'>3,881.15 CNY</td></tr></table>\n\n备注\n\n长期合作客户；发票类型：电子专用发票\n\n条款\n\n支付方式：微信支付；支付状态：部分付款；支付日期：2025-12-12\n\n小计\n\n3,881.15 CNY\n\n总税费(VAT)\n\n116.43 CNY\n\n总金额\n\n3,997.58 CNY",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    },
+    {
+      "image_path": "data/train/001_T20170708704401.png",
+      "source_file": "data/train/001_T20170708704401.png",
+      "source_dir": "train",
+      "image_name": "001_T20170708704401.png",
+      "ticket_type": "train",
+      "ticket_no": "001_T20170708704401",
+      "ocr_text": "G127L35871\n\n检票：9B\n\n青岛站\n\nZ228\n\nQingdao\n\n无 锡站\n\nWuxi\n\n2026年08月03日02:09开\n\n¥155.6元\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_392_211_484_253.jpg\" alt=\"Image\" width=\"10%\" /></div>\n\n\n04车04F号\n\n二等座始发改签\n\n仅供报销使用\n\n4503011970****6874 富东\n\n报销凭证 遗失不补\n\n退票改签时须交回车站\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_605_326_730_452.jpg\" alt=\"Image\" width=\"14%\" /></div>\n",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    },
+    {
+      "image_path": "data/train/002_T20230526263936.png",
+      "source_file": "data/train/002_T20230526263936.png",
+      "source_dir": "train",
+      "image_name": "002_T20230526263936.png",
+      "ticket_type": "train",
+      "ticket_no": "002_T20230526263936",
+      "ocr_text": "G835L53251\n\n合\n\n检票：30C\n\n肥站\n\nHefei\n\nD68\n\n乌鲁木齐站\n\n\n\nWulumuqi\n\n2026年01月03日05:38开\n\n¥147.0元\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_392_211_484_253.jpg\" alt=\"Image\" width=\"10%\" /></div>\n\n\n08车08 $ _{A} $号\n\n一等座变更二等座\n\n仅供报销使用\n\n3711211981***2086 王霞\n\n报销凭证 遗失不补\n\n退票改签时须交回车站\n\n<div style=\"text-align: center;\"><img src=\"imgs/img_in_image_box_605_325_730_452.jpg\" alt=\"Image\" width=\"14%\" /></div>\n",
+      "ocr_status": "success",
+      "ocr_engine": "paddleocr-cloud",
+      "ocr_model": ""
+    }
+  ]
+}

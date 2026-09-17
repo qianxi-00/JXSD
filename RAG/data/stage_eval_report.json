@@ -1,0 +1,36 @@
+{
+  "summary": {
+    "count": 8,
+    "route_accuracy": 1.0,
+    "filter_field_accuracy": {
+      "fields": {
+        "person": {
+          "hit": 8,
+          "count": 8,
+          "false_positive": 0,
+          "accuracy": 1.0
+        },
+        "ticket_type": {
+          "hit": 8,
+          "count": 8,
+          "false_positive": 0,
+          "accuracy": 1.0
+        }
+      },
+      "overall": {
+        "hit": 16,
+        "count": 16,
+        "false_positive": 0,
+        "accuracy": 1.0
+      }
+    },
+    "recall_at_k": 1.0,
+    "rerank_hit_at_k": 1.0,
+    "answer_fact_accuracy": 1.0,
+    "cache_hit_count": 0,
+    "mean_elapsed_s": 2.97925,
+    "max_elapsed_s": 4.415,
+    "filter_fallback_count": 0
+  },
+  "records_file": "F:\\ProGram\\Python_Base\\RAG\\data\\stage_eval_records.jsonl"
+}
