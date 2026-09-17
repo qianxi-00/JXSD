@@ -12,7 +12,7 @@
       "date_int": 0,
       "amount_fen": 0,
       "route": 82,
-      "counterparty": 17
+      "counterparty": 82
     },
     "invoice": {
       "ticket_no": 100,
@@ -41,7 +41,7 @@
         "date_int": null,
         "amount_fen": null,
         "route": "AKESUJICHANG-SHOUDUJICHANG",
-        "counterparty": null,
+        "counterparty": "中国国际航空",
         "semantic_text": "姓名Name ZHAOFEI 赵飞 自From 阿克苏机场 登机口Gate B1 登机口 座位区域 FATING A STAR ALLIANCE MEMBER AKESUJICHANG B1 至To 首都机场 SHOUDUJICHANG 登",
         "ocr_text": "姓名Name\nZHAOFEI\n赵飞\n自From 阿克苏机场\n登机口Gate B1\n登机口\n座位区域\nFATING\nA STAR ALLIANCE MEMBER\nAKESUJICHANG\nB1\n至To 首都机场\nSHOUDUJICHANG\n登",
         "source_file": "data/flight/ticket-001.png",
@@ -55,7 +55,7 @@
         "date_int": null,
         "amount_fen": null,
         "route": "AKESUJICHANG-JIANGBEIJICHANG",
-        "counterparty": null,
+        "counterparty": "中国国际航空",
         "semantic_text": "姓名Name GAO 商婷 自From 阿克苏机场 登机口Gate E8 座位区域 FATING A STAR ALLIANCE MEMBER 阿克苏机场 AKESUJICHANG 至To江北机场 JIANGBEIJICHANG 登机时间B",
         "ocr_text": "姓名Name\nGAO\n商婷\n自From 阿克苏机场\n登机口Gate\nE8\n座位区域\nFATING\nA STAR ALLIANCE MEMBER\n阿克苏机场\nAKESUJICHANG\n至To江北机场\nJIANGBEIJICHANG\n登机时间B",
         "source_file": "data/flight/ticket-002.png",
@@ -69,7 +69,7 @@
         "date_int": null,
         "amount_fen": null,
         "route": "AKESUJICHANG-XIAOSHANJICHANG",
-        "counterparty": null,
+        "counterparty": "中国南方航空",
         "semantic_text": "姓名Name HUANGGANG 黄刚 自 From 阿克苏机场 登机口Gate AKESUJICHANG D5 至To 萧山机场 XIAOSHANJICHANG 登机时间Boarding Time 20:30 ETKT8762369777",
         "ocr_text": "姓名Name\nHUANGGANG\n黄刚\n自 From 阿克苏机场\n登机口Gate\nAKESUJICHANG\nD5\n至To 萧山机场\nXIAOSHANJICHANG\n登机时间Boarding Time\n20:30\nETKT8762369777",
         "source_file": "data/flight/ticket-003.png",
