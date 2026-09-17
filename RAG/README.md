@@ -978,10 +978,10 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | 18 条 OCR 失败记录照单入库 | 恒为 null 向量、召不回，却计入"300 条票据"的统计分母 |
 | `semantic_text` 未采用课案摘要模板 | 我们用清洗后 OCR 全文；换模板前必须先保证证据文本取 `ocr_text`（已改） |
 | 发票票号 / 航司代码抽取覆盖不足 | 只认"发票编号"（真实发票常写"发票号码"）；机票 `counterparty` 仅 17/100 有值 |
-| 导入不幂等 + 无字段白名单 | 用 `client.insert`（课案 `upsert`）⇒ **重跑一次条数翻倍** |
+| 导入不幂等 + 无字段白名单 | ✅ **本轮已修**：`tick_extract.py` 的写库调用从 `client.insert` 改成 **`client.upsert`**（字段白名单本来就有：`build_record` 产出的键与 schema 一一对应）。⚠️ 换 upsert 必须**先读回旧向量**（`_carry_over_vectors`）：upsert 是整实体覆盖，而该脚本的 `vec` 是 None，实测会把向量抹成 NULL。真机验收：重跑一次导入 `count(*)` **300 → 300**、有向量 **282 → 282**（一条没丢）—— 旧实现下同一主键 insert 两次是 **2 行**（一次性集合实测） |
 | 端点自检脚本缺失 | 课案 `test_reranker_endpoint.py` 无等价物，换网关要等主链路报错才发现 |
 | token / 成本指标缺失 | Langfuse 批次指标只有延迟与检索次数；课案要求"质量与成本一起看" |
-| **③④ 线路暂不读写缓存** | 基础①与 Agentic② 走 `AnswerCache`（已按线路作用域隔离键）；GraphRAG③ 与融合④ 目前**每次都真跑**（④ 最慢，聚合问题约 24s）。`core/cache.py` 已把这四条线路的预设明细都播好了，接线后即可生效 —— 缺的只是"在 `_run_graph`/`_run_fusion` 里按 `cache_scope()` 读写一次" |
+| **③④ 线路暂不读写缓存** | ✅ **本轮已修**：`pipeline/modes.py::_cached_route` 给 ③GraphRAG 与 ④融合都套上了**线路作用域**缓存（③=`graph`、④=`fusion`，与 ①② 的键互不相通）。三条纪律：命中时直接返回且**不返回上次的 `extra` 明细**（那批社区/关系/SQL 是上次链路的产物，只给 `from_cache=True` 标记）；**多轮（history 非空）既不查也不写**（缓存键只有问题文本，只跳"读"会把依赖历史的答案存成"只看问题文本"的答案）；空答案不写。`_answer_cache()` 进程级复用同一个 `AnswerCache`（避免每次请求重载预设矩阵） |
 | **Agentic 的"检索策略选择"不可观测** | 课案流程图有个节点是"选择查询策略（直接/HyDE/子查询/回溯）"。基础①与融合④ 的改写策略在代码里（`llm/chat.py::rewrite_query`），会作为 `rewrite` 字段进事件流与评估记录；而 **② 是主 Agent 在模型内部选**（`agentic/` 对三套改写模板 0 命中），代码里**没有任何字段记录它选了哪种策略** —— 只能从 `detail["queries"]` 反推。这属能力对齐、可观测性缺口：想知道"这题走的是 HyDE 还是回溯"目前只能看它生成的检索文本 | 待定：要么在提示词里要求模型在工具调用时自报策略（要改工具签名，偏离课案冻结的签名），要么从 Langfuse trace 的推理内容里提取（无需改签名）。当前按**不改签名**处理，登记备查 |
 | 若干工程质量项 | `tqdm` 未声明依赖；8 个脚本的模块 docstring 写在 import 之后（`__doc__` 为 None）；`limit=10000` 静默截断等 |
 
@@ -992,7 +992,7 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | **T1** | **中高** | 优化篇「系统监控与部署 · Aegra」一节 + `answer_financial_question()` 统一入口 | 原状：`RAG/app/` 内对 `agentic` **0 个 import/调用**；`answer_financial_question` **零个非测试调用方** | ✅ **本轮已接线**：新增 `pipeline/modes.py` 四条线路注册表，`app/main.py` 的 `/api/chat`、`/api/chat/stream` 都走 `modes.answer()/answer_events()`，Chainlit 选择器可选 ② Agentic；服务层因此真正调到了 `answer_financial_question`（并新增 `route` 缓存作用域与 `info` 出参）。真机实测 ② 线路 22.0~38.5s 出答案，与①线路的 6.0s 明显不同 ⇒ 确实走了 Agent 链路 |
 | T2 | 中 | 优化篇 215（生产边界四条要求） | `finance_agent.py` 写证据文件的循环**没有 per-doc try/except**（一条坏记录会让整次问答失败）；且"全路召回都失败"与"检索成功但无证据"**返回同一句文案** | ✅ 本轮已修两处：① 写文件循环加 per-doc try/except（`finance_agent.py:341-345`，坏掉一份只跳这一份）；② 新增 `RECALL_UNAVAILABLE_ANSWER` 与 `detail["recall_failed"]`，全部检索文本抛异常时回"检索服务暂时不可用"而不是"未检索到资料"（`finance_agent.py:81-87`、`238-247`、`285-290`、`322-332`），评估结果里也带 `recall_failed` 供报告剔除环境故障样本 | ✅ 已修（含 3 个回归测试） |
 | T3 | 中 | 优化篇 40-43 / 106-109（评估钩子） | `register_evidence_hook` 生产侧已接线（`answer_financial_question` 每轮召回后回调），但**全仓无调用方注册** ⇒ `_evidence_hook` 恒为 None；原 docstring 把"评估脚本用钩子取证据"写成事实 | ✅ 注释已修（模块 docstring 与函数 docstring 都改为如实描述：钩子是对外扩展点、当前无内部调用方，评估实际走 `last_retrieval()`）。**语义层面仍算欠账**——要真用需外部评估器自己注册 |
-| T4 | 中 | 优化篇 788（评估模型与生成模型分开配置） | `langfuse_evaluation.py` 的 Ragas 评判用的就是 `settings.llm.model`（与线上生成同一个） | Ragas 分数有**自我偏好**风险；脚本 docstring 已自认不符 |
+| T4 | 中 | 优化篇 788（评估模型与生成模型分开配置） | 原先 `langfuse_evaluation.py` 的 Ragas 评判与 `evaluation/llm_judge.py` 用的就是 `settings.llm.model`（与线上生成同一个） | ✅ **本轮已修**：`config.py` 新增 `EvalLLMSettings`（`EVAL_LLM_*`）+ **共用**的回退解析 `eval_llm_target()`；Ragas 与 llm_judge 两处都改成走它。本机实测：生成 `deepseek-flash` / 评判 **`deepseek-chat`**（`from_fallback=False`），一次真实评分返回 score=5；未配置 `EVAL_LLM_MODEL` 时回退生成模型并打 WARNING，不让"评判就是生成模型"这件事静默 |
 | T5 | 中 | 优化篇 791 / 1178（成本要和质量一起看） | 实验脚本全文 **0 处** `usage`/`total_tokens`/`cost` | 回答不了"Top-K 调大后成本是否可接受" |
 | T6 | 中 | 优化篇 2238-2239（图谱健康度三指标 + 补全与人工审核闭环） | grep `孤立节点率/重复节点率/链接准确率/链接补全/人工审核` **全部 0 命中** | 抽取/消歧退化会**静默污染图谱且没有可观测量**（现在孤点 0 ≠ 有监控） |
 | T7 | 中 | 优化篇 2495-2497（`QueryResponse` + `response_model`） | `graph_rag/service.py` 返回裸 dict；grep `QueryResponse` 0 命中 | OpenAPI 没有响应结构，接口契约退化 |
@@ -1017,6 +1017,7 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | 分组 | 关键项 | 当前值/含义 |
 |---|---|---|
 | LLM | `LLM_MODEL` `LLM_BASE_URL` `LLM_ENABLE_THINKING` | `deepseek-flash`，走 DeepSeek 官方 `https://api.deepseek.com`；开启思考输出（该模型返回 `reasoning_content`）；`LLM_TIMEOUT=180` |
+| **评估/评判** | `EVAL_LLM_MODEL` `EVAL_LLM_API_KEY` `EVAL_LLM_BASE_URL` `EVAL_LLM_MAX_TOKENS` | **`deepseek-chat`**（与生成的 `deepseek-flash` **分开**，避免自我偏好；课案要求"评估模型与生成模型分开配置"）。密钥与网关**留空即逐项回退** `LLM_API_KEY` / `LLM_BASE_URL`；`EVAL_LLM_MODEL` 也留空时回退生成模型并打 WARNING。解析逻辑只有一处：`config.py::eval_llm_target()` |
 | Embedding | `EMBEDDING_MODEL` `EMBEDDING_SIZE` `EMBEDDING_SEND_DIMENSIONS` | `BAAI/bge-m3`，原生 1024 维；`EMBEDDING_SEND_DIMENSIONS=false`（它不接受 `dimensions` 参数） |
 | Rerank | `RERANK_MODEL` `RERANK_TOP_K` `RERANK_RELEVANCE_P` | `BAAI/bge-reranker-v2-m3`；top_k=8、相关度阈值 **0.22**（2026-09-17 换模型后用标注评估集重标，见 8.4） |
 | 检索 | `RETRIEVAL_TOP_N` | 单路召回条数 10 |
@@ -1125,6 +1126,9 @@ uv run python RAG/script/langfuse_evaluation.py --run-name rerank-p055
 | **路由关思考的字段名（被真机复跑推翻过一次）** | 修复前：域外问题 `finish_reason=length`、`content` 空、`reasoning` 453~1111 字、`completion_tokens=256`（3/3 全空）→ 被强行当票据问题去检索；换成 `thinking={"type":"disabled"}` 后：`reasoning=0`、`content=40`、`completion_tokens=14`，线上两个域外问题都由 `rag+保守回复` 变成 `direct` 正常作答，路由耗时 2.31s → 0.90s |
 | ruff | `ruff 0.16.7` 真跑：先捉出 **5 个真错误**（4×F401 未用 import、1×F841 未用变量）并修掉，现在 `All checks passed`（`RAG/` 全量 + `--select F,E9`）。**沙箱里怎么装 ruff**：`uv`/`uvx` 在本沙箱起不动子进程（`Failed to query Python interpreter ... 拒绝访问`，属 named-pipe 限制），pip 也不在 venv 里 ⇒ 改用「下 wheel + 解包拿 `ruff.exe`」（脚本 `RAG\script\probe_ruff_setup.py`，ruff 的 wheel 里就是一个独立 exe，不依赖 Python） |
 | **真机探针脚本**（一次性探针已收口到 `script/`，不再散落在临时目录） | `script\probe_ruff_setup.py`（沙箱装 ruff）· `script\probe_pg_gss.py`（PG GSS 卡死的有界复测）· `script\probe_ragas_judge_budget.py`（评判模型预算对照）· `script\probe_rerank_query.py`（多轮追问的重排 query 对照）· `script\probe_llm_thinking.py`（端点认哪个"关思考"字段）· `script\acceptance_4routes.py`（四条线路一次跑完的验收）· `script\check_mermaid.py`（README 里的图真渲染校验） |
+| **③④ 线路接缓存（本轮）** | 同一句问第二遍：GraphRAG **4.67s → 0.03s**（`cache_hit=exact`）、融合线路 **19.41s → 0.02s**；跨线路隔离实测通过（把 ④ 的问题拿去问 ③，`cache_hit=None`） |
+| **评判模型与生成模型分家（本轮）** | `.env` 实测：生成 `deepseek-flash` / 评判 **`deepseek-chat`**（`from_fallback=False`）；`evaluation/llm_judge.py::score_answer()` 真实调用返回 `score=5` 且反馈合理；把 `EVAL_LLM_MODEL` 清空后 `eval_llm_target()` 回退生成模型并置 `from_fallback=True`（调用方据此打 WARNING） |
+| **导入幂等（本轮）** | `tick_extract.py --insert` 重跑一次：`count(*)` **300 → 300**、**有向量 282 → 282**（一条没丢）；同主键 `insert` 两次在一次性集合上实测是 **2 行**（旧实现的问题） |
 
 ### 7.2 真机端到端复跑清单（改完链路**必须**跑一遍）
 
@@ -1270,7 +1274,7 @@ Invoke-RestMethod -Uri http://127.0.0.1:8099/api/chat -Method Post -ContentType 
 | N24 | 中 | `core/cache.py` `_ensure_preset_loaded` | 进程内矩阵**不跟随 Redis 变化**：`seed_preset(force=True)` 后运行中的进程仍用旧矩阵，须重启才生效；Redis 键被清掉时 `json.loads(None)` 抛异常又被 `lookup` 吞掉 ⇒ 表现为"FAQ 层静默失效" | 待修 |
 | N25 | 低 | `data_process/paddle_ocr.py` `poll_job` | 云 API 返回未列出的新状态（如 `queued`）会空转到 10 分钟超时，报 TimeoutError 而不是"未知状态" | 待修 |
 | N26 | 低 | `data_process/*`（5 个文件）+ `script/*`（8 个文件） | 路径引导用**硬编码目录名 `Python_Base`** 当向上查找的停止条件 ⇒ 仓库改名/搬目录会一直退到盘符根；模块说明字符串同样受此影响 | 待修 |
-| N27 | 低 | `agentic/finance_agent.py`（＋`pipeline/modes.py`） | **模块级可变全局从 3 个涨到 5 个**：`finance_agent` 里原有 `_evidence_hook` / `_last_retrieval` / `_langfuse_handler`，本轮又加了 `_retrieval_attempt`（重检计数）；另 `pipeline/modes.py::_BASIC_PIPELINE`（基础线路实例缓存）同样是进程级。它们都**不按请求隔离**：单进程串行没事，多线程/多 worker 会互相覆盖（评估数据、追踪身份、**重检计数**都会串号 —— 后者的表现是"第二个问题被当成已重检"） | 待修（若上多 worker）：把前四个收进显式运行时上下文对象；`_BASIC_PIPELINE` 可留（无状态、只读复用） |
+| N27 | 低 | `agentic/finance_agent.py`（＋`pipeline/modes.py`） | **模块级可变全局涨到 6 个**：`finance_agent` 里 4 个（`_evidence_hook` / `_last_retrieval` / `_retrieval_attempt` / `_langfuse_handler`）＋ `pipeline/modes.py` 里 2 个（`_BASIC_PIPELINE` / `_ANSWER_CACHE`）。它们都**不按请求隔离**：单进程串行没事，多线程/多 worker 会互相覆盖（评估数据、追踪身份、**重检计数**都会串号 —— 后者的表现是"第二个问题被当成已重检"） | 待修（若上多 worker）：前四个收进显式运行时上下文对象；`_BASIC_PIPELINE` / `_ANSWER_CACHE` 可留（无状态、只读复用） |
 | N28 | 中 | `pipeline/filters.py` `_TICKET_NO_RE` | 票号字符集 `[A-Za-z0-9-]` **不含下划线** ⇒ `票号 ticket_001 的金额是多少` 被抽成 `"ticket"`，拼出 `ticket_no == "ticket"` **恒不命中、等于清空召回**（靠回退兜住）。课案提示词例句正是 `票据ticket_001…` | ✅ 已修（`_` 进字符集 + 4 条回归用例） |
 | N29 | 中 | `pipeline/rag_pipeline.py` | `use_cache=False`（评估口径）原先只跳过**读**、仍无条件写缓存 ⇒ 评估答案会进 Redis 精确缓存（TTL 10 分钟），这段时间真人问同一句会拿到评估那一跑的答案 | ✅ 已修（读写一起关 + 2 条回归用例） |
 | N30 | 中 | `pipeline/rag_pipeline.py` | 4 处 `done` 事件字段不一致：只有缓存命中那条带 `"rewrite"`，直答/保守/RAG 三条没有 ⇒ 按 `ev["rewrite"]` 读会 KeyError（现有消费方从 route 事件取，所以没暴露） | 待修（统一字段） |

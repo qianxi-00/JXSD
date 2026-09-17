@@ -128,3 +128,77 @@ class TestRagasBundleDegradation:
         bundle = script._ragas_bundle()
         assert isinstance(bundle, dict)
         assert set(bundle) <= {"Context Precision", "Context Recall", "Faithfulness", "Answer Relevancy"}
+
+
+class TestJudgeModelIsSeparate:
+    """Ragas 的评判模型必须走 `eval_llm_target()`（课案：评估模型与生成模型分开配置）。
+
+    为什么专门钉这条：脚本的日志级别在生产运行时可能只放 WARNING/ERROR，
+    "这次到底用哪个模型评判的"从终端看不出来；而它直接决定评估结论可不可信
+    （用生成模型给自己打分 ⇒ 系统性偏高）。这里用打桩把 llm_factory 的入参抓下来。
+    """
+
+    def _install_fakes(self, script, monkeypatch, captured: dict):
+        import ragas.embeddings as ragas_emb
+        import ragas.llms as ragas_llms
+
+        class FakeLLM:
+            def __init__(self, model, **kwargs):
+                captured["model"] = model
+                captured["factory_kwargs"] = kwargs
+
+        class FakeMetric:
+            def __init__(self, **kwargs):
+                captured.setdefault("metrics", []).append(type(self).__name__)
+
+        def fake_factory(model, **kwargs):
+            return FakeLLM(model, **kwargs)
+
+        class FakeEmbeddings:
+            def __init__(self, **kwargs):
+                captured["embeddings"] = kwargs
+
+        class FakeAsyncOpenAI:
+            def __init__(self, **kwargs):
+                captured.setdefault("clients", []).append(kwargs)
+
+        monkeypatch.setattr(ragas_llms, "llm_factory", fake_factory)
+        monkeypatch.setattr(ragas_emb, "OpenAIEmbeddings", FakeEmbeddings)
+        monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
+        # 四指标类在 metric 模块里 import，这里用假类替掉 collections 里的同名符号
+        import ragas.metrics.collections as coll
+
+        for name in ("AnswerRelevancy", "ContextPrecision", "ContextRecall", "Faithfulness"):
+            monkeypatch.setattr(coll, name, FakeMetric, raising=False)
+        monkeypatch.setattr(script, "_ragas_metrics", None)
+
+    def test_llm_factory_receives_eval_model(self, script, monkeypatch):
+        captured: dict = {}
+        monkeypatch.setattr(script.settings.eval_llm, "model", "judge-model-z")
+        monkeypatch.setattr(script.settings.eval_llm, "max_tokens", 4096)
+        monkeypatch.setattr(script.settings.eval_llm, "api_key", "")
+        monkeypatch.setattr(script.settings.eval_llm, "base_url", "")
+        monkeypatch.setattr(script.settings.llm, "api_key", "gen-key")
+        monkeypatch.setattr(script.settings.llm, "base_url", "https://gen.example/v1")
+        self._install_fakes(script, monkeypatch, captured)
+
+        script._ragas_bundle()
+        assert captured["model"] == "judge-model-z", "评判模型必须来自 EVAL_LLM_*"
+        # 密钥/网关允许逐项回退到生成侧
+        client_kwargs = captured["clients"][0]
+        assert client_kwargs["api_key"] == "gen-key"
+        assert client_kwargs["base_url"] == "https://gen.example/v1"
+        # 关思考的开关要一直带着（换回思考模型时不加它会大面积截断，实测过）
+        assert captured["factory_kwargs"]["extra_body"] == {"thinking": {"type": "disabled"}}
+        assert captured["factory_kwargs"]["max_tokens"] == 4096
+
+    def test_falls_back_to_generation_model_when_unset(self, script, monkeypatch):
+        captured: dict = {}
+        monkeypatch.setattr(script.settings.eval_llm, "model", "")
+        monkeypatch.setattr(script.settings.llm, "model", "gen-model-w")
+        monkeypatch.setattr(script.settings.llm, "max_tokens", 2048)
+        self._install_fakes(script, monkeypatch, captured)
+
+        script._ragas_bundle()
+        assert captured["model"] == "gen-model-w"
+        assert captured["factory_kwargs"]["max_tokens"] == 2048

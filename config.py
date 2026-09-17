@@ -164,6 +164,37 @@ class LLMSettings(BaseSettings):
     enable_thinking: bool = False
 
 
+class EvalLLMSettings(BaseSettings):
+    """评估/评判用的大模型配置（**与生成模型分家**）。
+
+    为什么要有这一段（优化篇课案明确要求，本项目此前是"自述分开、实则同一个"）：
+    Ragas 四指标与 `evaluation/llm_judge.py` 的 LLM 评分，如果用的是**生成回答的那个模型**，
+    就存在**自我偏好**风险 —— 模型给自己的回答打分偏高，评估结果系统性乐观。
+    分开配置（至少换成同网关的另一个模型）能显著削弱这一偏差。
+
+    三项都要可独立配置：`model` 是必须不同的那一项；`api_key` / `base_url` 留空则
+    **回退到生成侧的 `LLM_*`**（同一家网关时不必重复填密钥，也避免把密钥复制两份）。
+
+    ⚠ 未配置 `EVAL_LLM_MODEL` 时行为与以前一致（回退生成模型），但调用方会打 WARNING
+    说明"这次评判用的就是生成模型"，不让差异静默。
+    """
+
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_prefix="EVAL_LLM_", extra="ignore")
+
+    api_key: str = ""
+    base_url: str = ""
+    model: str = ""
+    # 评判要可复现：温度 0（生成侧默认 0.2，是另一个刻意的差异）
+    temperature: float = 0.0
+    max_tokens: int = 4096
+    timeout: float = 180.0
+
+    @property
+    def configured(self) -> bool:
+        """是否显式配置了评判模型（只看 model：密钥/网关允许回退）。"""
+        return bool(self.model)
+
+
 class EmbeddingSettings(BaseSettings):
     """向量化模型配置"""
 
@@ -252,6 +283,8 @@ class Settings:
         # RAG 分组配置
         self.app = AppSettings()
         self.llm = LLMSettings()
+        # 评估/评判模型（与生成模型分家，见 EvalLLMSettings 的说明）
+        self.eval_llm = EvalLLMSettings()
         self.embedding = EmbeddingSettings()
         self.rerank = RerankSettings()
         self.retrieval = RetrievalSettings()
@@ -273,12 +306,54 @@ def get_settings() -> Settings:
 settings = get_settings()
 
 
+def eval_llm_target() -> dict:
+    """评判模型**实际生效**的配置（未配置 `EVAL_LLM_*` 时回退到生成模型）。
+
+    返回 `{model, api_key, base_url, temperature, max_tokens, timeout, from_fallback}`：
+        - `from_fallback=True` 表示这次评判用的就是生成模型（有自我偏好风险），
+          **调用方负责打 WARNING** —— 配置层不 import 日志模块（core.logger 反过来依赖
+          config，在 config 里 import 它会成环）。
+        - `api_key` / `base_url` 允许**逐项**回退：只配 `EVAL_LLM_MODEL` 是最常见的用法
+          （同一家网关换模型），此时密钥与地址沿用 `LLM_*`。
+
+    为什么放在 config 里而不是各调用点各写一遍：Ragas 与 `evaluation/llm_judge.py`
+    是两处独立实现，回退规则写两遍必然漂移（一处改了另一处忘）。
+    """
+    ev = settings.eval_llm
+    if ev.configured:
+        return {
+            "model": ev.model,
+            "api_key": ev.api_key or settings.llm.api_key,
+            "base_url": ev.base_url or settings.llm.base_url,
+            "temperature": ev.temperature,
+            "max_tokens": ev.max_tokens,
+            "timeout": ev.timeout,
+            "from_fallback": False,
+        }
+    return {
+        "model": settings.llm.model,
+        "api_key": settings.llm.api_key,
+        "base_url": settings.llm.base_url,
+        "temperature": settings.llm.temperature,
+        "max_tokens": settings.llm.max_tokens,
+        "timeout": settings.llm.timeout,
+        "from_fallback": True,
+    }
+
+
+
 if __name__ == "__main__":
     # 启动验证配置加载
     print("配置集加载成功")
     print(f"  APP_ENV: {settings.app_env}")
     print(f"  Agent 模型: {settings.model_name} @ {settings.base_url}")
     print(f"  RAG LLM: {settings.llm.model} @ {settings.llm.base_url}")
+    _ev = eval_llm_target()
+    print(
+        f"  评判模型: {_ev['model']}"
+        + ("（未配置 EVAL_LLM_MODEL，回退生成模型 —— 有自我偏好风险）"
+           if _ev["from_fallback"] else " @ " + str(_ev["base_url"]))
+    )
     print(f"  Embedding: {settings.embedding.model}")
     print(f"  PostgreSQL URL: {settings.postgres_url}")
     print(f"  LangGraph PG_URI: {settings.pg_uri}")

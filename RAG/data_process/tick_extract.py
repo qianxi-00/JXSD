@@ -22,6 +22,13 @@
 # 默认是**干跑**（只统计 + 出报告），加 --insert 才写 Milvus：
 # 字段抽取质量要先用报告（coverage 覆盖率 + samples 样本）确认过再入库。
 # 命令行参数的完整用法见紧随其后的模块说明字符串。
+#
+# 幂等性（实测确认，别再退回 insert）：写库用的是 **upsert**，同一张票（主键 id 由
+# source_file 派生）重跑只会覆盖、不会多出一行。为什么强调这一点——旧实现用 insert，
+# 在一次性集合上实测"同主键插两次 = 两行"，重跑一次语料就翻倍（检索里同一张票出现两遍、
+# 评估分母也跟着错）。改用 upsert 的同时还要**先读回旧向量**，因为 upsert 是整实体覆盖，
+# 而本脚本产出的 vec 是 None（向量由 embed_tickets 单独回填）—— 见 `_carry_over_vectors`。
+# 注意 `--insert` 这个参数名保留不变（文档与脚本都在用），它的语义现在是"写入/覆盖"。
 # =============================================================================
 
 # --- 路径引导：确保能导入 Python_Base 根目录的 config 与 RAG 内部包 ---
@@ -418,6 +425,63 @@ def build_record(item: dict) -> dict:
     }
 
 
+def _has_vector(value) -> bool:
+    """判断一个向量的取值是不是"真有向量"。
+
+    不用 `if value`：Milvus 返回的向量可能是 numpy 数组，而 numpy 对多元素数组做真值
+    判断会**直接抛 ValueError**（"truth value of an array is ambiguous"）。用长度判断更稳。
+    """
+    if value is None:
+        return False
+    try:
+        return len(value) > 0
+    except TypeError:  # 不是序列（理论上不会出现）时按"有值"处理
+        return True
+
+
+def _merge_existing_vectors(batch: list[dict], existing: dict) -> int:
+    """把库里已有的向量填回 batch（纯函数，便于单测）。返回填了几条。
+
+    只填 `vec` 为空的行：已有非空向量的行本来就该被这次写覆盖（那是 embed_tickets
+    刚算好的结果，不该被旧值顶掉）。
+    """
+    filled = 0
+    for row in batch:
+        if not _has_vector(row.get("vec")):
+            old = existing.get(str(row.get("id")))
+            if _has_vector(old):
+                row["vec"] = old
+                filled += 1
+    return filled
+
+
+def _carry_over_vectors(client, name: str, batch: list[dict]) -> int:
+    """upsert 前把同一批 id 的**已有向量**读回来填进 batch。
+
+    为什么必须做：Milvus 的 upsert 是**整实体覆盖**（先标记删除、再插新版本），而
+    `build_record` 产出的 `vec` 是 None（向量由 embed_tickets 单独回填）⇒ 直接 upsert
+    会把已经算好的向量抹成 NULL。后果很隐蔽：结构化查询仍查得到这些票，
+    语义检索却再也搜不到 —— 实测探针（`.dsh_tmp/probe_upsert_semantics.py`）确认：
+    upsert 时带 `vec=None` 或**干脆不带** vec 字段，两种写法都会把向量抹掉；
+    而 `query(output_fields=["id", "vec"])` 能把向量读回来。
+    """
+    ids = [str(row["id"]) for row in batch if row.get("id")]
+    if not ids:
+        return 0
+    expr = "id in [" + ", ".join(f'"{i}"' for i in ids) + "]"
+    try:
+        rows = client.query(collection_name=name, filter=expr, output_fields=["id", "vec"])
+    except Exception as exc:  # noqa: BLE001 读不回来不该让整轮导入失败
+        # 降级后果要说清楚：本批向量会被清空（与修复前一样），但必须重跑 embed_tickets 补齐。
+        print(f"WARN 读取已有向量失败，本批的向量将被清空（之后需重跑 embed_tickets）: {exc}")
+        return 0
+    existing = {str(r.get("id")): r.get("vec") for r in rows if _has_vector(r.get("vec"))}
+    filled = _merge_existing_vectors(batch, existing)
+    if filled:
+        print(f"  保留已有向量 {filled}/{len(batch)} 条（upsert 是整实体覆盖，不读回来就会抹掉）")
+    return filled
+
+
 def ensure_collection(client, name: str, recreate: bool = False) -> None:
     # 延迟 import pymilvus：本模块的字段抽取部分（也是测试覆盖的部分）不应该强依赖
     # Milvus 客户端能装上/能连上。只有真要建集合时才需要它。
@@ -558,32 +622,54 @@ def main() -> None:
         ensure_collection(client, name, recreate=args.recreate)
         print(f"collection '{name}' ready")
 
-        # 每 100 条一批：Milvus 的 insert 一次接受的数据量有上限（且单条 JSON 过大时
-        # 请求体也会被拒），分批是必需的；100 是"批次数不至于太多、单批也不至于过大"的经验值。
-        inserted = 0
+        # 每 100 条一批：Milvus 的一次请求有数据量上限（且单条 JSON 过大时请求体也会被拒），
+        # 分批是必需的；100 是"批次数不至于太多、单批也不至于过大"的经验值。
+        #
+        # ⚠ 用 **upsert** 而不是 insert（本条曾记为欠账"导入不幂等"，实测确认过）：
+        # 一次性集合上的探针（`.dsh_tmp/probe_upsert_semantics.py`）实测：
+        #   · 同主键 insert 两次 → **row_count=2，真的多出一行**（重跑一次语料翻倍、
+        #     检索里同一张票出现两遍、评估的分母也跟着错）；
+        #   · 同主键 upsert 两次 → 逻辑上仍是一行（`count(*)` 稳定），但 `row_count`
+        #     **会涨**——upsert 是"标记删除 + 插入新版本"，旧版本在 compaction 前仍计入
+        #     row_count。所以**判断幂等要数 `count(*)`，不能看 row_count**；
+        #   · upsert 是**整实体覆盖**：带 `vec=None` 或干脆不带 vec 字段，都会把已算好的
+        #     向量抹成 NULL（实测两种写法都抹）—— 结构化检索还查得到、语义检索却查不到，
+        #     这种不一致最难发现。因此下面先读回旧向量再写（见 `_carry_over_vectors`）。
+        # 字段完整性：`build_record` 产出的键与集合 schema 一一对应（多一个少一个都会被
+        # Milvus 拒绝或写成空），所以这里不需要再补白名单。
+        upserted = 0
         for i in range(0, len(records), 100):
             batch = records[i : i + 100]
-            res = client.insert(collection_name=name, data=batch)
-            # res.get("insert_count", len(batch))：服务端不回计数时按批次大小计，
-            # 保证最后打印的 inserted 至少是个合理值（真实入库条数以 row_count 为准）。
-            inserted += res.get("insert_count", len(batch))
-        print(f"inserted {inserted} rows")
+            _carry_over_vectors(client, name, batch)
+            res = client.upsert(collection_name=name, data=batch)
+            # res.get("upsert_count", len(batch))：服务端不回计数时按批次大小计，
+            # 保证最后打印的数至少是个合理值（真实条数以 count(*) 为准）。
+            upserted += res.get("upsert_count", res.get("insert_count", len(batch)))
+        print(f"upserted {upserted} rows")
 
         # flush 是让写入落盘/可查，某些 Milvus 版本/模式下不支持就抛异常——
-        # 这里故意吞掉（pass）：flush 失败不等于插入失败，下面的 row_count 轮询才是判据。
+        # 这里故意吞掉（pass）：flush 失败不等于写入失败，下面的计数轮询才是判据。
         try:
             client.flush(collection_name=name)
         except Exception:
             pass
-        # 轮询 row_count 等数据可见：insert 是异步可见的，立刻查会出现"插了 300 条但
-        # row_count 还是 0"的假象。最多等 5×2=10 秒，等不到就打印当前值（不报错）——
+        # 等数据可见：写入是异步可见的，立刻查会出现"写了 300 条但查不到"的假象。
+        # 判据用 **count(*)**（逻辑条数，幂等时稳定）而不是 row_count（含软删旧版本，
+        # upsert 之后必然虚高）。最多等 5×2=10 秒，等不到就打印当前值（不报错）——
         # 这是诊断信息，不是断言。
+        live = 0
         for _ in range(5):
-            stats = client.get_collection_stats(collection_name=name)
-            if int(stats.get("row_count", 0)) >= len(records):
+            try:
+                got = client.query(collection_name=name, filter='id != ""', output_fields=["count(*)"])
+                live = int(got[0].get("count(*)", 0)) if got else 0
+            except Exception:
+                live = 0
+            if live >= len(records):
                 break
             time.sleep(2)
-        print(f"row_count: {stats.get('row_count')}")
+        stats = client.get_collection_stats(collection_name=name)
+        print(f"count(*): {live}（本轮抽出 {len(records)} 条）")
+        print(f"row_count: {stats.get('row_count')}（含 upsert 标记删除的旧版本，不作为幂等判据）")
 
         # 检索前必须 load：Milvus 的集合要先加载进内存才能 query/search，
         # 否则报 "collection not loaded"。注意此时 vec 还没回填（那是 embed_tickets.py 的事），

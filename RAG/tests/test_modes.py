@@ -206,6 +206,136 @@ class TestCacheScope:
         assert routes.cache_scope("basicc") == "basicc"
 
 
+class FakeCache:
+    """AnswerCache 的替身（记录 lookup/store 的 route，便于断言作用域）。"""
+
+    def __init__(self, hit=None):
+        self.hit = hit
+        self.calls: list[tuple] = []
+
+    def lookup(self, question, route=""):
+        self.calls.append(("lookup", question, route))
+        return self.hit
+
+    def store(self, question, answer, sources, route=""):
+        self.calls.append(("store", question, answer, route))
+
+
+class TestCachedRoute:
+    """③④ 接缓存的三条纪律：命中跳过执行、多轮不查不写、作用域按线路分。"""
+
+    def _install(self, monkeypatch, hit=None):
+        fake = FakeCache(hit)
+        monkeypatch.setattr(modes, "_answer_cache", lambda: fake)
+        return fake
+
+    def test_hit_skips_producer_entirely(self, monkeypatch):
+        fake = self._install(
+            monkeypatch,
+            hit={"cache_hit": "exact", "answer": "上次的答案", "sources": [{"id": "t1"}]},
+        )
+        called = {"n": 0}
+
+        def produce():
+            called["n"] += 1
+            return {"answer": "新答案", "sources": [], "extra": {}}
+
+        out = modes._cached_route("董文的航班", [], routes.ROUTE_GRAPH, produce)
+        assert called["n"] == 0, "命中缓存时不该再跑检索与生成"
+        assert out["answer"] == "上次的答案"
+        assert out["cache_hit"] == "exact"
+        # 命中时不把上一次的明细冒充成本次证据，只给一个"来自缓存"的标记
+        assert out["extra"] == {"from_cache": True}
+        assert out["sources"] == [{"id": "t1"}]
+        assert ("lookup", "董文的航班", routes.ROUTE_GRAPH) in fake.calls
+
+    def test_miss_runs_producer_and_stores_with_same_scope(self, monkeypatch):
+        fake = self._install(monkeypatch)
+        out = modes._cached_route(
+            "董文的航班",
+            [],
+            routes.ROUTE_GRAPH,
+            lambda: {"answer": "新答案", "sources": [], "extra": {"communities": [1]}},
+        )
+        assert out["answer"] == "新答案"
+        assert out["cache_hit"] is None
+        assert out["extra"] == {"communities": [1]}
+        # lookup 与 store 必须同一个 route（不一致会"存了但读不到"）
+        assert fake.calls == [
+            ("lookup", "董文的航班", routes.ROUTE_GRAPH),
+            ("store", "董文的航班", "新答案", routes.ROUTE_GRAPH),
+        ]
+
+    def test_history_bypasses_cache_both_ways(self, monkeypatch):
+        """多轮：既不查缓存也不写缓存（缓存键只有问题文本，会串上一轮语境的答案）。"""
+        fake = self._install(monkeypatch, hit={"cache_hit": "exact", "answer": "上次", "sources": []})
+        out = modes._cached_route(
+            "那乐艳的呢？",
+            [{"role": "user", "content": "万宁的火车票票号"}],
+            routes.ROUTE_FUSION,
+            lambda: {"answer": "本轮答案", "sources": [], "extra": {}},
+        )
+        assert out["answer"] == "本轮答案"
+        assert fake.calls == [], "多轮时不该读写缓存"
+
+    def test_empty_answer_is_not_stored(self, monkeypatch):
+        fake = self._install(monkeypatch)
+        modes._cached_route(
+            "问题", [], routes.ROUTE_FUSION, lambda: {"answer": "", "sources": [], "extra": {}}
+        )
+        assert [c[0] for c in fake.calls] == ["lookup"], "空答案不能写缓存（会被当权威答案复用）"
+
+
+class TestRouteCacheWiring:
+    """③④ 必须真的走 `_cached_route`，且各用各的作用域。"""
+
+    def test_graph_route_uses_graph_scope(self, monkeypatch):
+        seen = {}
+
+        def fake_cached(question, history, route, produce):
+            seen["route"] = route
+            seen["question"] = question
+            return {"answer": "图答", "sources": [], "cache_hit": None, "extra": {}}
+
+        monkeypatch.setattr(modes, "_cached_route", fake_cached)
+        out = modes._run_graph("董文的航班是从哪到哪的？", [])
+        assert seen["route"] == routes.ROUTE_GRAPH
+        assert out["answer"] == "图答"
+
+    def test_fusion_route_uses_fusion_scope_and_keeps_history(self, monkeypatch):
+        seen = {}
+
+        def fake_cached(question, history, route, produce):
+            seen["route"] = route
+            seen["history"] = history
+            return {"answer": "融合答", "sources": [], "cache_hit": None, "extra": {}}
+
+        monkeypatch.setattr(modes, "_cached_route", fake_cached)
+        history = [{"role": "user", "content": "上一句"}]
+        out = modes._run_fusion("那乐艳的呢？", history)
+        assert seen["route"] == routes.ROUTE_FUSION
+        # 融合线路吃 history，必须原样传进 produce（多轮检索靠它拼上一轮问题）
+        assert seen["history"] == history
+        assert out["answer"] == "融合答"
+
+    def test_answer_cache_is_reused_across_calls(self, monkeypatch):
+        """进程内复用同一个 AnswerCache（避免每次请求重载预设矩阵）。"""
+        created = {"n": 0}
+
+        class Fake:
+            def __init__(self):
+                created["n"] += 1
+
+        import core.cache as cache_mod
+
+        monkeypatch.setattr(cache_mod, "AnswerCache", Fake)
+        monkeypatch.setattr(modes, "_ANSWER_CACHE", None)
+        first = modes._answer_cache()
+        second = modes._answer_cache()
+        assert first is second
+        assert created["n"] == 1
+
+
 @pytest.mark.asyncio
 async def test_answer_events_packages_non_streaming_routes(monkeypatch):
     """非基础线路把结果包成 start/mode/token/done 四类事件（前端按同一套渲染）。"""

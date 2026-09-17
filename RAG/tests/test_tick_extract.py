@@ -1,8 +1,12 @@
 """票据字段抽取测试（基础篇课案「统一票据字段 / 三类票据字段抽取」）。
 
 `data_process/tick_extract.py` 是全项目字段抽取的唯一实现，之前**既没有自检也没有测试**。
-这里用真实 OCR 片段钉住关键口径：12 字段、null 不落 0、金额换算、不同 OCR 引擎的版面差异。
+这里用真实 OCR 片段钉住关键口径：12 字段、null 不落 0、金额换算、不同 OCR 引擎的版面差异；
+末尾两组是**写库幂等性**的闸门（upsert 而不是 insert，见 `TestWriteIsIdempotent`）。
 """
+
+import ast
+from pathlib import Path
 
 from data_process import tick_extract as te
 
@@ -130,3 +134,76 @@ class TestBuildRecord:
     def test_unknown_type_yields_empty_fields(self):
         record = te.build_record({"source_file": "x.png", "ticket_type": "unknown", "ocr_text": "abc"})
         assert all(record[field] is None for field in te.FIELDS)
+
+
+class TestCarryOverVectors:
+    """写库改成 upsert 之后，必须先把旧向量读回来 —— 否则整实体覆盖会把向量抹成 NULL。
+
+    实测依据（一次性集合上的探针）：upsert 时带 `vec=None` 或干脆不带该字段，
+    **两种写法都会把已有向量抹掉**；后果是结构化查询查得到、语义检索查不到。
+    """
+
+    def test_fills_missing_vector_from_existing(self):
+        batch = [{"id": "a", "vec": None}, {"id": "b", "vec": None}]
+        filled = te._merge_existing_vectors(batch, {"a": [1.0, 0.0], "b": None})
+        assert filled == 1
+        assert batch[0]["vec"] == [1.0, 0.0]
+        assert batch[1]["vec"] is None  # 库里本来也没有，保持 None
+
+    def test_does_not_overwrite_fresh_vector(self):
+        """本轮刚算出的向量（embed_tickets 写的）不该被库里的旧值顶掉。"""
+        batch = [{"id": "a", "vec": [9.0, 9.0]}]
+        filled = te._merge_existing_vectors(batch, {"a": [1.0, 0.0]})
+        assert filled == 0
+        assert batch[0]["vec"] == [9.0, 9.0]
+
+    def test_empty_existing_vector_is_not_used(self):
+        assert te._merge_existing_vectors([{"id": "a", "vec": None}], {"a": []}) == 0
+
+    def test_has_vector_avoids_numpy_truthiness_trap(self):
+        """`_has_vector` 不能用真值判断：numpy 多元素数组做真值判断会抛 ValueError。"""
+        import numpy as np
+
+        assert te._has_vector(None) is False
+        assert te._has_vector([]) is False
+        assert te._has_vector([0.0, 0.0]) is True
+        assert te._has_vector(np.zeros(4)) is True  # 所有元素为 0 也是"有向量"
+
+    def test_carry_over_reports_when_query_fails(self, capsys):
+        """读不回旧向量时降级（不能让整轮导入失败），但必须告警说明后果。"""
+
+        class BrokenClient:
+            def query(self, **_kw):
+                raise RuntimeError("Milvus 暂时不可用")
+
+        batch = [{"id": "a", "vec": None}]
+        assert te._carry_over_vectors(BrokenClient(), "tick", batch) == 0
+        out = capsys.readouterr().out
+        assert "WARN" in out and "embed_tickets" in out
+        assert batch[0]["vec"] is None
+
+
+class TestWriteIsIdempotent:
+    """AST 闸门：写库必须是 upsert（旧实现 insert 会让重跑一次语料翻倍）。
+
+    为什么用 AST 而不是 `Select-String 'insert('`：本文件里到处都是 `sys.path.insert(...)`，
+    字符串搜索必然误报；只看 Call 节点的属性名才准（这是实测过的教训）。
+    """
+
+    def _write_calls(self) -> list[str]:
+        src = Path(te.__file__).read_text(encoding="utf-8")
+        names = []
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                # 只看"对某个 client 调用的方法"，且第一个关键字是 collection_name
+                if node.func.attr in {"insert", "upsert"}:
+                    if any(kw.arg == "collection_name" for kw in node.keywords):
+                        names.append(node.func.attr)
+        return names
+
+    def test_uses_upsert_not_insert(self):
+        assert self._write_calls() == ["upsert"], (
+            "写库调用必须恰好是 client.upsert(collection_name=...)："
+            "insert 在同一主键上会多出一行（实测 row_count 从 1 变 2）"
+        )
+

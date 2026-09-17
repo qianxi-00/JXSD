@@ -1,15 +1,33 @@
 {
-  "total": 1,
+  "total": 300,
   "by_type": {
-    "flight": 1
+    "flight": 100,
+    "invoice": 100,
+    "train": 100
   },
   "coverage": {
     "flight": {
-      "ticket_no": 1,
-      "person": 1,
+      "ticket_no": 82,
+      "person": 82,
       "date_int": 0,
       "amount_fen": 0,
-      "route": 1,
+      "route": 82,
+      "counterparty": 17
+    },
+    "invoice": {
+      "ticket_no": 100,
+      "person": 100,
+      "date_int": 100,
+      "amount_fen": 100,
+      "route": 0,
+      "counterparty": 100
+    },
+    "train": {
+      "ticket_no": 99,
+      "person": 100,
+      "date_int": 100,
+      "amount_fen": 100,
+      "route": 91,
       "counterparty": 0
     }
   },
@@ -27,6 +45,122 @@
         "semantic_text": "姓名Name ZHAOFEI 赵飞 自From 阿克苏机场 登机口Gate B1 登机口 座位区域 FATING A STAR ALLIANCE MEMBER AKESUJICHANG B1 至To 首都机场 SHOUDUJICHANG 登",
         "ocr_text": "姓名Name\nZHAOFEI\n赵飞\n自From 阿克苏机场\n登机口Gate B1\n登机口\n座位区域\nFATING\nA STAR ALLIANCE MEMBER\nAKESUJICHANG\nB1\n至To 首都机场\nSHOUDUJICHANG\n登",
         "source_file": "data/flight/ticket-001.png",
+        "vec": null
+      },
+      {
+        "id": "ticket_df5c5e104e433cdbd86042f8",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "person": "商婷",
+        "date_int": null,
+        "amount_fen": null,
+        "route": "AKESUJICHANG-JIANGBEIJICHANG",
+        "counterparty": null,
+        "semantic_text": "姓名Name GAO 商婷 自From 阿克苏机场 登机口Gate E8 座位区域 FATING A STAR ALLIANCE MEMBER 阿克苏机场 AKESUJICHANG 至To江北机场 JIANGBEIJICHANG 登机时间B",
+        "ocr_text": "姓名Name\nGAO\n商婷\n自From 阿克苏机场\n登机口Gate\nE8\n座位区域\nFATING\nA STAR ALLIANCE MEMBER\n阿克苏机场\nAKESUJICHANG\n至To江北机场\nJIANGBEIJICHANG\n登机时间B",
+        "source_file": "data/flight/ticket-002.png",
+        "vec": null
+      },
+      {
+        "id": "ticket_0fe5b08b59d1a45a65372828",
+        "ticket_type": "flight",
+        "ticket_no": "8762369777769",
+        "person": "黄刚",
+        "date_int": null,
+        "amount_fen": null,
+        "route": "AKESUJICHANG-XIAOSHANJICHANG",
+        "counterparty": null,
+        "semantic_text": "姓名Name HUANGGANG 黄刚 自 From 阿克苏机场 登机口Gate AKESUJICHANG D5 至To 萧山机场 XIAOSHANJICHANG 登机时间Boarding Time 20:30 ETKT8762369777",
+        "ocr_text": "姓名Name\nHUANGGANG\n黄刚\n自 From 阿克苏机场\n登机口Gate\nAKESUJICHANG\nD5\n至To 萧山机场\nXIAOSHANJICHANG\n登机时间Boarding Time\n20:30\nETKT8762369777",
+        "source_file": "data/flight/ticket-003.png",
+        "vec": null
+      }
+    ],
+    "invoice": [
+      {
+        "id": "ticket_c45de2617331e1bd7f75d8a4",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250101",
+        "person": "武汉通信有限公司",
+        "date_int": 20251104,
+        "amount_fen": 3980291,
+        "route": "",
+        "counterparty": "腾讯科技有限公司",
+        "semantic_text": "发票 CNY • VAT 发票编号：INV20250101 开票日期：2025-11-04 到期日期：2025-11-20 卖方 腾讯科技有限公司 91133548126054643 重庆市建设路404号 CN / China 客户 武汉通",
+        "ocr_text": "发票\nCNY • VAT\n发票编号：INV20250101\n开票日期：2025-11-04\n到期日期：2025-11-20\n卖方\n腾讯科技有限公司\n91133548126054643\n重庆市建设路404号\nCN / China\n客户\n武汉通",
+        "source_file": "data/invoice/001_INV20250101.png",
+        "vec": null
+      },
+      {
+        "id": "ticket_f000aefaa3b27f3e02cc26af",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250102",
+        "person": "武汉通信有限公司",
+        "date_int": 20251123,
+        "amount_fen": 399758,
+        "route": "",
+        "counterparty": "阿里巴巴集团",
+        "semantic_text": "发票 CNY • VAT 发票编号：INV20250102 开具日期：2025-11-23 到期日期：2026-01-11 卖方 阿里巴巴集团 91275055470498697 成都市人民街 303 号 CN / China 客户 武汉通",
+        "ocr_text": "发票\nCNY • VAT\n发票编号：INV20250102\n开具日期：2025-11-23\n到期日期：2026-01-11\n卖方\n阿里巴巴集团\n91275055470498697\n成都市人民街 303 号\nCN / China\n客户\n武汉通",
+        "source_file": "data/invoice/002_INV20250102.png",
+        "vec": null
+      },
+      {
+        "id": "ticket_f608a0e86cba53af988a9b67",
+        "ticket_type": "invoice",
+        "ticket_no": "INV20250103",
+        "person": "长沙教育科技有限公司",
+        "date_int": 20250124,
+        "amount_fen": 6007006,
+        "route": "",
+        "counterparty": "小米科技有限公司",
+        "semantic_text": "发票 CNY • VAT 发票编号：INV20250103 开票日期：2025-01-24 到期日期：2025-03-09 卖方 小米科技有限公司 91178313164820976 重庆市解放大道202号 CN / China 客户 长沙",
+        "ocr_text": "发票\nCNY • VAT\n发票编号：INV20250103\n开票日期：2025-01-24\n到期日期：2025-03-09\n卖方\n小米科技有限公司\n91178313164820976\n重庆市解放大道202号\nCN / China\n客户\n长沙",
+        "source_file": "data/invoice/003_INV20250103.png",
+        "vec": null
+      }
+    ],
+    "train": [
+      {
+        "id": "ticket_2bd5ac7bd6745d4a3b6edd25",
+        "ticket_type": "train",
+        "ticket_no": "T20170708704401",
+        "person": "富东",
+        "date_int": 20260803,
+        "amount_fen": 15560,
+        "route": null,
+        "counterparty": null,
+        "semantic_text": "检票:9B 青岛站 Qingdao 2026年08月03日02:09开 ￥155.6元 成惠 04车04F号 二等座始发改签 仅供报销使用 4503011970****6874 富东 报销凭证 遗失不补 退票改签时须交回车站 T201707",
+        "ocr_text": "检票:9B\n青岛站\nQingdao\n2026年08月03日02:09开\n￥155.6元\n成惠\n04车04F号\n二等座始发改签\n仅供报销使用\n4503011970****6874 富东\n报销凭证 遗失不补\n退票改签时须交回车站\nT201707",
+        "source_file": "data/train/001_T20170708704401.png",
+        "vec": null
+      },
+      {
+        "id": "ticket_1f2480be7ee0e16acd6f399f",
+        "ticket_type": "train",
+        "ticket_no": "T20230526263936",
+        "person": "王霞",
+        "date_int": 20260103,
+        "amount_fen": 14700,
+        "route": "Hefei-Wulumuqi",
+        "counterparty": null,
+        "semantic_text": "检票:30C G835L53251 合肥站 D68 Hefei 乌鲁木齐站 Wulumuqi 2026年01月03日05:38开 ￥147.0元 成惠 08车08A号 一等座变更二等座 仅供报销使用 3711211981****2086 王",
+        "ocr_text": "检票:30C\nG835L53251\n合肥站\nD68\nHefei\n乌鲁木齐站\nWulumuqi\n2026年01月03日05:38开\n￥147.0元\n成惠\n08车08A号\n一等座变更二等座\n仅供报销使用\n3711211981****2086 王",
+        "source_file": "data/train/002_T20230526263936.png",
+        "vec": null
+      },
+      {
+        "id": "ticket_1db6da0c8c44d2c68922fc13",
+        "ticket_type": "train",
+        "ticket_no": "T20231207911890",
+        "person": "唐磊",
+        "date_int": 20270427,
+        "amount_fen": 51010,
+        "route": "Shanghai-Haerbin",
+        "counterparty": null,
+        "semantic_text": "检票:28B Z260L35787 上海站 K532 Shanghai 哈尔滨站 Haerbin 2027年04月27日21:52开 ￥510.1元 成惠 20车20A号 二等座始发改签 仅供报销使用 6106001947****3567 ",
+        "ocr_text": "检票:28B\nZ260L35787\n上海站\nK532\nShanghai\n哈尔滨站\nHaerbin\n2027年04月27日21:52开\n￥510.1元\n成惠\n20车20A号\n二等座始发改签\n仅供报销使用\n6106001947****3567 ",
+        "source_file": "data/train/003_T20231207911890.png",
         "vec": null
       }
     ]
