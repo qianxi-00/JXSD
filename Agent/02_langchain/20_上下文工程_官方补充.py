@@ -51,9 +51,11 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8")   # Windows 控制台默认 GBK，防中文/emoji 报错
 
 import time
+from typing import Union
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import after_model, before_model, wrap_model_call
+from langchain.agents.structured_output import ToolStrategy
 from langchain.chat_models import init_chat_model
 from langchain.tools import ToolRuntime, tool
 from langgraph.graph import MessagesState
@@ -154,11 +156,29 @@ def demo_1_dynamic_tools() -> None:
 # 课案 08_结构化输出 讲的是「固定的 schema」；官方这里强调的是**动态**：
 # 同一个 agent，在处理不同类型请求时用不同的输出格式（甚至有时不用结构化输出）。
 # 场景：首轮把用户需求整理成结构化任务单，之后自由对话即可。
+#
+# ⚠️ 官方文档示例是「中间件里 override 成创建时没声明过的 schema」：
+#       request = request.override(response_format=SimpleResponse)
+#    但 langchain 1.x **不允许**这样做 —— 实测直接抛 ValueError：
+#       ToolStrategy specifies tool 'TaskTicket' which wasn't declared
+#       in the original response format when creating the agent.
+#    框架在 langchain/agents/factory.py 的注释里说明了设计意图：
+#       "Middleware is allowed to change the response format to a subset of the
+#        original structured tools when using ToolStrategy, but not to add new
+#        structured tools that weren't declared upfront."
+#    所以**正确姿势**是：创建 agent 时用 ToolStrategy(Union[...]) 把候选 schema
+#    一次声明齐，中间件只做「收窄到某一个」或「关掉」。
 class TaskTicket(BaseModel):
-    """结构化任务单。"""
+    """首轮用的结构化任务单（创建 agent 时就声明，供中间件选用）。"""
 
     goal: str = Field(description="用户目标，一句话")
     steps: list[str] = Field(description="拆解出的 3 个步骤")
+
+
+class FreeReply(BaseModel):
+    """后续轮次用的自由回复（同样在创建时声明）。"""
+
+    reply: str = Field(description="给用户的自然语言回复")
 
 
 format_log: list[str] = []
@@ -166,13 +186,13 @@ format_log: list[str] = []
 
 @wrap_model_call
 def dynamic_response_format(request, handler):
-    """只在这轮消息数较少（=任务刚开始）时要求结构化输出。"""
-    message_count = len(request.messages)
-    if message_count <= 1:
-        format_log.append("启用结构化输出（TaskTicket）")
-        return handler(request.override(response_format=TaskTicket))
-    format_log.append("自由文本（不再要求 schema）")
-    return handler(request)
+    """按消息数切换输出格式：首轮收窄成任务单，之后收窄成自由回复。"""
+    if len(request.messages) <= 1:
+        format_log.append("收窄为 TaskTicket（结构化任务单）")
+        # 只收窄到「创建时声明过的子集」—— 这是框架允许的用法
+        return handler(request.override(response_format=ToolStrategy(TaskTicket)))
+    format_log.append("收窄为 FreeReply（自由回复）")
+    return handler(request.override(response_format=ToolStrategy(FreeReply)))
 
 
 def demo_2_dynamic_format() -> None:
@@ -184,20 +204,49 @@ def demo_2_dynamic_format() -> None:
         model=model,
         tools=[],
         middleware=[dynamic_response_format],
+        # 候选 schema 必须在创建 agent 时一次声明齐（Union 即可）
+        response_format=ToolStrategy(Union[TaskTicket, FreeReply]),
     )
-    result = agent.invoke({
-        "messages": [{"role": "user", "content": "我想给团队做个每周自动汇总的机器人"}],
-    })
-    structured = result.get("structured_response")
-    print(f"  格式决策：{format_log}")
+
+    # ---- 第 1 轮：消息只有 1 条 → 中间件收窄成 TaskTicket，要结构化任务单 ----
+    try:
+        first = agent.invoke({
+            "messages": [{"role": "user", "content": "我想给团队做个每周自动汇总的机器人"}],
+        })
+    except Exception as exc:
+        # 结构化输出要靠端点能力：原生 json_schema，或「强制 tool_choice」。
+        # 本机 .env 若指向 DeepSeek（deepseek-flash / deepseek-v4-pro 都是思考模型），
+        # 两条路都不支持，会在这里抛 400 —— 兜成中文提示，不崩也不假装成功。
+        print(f"  [跳过] 本端点不支持结构化输出：{type(exc).__name__}")
+        print(f"         {str(exc)[:160]}")
+        print("         把 .env 的 API_KEY/BASE_URL/MODEL_NAME 切回支持 json_schema 的端点，")
+        print("         或删掉 response_format= 只演示工具裁剪即可跑通（见文末实测结论第 5 条）。")
+        return
+
+    structured = first.get("structured_response")
+    print(f"  第 1 轮决策：{format_log[-1]}")
     if structured is not None:
-        print(f"  结构化结果类型：{type(structured).__name__}")
-        print(f"    目标：{getattr(structured, 'goal', None)}")
-        print(f"    步骤：{getattr(structured, 'steps', None)}")
+        print(f"    结构化类型：{type(structured).__name__}")
+        print(f"      目标：{getattr(structured, 'goal', None)}")
+        print(f"      步骤：{getattr(structured, 'steps', None)}")
     else:
-        print(f"  本轮没有结构化结果，拿到的是文本：{final_text(result)[:80]}")
+        print(f"    没拿到结构化结果，文本：{final_text(first)[:80]}")
+
+    # ---- 第 2 轮：把上一轮消息带进来 → 消息数 > 1，中间件换成自由回复 ----
+    second = agent.invoke({
+        "messages": [*first["messages"],
+                     {"role": "user", "content": "先按这个思路，帮我列一句对外介绍语"}],
+    })
+    structured2 = second.get("structured_response")
+    print(f"  第 2 轮决策：{format_log[-1]}")
+    if structured2 is not None:
+        print(f"    结构化类型：{type(structured2).__name__}")
+        print(f"      回复：{getattr(structured2, 'reply', None)}")
+    else:
+        print(f"    没拿到结构化结果，文本：{final_text(second)[:80]}")
+
     print(
-        "  ↑ 同一个 agent，**按上下文决定这轮要不要 schema** —— 这就是 Model Context 的\n"
+        "  ↑ 同一个 agent，**按上下文决定这轮用哪个 schema** —— 这就是 Model Context 的\n"
         "    「瞬时」性质：改的是这一次模型调用看到的东西，state 里存的仍是普通消息。\n"
         "    实用场景：首轮抽任务单、后续自由对话；或简单问题跳过结构化输出省 token。"
     )
@@ -365,7 +414,8 @@ if __name__ == "__main__":
 #    - `ToolRuntime` 实测字段：state / context / config / stream_writer / tool_call_id /
 #      store / tools / execution_info / server_info；
 #    - Demo 1：免费用户模型只看到 ['search_records']，付费用户看到两个工具 —— 裁剪生效；
-#    - Demo 2：结构化输出生效，拿到 TaskTicket(goal=…, steps=[3 条])；
+#    - Demo 2：第 1 轮收窄成 TaskTicket、拿到结构化任务单；第 2 轮收窄成 FreeReply —— 
+#      同一个 agent 两种输出格式切换生效；
 #    - Demo 3：一次工具调用读到三种数据源 —— context.user_id=u-1001、
 #      state.ticket_no=T-2026-0917、store 首次为空；**换 thread_id 后再读，
 #      store 里已能取到上次写入的 {'note': '刚刚查询过上下文'}（跨会话长期记忆生效）**；
@@ -379,8 +429,29 @@ if __name__ == "__main__":
 #    C. `request.override(...)` 是**不可变**的：它返回新请求，原 request 不变，
 #       记得把返回值交给 handler；
 #    D. `response_format` 动态切换后，结构化结果落在 `result["structured_response"]`；
-#       某轮不设 schema 时该键可能不存在 —— 取值要判空（本文件 Demo 2 就是这写法）；
+#       用 `override(response_format=None)` 关掉 schema 的那一轮该键不存在 —— 取值一律判空
+#       （本文件 Demo 2 就是这写法）。注意 `None` 是唯一的「关掉」写法；想换成创建时
+#       没声明过的新 schema 会被框架拒绝（见上面第 5 条 A）；
 #    E. 工具里访问 `runtime.store` 前先确认 create_agent 传了 `store=`；
 #       没传时 store 为 None（本文件做了 None 兜底）；
 #    F. `before_model` / `after_model` 的返回值：不打算改状态就**别返回 dict**，
 #       返回 None 表示只做副作用（打点、日志）。
+# 5. **端点的结构化输出能力差异（实测三组对照，写课时必看）**：
+#    动态 response_format 要真的跑通，同时受两个条件限制 —— ①框架允许、②端点支持。
+#    A. 框架限制（与端点无关）：override 只能收窄到**创建时声明过**的 schema，
+#       临时引入新 schema 抛 `ValueError: ToolStrategy specifies tool 'X' which wasn't
+#       declared in the original response format when creating the agent.`（见 Demo 2 注释）；
+#    B. 端点能力（本机实测，2026-09）：
+#       - 网关 grok-4.6（.env 备份里那组）：支持 json_schema，结构化输出正常，
+#         但一次结构化调用实测**约 50 秒**，整仓复核会被拖成小时级；
+#       - DeepSeek 官方端点（api.deepseek.com，deepseek-flash / deepseek-v4-pro）：
+#         两者都是**思考模型**，两条路都不通 ——
+#           · 原生 json_schema → `400 This response_format type is unavailable now`
+#           · 强制 tool_choice（LangChain 的 ToolStrategy 固定发 `tool_choice="any"`，
+#             langchain-openai 会翻成 `required`）→
+#             `400 Thinking mode does not support this tool_choice`
+#           · `response_format={"type":"json_object"}`（即 `method="json_mode"`）
+#             只要提示词含 "json" 就能通 HTTP，但它**不约束字段名**：实测模型把
+#             `goal/steps` 输出成了 `目标/步骤`，照样解析失败（OutputParserException）；
+#       - 结论：想跑结构化输出，用支持 json_schema 或强制 tool_choice 的端点；
+#         用 DeepSeek 时本文件与 08_结构化输出_jxsd.py 都会打印「[跳过]」而不是崩。

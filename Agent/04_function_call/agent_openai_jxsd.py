@@ -206,16 +206,34 @@ def run_agent_loop(history: list[dict], tools: list[dict],
         #    这也正说明「循环上限」不是可有可无的摆设。
         tool_choice = first_tool_choice if turn == 0 else "auto"
 
-        response = client.chat.completions.create(
-            model=settings.model_name,     # 课案原文是 setting.MODEL_NAME（settings 的另一种大小写风格）
-            # 每次都要把完整历史重新发一遍：Chat Completions API 是**无状态**的，
-            # 服务端不记得你上一轮说了什么（这一点正是课案开头那张对比表里
-            # 「Responses API 有状态 / Chat Completions 无状态」的差别）
-            messages=[{"role": "system", "content": system_prompt}, *history],
-            tools=tools,
-            tool_choice=tool_choice,
-            temperature=0,     # 温度 0：算数题要的是稳定复现，不要随机发挥
-        )
+        # 抽成内部函数：端点拒绝强制 tool_choice 时要原样重发一次（见下面的降级分支）
+        def _create(choice: str):
+            return client.chat.completions.create(
+                model=settings.model_name,     # 课案原文是 setting.MODEL_NAME（settings 的另一种大小写风格）
+                # 每次都要把完整历史重新发一遍：Chat Completions API 是**无状态**的，
+                # 服务端不记得你上一轮说了什么（这一点正是课案开头那张对比表里
+                # 「Responses API 有状态 / Chat Completions 无状态」的差别）
+                messages=[{"role": "system", "content": system_prompt}, *history],
+                tools=tools,
+                tool_choice=choice,
+                temperature=0,     # 温度 0：算数题要的是稳定复现，不要随机发挥
+            )
+
+        try:
+            response = _create(tool_choice)
+        except Exception as exc:
+            # 端点不支持强制工具选择时的降级。实测：**思考模型**（DeepSeek 的
+            # deepseek-flash / deepseek-v4-pro）会返回
+            #     400 Thinking mode does not support this tool_choice
+            # 退回 auto 重试 —— 演示语义从「强迫模型必须调工具」变成「模型自己决定」，
+            # 属于真的换了行为，所以必须打印出来，不能静默处理。
+            if tool_choice == "auto":
+                raise          # 本来就用 auto 还失败，那是别的问题，如实抛出去
+            print(f"  [降级] 本端点不支持 tool_choice={tool_choice!r}"
+                  f"（{type(exc).__name__}: {str(exc)[:90]}）")
+            print("         改用 tool_choice='auto' 重试：本轮是否调工具由模型自行决定。")
+            tool_choice = "auto"
+            response = _create(tool_choice)
 
         message = response.choices[0].message
 

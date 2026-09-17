@@ -45,16 +45,30 @@ class RouteDecision(BaseModel):
 
 
 if __name__ == "__main__":
-    # ---------- 2. 信息抽取 ----------
-    reviewer = llm.with_structured_output(MovieReview)
-    review = reviewer.invoke("评价一下《流浪地球2》：视觉震撼，剧情稍散，8分吧")
-    print("结构化结果：")
-    print("  片名：", review.title)
-    print("  评分：", review.score)
-    print("  理由：", review.reason)
-    print("  标签：", review.tags)
+    # 说明：结构化输出要靠**端点能力** —— 要么支持原生 json_schema，要么支持强制
+    # tool_choice（function calling）。本机 .env 若指向 DeepSeek 官方端点
+    # （deepseek-flash / deepseek-v4-pro 都是思考模型），两条路都会被 400 拒绝：
+    #   · json_schema → "This response_format type is unavailable now"
+    #   · 强制工具选择 → "Thinking mode does not support this tool_choice"
+    # 所以这里兜一层中文提示：不静默失败、也不让课案崩掉。把 .env 的
+    # API_KEY / BASE_URL / MODEL_NAME 切回支持结构化输出的端点即可跑通。
+    # 三组端点的实测对照见 `20_上下文工程_官方补充.py` 文末「实测结论」第 5 条。
+    try:
+        # ---------- 2. 信息抽取 ----------
+        reviewer = llm.with_structured_output(MovieReview)
+        review = reviewer.invoke("评价一下《流浪地球2》：视觉震撼，剧情稍散，8分吧")
+        print("结构化结果：")
+        print("  片名：", review.title)
+        print("  评分：", review.score)
+        print("  理由：", review.reason)
+        print("  标签：", review.tags)
 
-    # ---------- 3. 意图路由（客服分流常用） ----------
-    router = llm.with_structured_output(RouteDecision)
-    decision = router.invoke("我要投诉你们物流太慢了！")
-    print("路由决策：", decision.intent)
+        # ---------- 3. 意图路由（客服分流常用） ----------
+        router = llm.with_structured_output(RouteDecision)
+        decision = router.invoke("我要投诉你们物流太慢了！")
+        print("路由决策：", decision.intent)
+    except Exception as exc:
+        # 注意：这里只兜「端点不支持」这一类，其余异常同样会被打印出来看清原因
+        print(f"[跳过] 本端点跑不通结构化输出：{type(exc).__name__}")
+        print(f"       {str(exc)[:200]}")
+        print("       → 换一个支持 json_schema 或 function calling 的端点即可。")

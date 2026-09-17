@@ -450,9 +450,24 @@ async def main() -> None:
 - gitee："搜索身份验证相关的代码实现和示例" """
         )
 
-        result = await classifier.ainvoke({
-            "messages": [{"role": "user", "content": state["query"]}]
-        })
+        try:
+            result = await classifier.ainvoke({
+                "messages": [{"role": "user", "content": state["query"]}]
+            })
+        except Exception as exc:
+            # 端点不支持结构化输出时的降级。分类器内部靠强制 tool_choice 拿结构化结果，
+            # 思考模型端点（如 DeepSeek 的 deepseek-flash / deepseek-v4-pro）会返回
+            # `400 Thinking mode does not support this tool_choice` —— 见本文件上方
+            # 4.5 的注释：**分类器必须用非思考模型**。
+            # 降级策略保守：两个知识源都查（宁可多查，不要漏），
+            # 这样「条件边 → Send 并行派发 → 归约器合并」这一课仍然演示得完整。
+            print(f"  [降级] 结构化分类不可用（{type(exc).__name__}）：{str(exc)[:110]}")
+            print("         原因：分类器要强制 tool_choice，当前端点的模型是思考模式，不支持。")
+            print("         兜底：本轮到两个知识源都查（并行派发与合并的演示不受影响）。")
+            return {"classifications": [
+                {"source": "baidu", "query": state["query"]},
+                {"source": "gitee", "query": state["query"]},
+            ]}
 
         # 直接取属性 `.classifications`，不用 json.loads 也不用正则 ——
         # 这就是 response_format 的价值：拿到的是 Pydantic 对象，字段名由类型系统保证。
