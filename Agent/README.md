@@ -82,6 +82,7 @@ $env:PYTHONUTF8 = "1"
 | `02_langchain/19_事件流v3_官方补充.py` | v3 类型化投影、interleave 消费规则、工具失败可见性 | ⚠️ 需真实模型 |
 | `02_langchain/20_上下文工程_官方补充.py` | 上下文工程 3×3 总纲索引 + 动态工具集/响应格式/三数据源/生命周期打点 | ⚠️ 需真实模型 |
 | `02_langchain/21_MCP进阶_官方补充.py` | MCP 连接生命周期、多服务端命名空间、三原语取法、接 deepagents | ⚠️ 需真实模型 |
+| `02_langchain/22_自己组装harness_官方补充.py` | 五步手装 harness + 与 create_deep_agent 默认栈对照 | ⚠️ 需真实模型 |
 | `02_langchain/11_内置中间件_官方补充.py` | ToolError / ModelFallback / ToolCallLimit / PII / LLMToolEmulator | ✅ 假模型 |
 | `03_deepagents/14_上下文治理_官方补充.py` | 内置上下文压缩（卸载）、FilesystemPermission、write_todos opt-in | ✅ 剧本模型 |
 | `03_deepagents/15_自定义后端_官方补充.py` | 从零实现 BackendProtocol、只读后端、审计与限流/校验策略钩子 | ✅ 剧本模型 |
