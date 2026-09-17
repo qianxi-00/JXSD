@@ -23,9 +23,23 @@
 **一个接口替掉了课案的两个 FunASR 模型** —— 百炼的 ASR 同时提供纯文本与句级+词级时间戳。
 
 另外补了课案没有的一环：**本地文件 → 公网 URL**。
-百炼的多个接口只收公网可访问 URL，本项目用百炼自带的**免费临时存储**
-（`tools/dashscope_upload.py`，封装 `dashscope.utils.oss_utils.OssUtils.upload`）
-把本地文件换成 `oss://` 临时 URL（48 小时有效），不需要自己开 OSS 或做内网穿透。
+百炼的多个接口只收公网可访问 URL，而素材都在本地。这里有**两条路**，实测各有适用面：
+
+| 方式 | 模块 | 产出 | 适用 | 实测结论 |
+|---|---|---|---|---|
+| 百炼免费临时存储 | `tools/dashscope_upload.py` | `oss://…`（48h） | 多模态 / 图像 / 视频类接口 | ⚠️ **CosyVoice 不收**（400 `audio url should start with http or https`） |
+| 自建静态托管 | `tools/asset_host.py` | `http(s)://…` | 声音克隆（必需）、数字人 | ✅ 实测可用 |
+
+自建托管的做法：把本地素材 `scp` 到自己的服务器静态目录，nginx 只读分发。
+服务器侧只需要一个 location（上传走 scp，**不需要写权限**）：
+
+```nginx
+location /media-assets/ { alias /var/www/media-assets/; autoindex off; }
+```
+
+> ⚠️ **声音克隆必须用自建托管**（或任何真正的 http(s) 地址）——
+> CosyVoice 的 `create_voice` 明确拒绝 `oss://`。
+> ASR 走的是 Base64 Data URI，两条路都不依赖。
 
 ### 保留原样的部分（本来就不是"模型"）
 
@@ -140,7 +154,8 @@ Media_Agent/
 ├── tools/                       # 能力层
 │   ├── media_tools.py           # 视频下载 / 音频提取 / TTS / 图片 / 文章
 │   ├── audio_transcriber.py     # 语音识别（百炼 ASR，含 SRT 生成）
-│   ├── dashscope_upload.py      # 本地文件 → 百炼临时 URL
+│   ├── dashscope_upload.py      # 本地文件 → 百炼临时 URL（oss://）
+│   ├── asset_host.py            # 本地文件 → 自建公网 http(s) URL（scp + nginx）
 │   ├── voice_clone.py           # 声音克隆（CosyVoice 声音复刻）
 │   ├── avatar_client.py         # 数字人对口型（爱诗 PixVerse）
 │   ├── trend_radar_client.py    # 多平台热点抓取
@@ -288,6 +303,10 @@ Media_Agent 特有的：
 | `MEDIA_TTS_MODEL` | `cosyvoice-v2` | 声音复刻驱动模型（创建音色与合成必须一致） |
 | `MEDIA_TTS_FALLBACK_VOICE` | `zh-CN-XiaoxiaoNeural` | edge-tts 兜底音色 |
 | `MEDIA_AVATAR_MODEL` | `pixverse/pixverse-lipsync` | 数字人对口型模型 |
+| `MEDIA_ASSET_SSH` | 空 | 公网素材托管的 ssh 目标，形如 `ubuntu@1.2.3.4` |
+| `MEDIA_ASSET_REMOTE_DIR` | `/var/www/media-assets` | 服务器上的静态目录 |
+| `MEDIA_ASSET_BASE_URL` | 空 | 对外基址，形如 `http://1.2.3.4/media-assets` |
+| `MEDIA_VOICE_REF_URL` | 空 | 已托管好的固定参考音频 URL（可选，优先于上面的托管） |
 | `MEDIA_IMAGE_API_KEY` / `_BASE_URL` / `_MODEL` | 空 | 留空则图片生成降级为占位图 |
 | `MEDIA_TRENDRADAR_API_URL` | NewsNow 公共 API | 可换自部署实例 |
 | `MEDIA_DOUYIN_API_BASE` | `http://127.0.0.1:8080` | 自托管抖音采集服务 |

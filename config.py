@@ -320,6 +320,12 @@ class MediaAgentSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
         env_file_encoding="utf-8",
+        # ⚠️ 这个 env_prefix 是必须的，漏了它 **所有 MEDIA_* 配置项都不会被读取**。
+        #    而且不会报错：字段全部退化成代码里的默认值，
+        #    因为默认值恰好与 .env 里的值一致，表面上完全看不出问题。
+        #    （实测踩到：MEDIA_ASSET_SSH / MEDIA_ASSET_BASE_URL / MEDIA_VOICE_REF_URL
+        #      配了却读不到，排查半天才发现是这里漏了一行。）
+        env_prefix="MEDIA_",
         extra="ignore",
         case_sensitive=False,
     )
@@ -359,6 +365,15 @@ class MediaAgentSettings(BaseSettings):
     avatar_model: str = "pixverse/pixverse-lipsync"
     # 数字人任务最长等待秒数（异步任务，官方说 1~5 分钟）。
     avatar_timeout: int = 900
+
+    # ---- 公网素材托管（声音克隆 / 数字人的硬前提，见 tools/asset_host.py）----
+    # 为什么需要：百炼的 CosyVoice 声音复刻**不收 oss:// 临时存储**（实测 400），
+    # 只认真正的 http(s)；PixVerse 的 video_url/audio_url 同样要求公网 URL。
+    # 做法：把本地素材 scp 到自己的服务器静态目录，nginx 只读分发。
+    # 三项齐备 is_configured() 才为真；不配则声音克隆自动降级到 edge-tts。
+    asset_ssh: str = ""                                    # 形如 ubuntu@1.2.3.4
+    asset_remote_dir: str = "/var/www/media-assets"        # 服务器上的静态目录
+    asset_base_url: str = ""                               # 形如 http://1.2.3.4/media-assets
 
     # ---- 图片生成（可选；三项任一为空则降级为本地占位图）----
     image_api_key: str = ""

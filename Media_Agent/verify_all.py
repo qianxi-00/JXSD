@@ -115,6 +115,7 @@ def tail(text: str, n: int = 6) -> list[str]:
 MODULE_SELF_CHECKS = [
     # (相对路径, 额外参数)
     ("tools/dashscope_upload.py", None),
+    ("tools/asset_host.py", None),
     ("tools/audio_transcriber.py", None),
     ("tools/media_tools.py", None),
     ("tools/trend_radar_client.py", None),

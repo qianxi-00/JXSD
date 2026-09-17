@@ -292,20 +292,17 @@ def _publish_reference(ref_wav: str) -> tuple:
         （实测 400：``audio url should start with http or https``）。
         那套临时存储是给多模态 / 图像 / 视频模型用的，TTS 不收。
 
-    项目目前**没有内置公网托管**，所以这里给出可执行的失败说明，让上层
-    （``workflows/video.py``）降级到 edge-tts 或 PixVerse 内置 TTS ——
-    数字人功能不受影响，只是用不上「克隆你自己的声音」。
+    本项目的做法（按用户指定）：**用自己的公网服务器做静态托管**，
+    上传逻辑封装在 ``tools/asset_host.py`` 里（scp + nginx 只读分发）。
 
-    想启用声音克隆，任选一种托管方式并在 ``.env`` 里落一个稳定的公网地址：
-
-        · **阿里云 OSS**（同账号最顺）：开 OSS → 建 Bucket → 拿 AK/SK
-          → 上传参考音频 → 把对象 URL 填到下面这个变量
-        · **自己的公网服务器**：把 wav 放到静态目录，URL 指过去
-        · **内网穿透**（Cloudflare Tunnel / ngrok）：本地目录映射成公网域名
-
-    当前支持的最简形态：直接给一个**已经托管好的参考音频 URL**
-    （``MEDIA_VOICE_REF_URL``），此时跳过本地文件直接用。
+    优先级：
+        ① ``MEDIA_VOICE_REF_URL`` 已预置 → 直接用（适合"参考音频固定不变"的场景）；
+        ② ``MEDIA_ASSET_*`` 三项配齐 → 现传现用（``asset_host.publish``）；
+        ③ 都没有 → 明确失败，让上层降级到 edge-tts / PixVerse 内置 TTS。
     """
+    ref_wav_path = Path(ref_wav)
+
+    # ① 预置的固定参考音频 URL
     preset = (getattr(settings.media, "voice_ref_url", "") or "").strip()
     if preset:
         if not preset.startswith(("http://", "https://")):
@@ -313,15 +310,30 @@ def _publish_reference(ref_wav: str) -> tuple:
         print(f"[声音克隆] 使用 .env 里预置的参考音频 URL: {preset[:80]}")
         return preset, ""
 
+    # ② 现传现用：走自己的公网素材托管
+    try:
+        from tools.asset_host import is_configured as host_ready
+        from tools.asset_host import publish
+
+        if host_ready():
+            url = publish(str(ref_wav_path))
+            if url:
+                return url, ""
+            return "", "参考音频上传到公网素材托管失败（见上方 [托管] 日志）"
+    except Exception as exc:  # noqa: BLE001 —— 托管模块出问题也要给出可读原因
+        print(f"[声音克隆] 调用素材托管失败: {exc}")
+
+    # ③ 都没配
     return "", (
         "声音克隆需要一个**真正的公网 http(s) 参考音频 URL**，"
         "百炼临时存储的 oss:// 在 create_voice 上会被拒（实测 400："
         "audio url should start with http or https）。\n"
-        "本项目目前没有内置公网托管，三种可选做法：\n"
-        "  ① 阿里云 OSS：开 OSS → 建 Bucket → 拿 AK/SK，把参考音频传上去；\n"
-        "  ② 你自己的公网服务器：把 wav 放进静态目录，用它的 URL；\n"
-        "  ③ 内网穿透（Cloudflare Tunnel / ngrok）。\n"
-        "拿到 URL 后填进根 .env 的 MEDIA_VOICE_REF_URL 即可启用。\n"
+        "二选一：\n"
+        "  ① 配好公网素材托管（推荐，项目已内置 tools/asset_host.py）：\n"
+        "       MEDIA_ASSET_SSH=ubuntu@<你的服务器>\n"
+        "       MEDIA_ASSET_REMOTE_DIR=/var/www/media-assets\n"
+        "       MEDIA_ASSET_BASE_URL=http://<你的服务器>/media-assets\n"
+        "  ② 或者手工把一个参考音频传上去，把 URL 填进 MEDIA_VOICE_REF_URL。\n"
         "（不配也不影响数字人：会自动降级到 edge-tts 通用音色 / PixVerse 内置 TTS）"
     )
 
