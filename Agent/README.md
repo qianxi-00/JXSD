@@ -125,7 +125,7 @@ $env:PYTHONUTF8 = "1"
 
 | 用途 | 配置项 | 当前值 |
 |---|---|---|
-| 作答 / Agent 推理 | `API_KEY` / `BASE_URL` / `MODEL_NAME`（Agent 课案扁平字段） | `grok-4.6` @ 课案网关 |
+| 作答 / Agent 推理 | `API_KEY` / `BASE_URL` / `MODEL_NAME`（Agent 课案扁平字段） | `deepseek-flash` @ DeepSeek 官方端点 |
 | 向量化 | `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` / `EMBEDDING_SIZE` | `BAAI/bge-m3`（**1024 维**）@ SiliconFlow |
 | 重排序 | `RERANK_API_KEY` / `RERANK_BASE_URL` / `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` @ SiliconFlow |
 
@@ -135,6 +135,28 @@ $env:PYTHONUTF8 = "1"
   在这种尺度下会误判），看 top1 与 top2 的差距更可靠。
 - 走第三方 OpenAI 兼容端点做向量化时，`OpenAIEmbeddings` 要设
   `check_embedding_ctx_length=False`，否则它会按 OpenAI 的 tiktoken 规则预切分文本。
+
+### 换端点的代价：结构化输出（实测三组对照，2026-09）
+
+扁平字段决定 **166 个文件跑得快不快**，也决定 **结构化输出类示例能不能跑通** ——
+两者在本机是矛盾的，换端点前先看这张表：
+
+| 端点 / 模型 | 纯聊天延迟 | 原生 `json_schema` | 强制 `tool_choice` | 后果 |
+|---|---|---|---|---|
+| 课案网关 `grok-4.6` | 单次可达 50 s+，整仓复核会拖到小时级 | ✅ | ✅ | 结构化输出全部正常，但慢 |
+| DeepSeek `deepseek-flash` / `deepseek-v4-pro` | **1~10 s**（整仓复核 1.5 分钟级） | ❌ `This response_format type is unavailable now` | ❌ `Thinking mode does not support this tool_choice` | 快，但结构化输出跑不了 |
+
+DeepSeek 是**思考模型**（两个模型都是），两条结构化输出的路都被拒；`method="json_mode"`
+虽然能通 HTTP，但它**不约束字段名** —— 实测把 `goal/steps` 输出成了 `目标/步骤`，
+解析照样失败。所以：
+
+- 当前 `.env` 指向 DeepSeek 时，`02_langchain/08_结构化输出.py`、
+  `20_上下文工程_官方补充.py` Demo 2、`03_deepagents/16_Rubric评分循环_官方补充.py`
+  会打印「[跳过] / grader_error」的中文说明，**这是端点的限制，不是代码有问题**；
+- 要完整跑这三处，把 `.env` 的 `API_KEY` / `BASE_URL` / `MODEL_NAME` 换回支持
+  `json_schema` 或强制 `tool_choice` 的端点即可（代码不用改）；
+- 完整对照与原因见 `02_langchain/20_上下文工程_官方补充.py` 文末「实测结论」第 5 条。
+
 
 ## `_jxsd` 版的几处设计约定
 
@@ -197,15 +219,24 @@ $env:PYTHONUTF8 = "1"
 | 脱敏 | 正则扫描连接串 / Key / 内网 IP | 0 处命中（课案原文里的 `postgres:postgres@localhost` 已改成 `<用户名>:<口令>@127.0.0.1`） |
 | 讲解密度 | （注释行 + docstring 行 + 含中文的字符串行）/ 总行数 | 平均 **57%**，最低 42% |
 
-### 全仓库运行复核（那一轮跑的是 142 个 `.py`；此后新增的补充篇逐个单独验证）
+### 全仓库运行复核（最新一轮 2026-09-17：162 个 `.py`，16.6 分钟）
 
 用独立子进程逐个真跑（`run_all.py`：串行/并行分道、端口类文件串行、超时保护、喂空行给
-`input()`），结果：**137 个 PASS + 5 个环境类异常，全部定位清楚、无一是代码 bug**。
+`input()`），结果：**160 个 PASS/SERVER-OK + 2 个异常**，两个都已定位清楚并处理：
 
-> 文件数说明：那一轮（2026-09-16）覆盖的是 `Agent/` 下当时存在的 142 个 `.py`。
-> 之后陆续新增的 **21 个官方补充篇**是在各自开发过程中**单独跑通并留了实测记录**的
-> （每篇文末的「实测结论」块就是那一次的真实输出）。
-> 当前 `Agent/` 共 **166 个 `.py`**：78 个课案 `_jxsd` + 67 个课案精简版 + 21 个官方补充篇。
+| 异常 | 真相 | 处理 |
+|---|---|---|
+| `05_mcp/09_权限_客户端.py` 连接被拒 | 它是**客户端**，要求先手工起认证服务(9000) + 权限服务(8000) | 编排两个前置服务后实跑通过（见下表末行）；单独跑必然连不上 |
+| `03_deepagents/19_异步子代理_官方补充.py` `PermissionError: [WinError 32]` | Windows **不会立刻**释放刚被 taskkill 的进程持有的文件句柄，紧接着删临时目录就撞锁 | 清理改成「小步重试 + 容忍失败」的显式清理；连跑 2 次均 PASS |
+
+> 文件数口径：`Agent/` 下共 **169 个 `.py`**，harness 实跑 162 个 —— 另外 7 个在
+> `03_deepagents/tmp_jxsd_deepagents_*/` 里，那是课案脚本**运行时自己生成**的工作目录
+> （已被 `.gitignore` 的 `Agent/*/tmp_*/` 覆盖，删掉后重跑会重新生成，已实测）。
+> 组成：78 个课案 `_jxsd` + 63 个课案精简版 + 21 个官方补充篇。
+
+### 历史轮次记录（2026-09-16，142 个 `.py`）
+
+那一轮：**137 个 PASS + 5 个环境类异常，全部定位清楚、无一是代码 bug**。
 
 | 现象 | 真相 | 处理 |
 |---|---|---|
@@ -239,10 +270,19 @@ $env:PYTHONUTF8 = "1"
 
 ## 关于本机模型的实测提示
 
-`_jxsd` 版里凡是要调大模型的地方都用 `.env` 的 `MODEL_NAME`（当前 `grok-4.6`）。
-**最新实测（2026-09）**：该端点在单个工具的 function call 上 3/3 稳定，
-在「工具多、中间件多、system prompt 复杂」的 Agent 里也能正常发起 `tool_calls`；
-代码里为早期不稳定版本加的中文兜底提示（「本轮模型没有发起工具调用」）无需删除 ——
-换个端点时它们仍然有用。
-两点观察：① 该模型回答风格偏「有个性」（会在正文里吐槽），演示时注意别当成 bug；
-② 它走的是 OpenRouter 免费额度，批量跑会触发 429（见排障第 5 条）。
+`_jxsd` 版里凡是要调大模型的地方都用 `.env` 的 `MODEL_NAME`。
+**最新实测（2026-09）**：
+
+| 项 | 网关 `grok-4.6` | DeepSeek `deepseek-flash`（当前） |
+|---|---|---|
+| 单次请求 | 网关繁忙时可达 50 s+，早期实测 2/2 超时（120 s 上限） | 1~10 s 稳定返回 |
+| 工具调用 | 单个工具的 function call 3/3 稳定；工具多 + 中间件多时也能正常发起 `tool_calls` | 正常 |
+| 结构化输出 | ✅ | ❌（思考模型，两条路都被 400 拒绝，见上文「换端点的代价」） |
+
+- 代码里为早期不稳定版本加的中文兜底提示（「本轮模型没有发起工具调用」）无需删除 ——
+  换个端点时它们仍然有用。
+- 网关的 `grok-4.6` 回答风格偏「有个性」（会在正文里吐槽），演示时注意别当成 bug；
+  它走的是 OpenRouter 免费额度，批量跑会触发 429（见排障第 5 条）。
+- 换端点只需改 `.env` 那三个扁平字段，**代码一行都不用动** —— 这也是课案统一走
+  `from config import settings` 的意义。
+
