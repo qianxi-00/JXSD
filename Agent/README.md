@@ -7,7 +7,7 @@ Notebook 化带来的是「**能渲染的讲解**」：知识点用 Markdown 的
 对比用表格、流程用 mermaid 图、出处用可点击的官方链接，代码按「一格只讲一件事」切分，
 每个有输出的格子后面都跟着一段 **实测的「预期输出」**。
 
-> 原来的 162 个课程 `.py` **没有删除**，已归档到 `_py_source/`（保留 git 历史，仍可运行、可 grep）。
+> 原来的 **160 个**课程 `.py` **没有删除**，已归档到 `_py_source/`（保留 git 历史，仍可运行、可 grep）。
 > 见下文「源脚本归档」。
 
 ## 先做一次：注册项目专用内核
@@ -64,7 +64,7 @@ cd F:\ProGram\Python_Base
 | `08_skills/` | `01_概念原理与SKILL示例`、`02_三种技能载体` |
 | `09_aegra_deploy/` | `01_为什么需要部署平台与项目骨架`、`02_本地开发_客户端调用_Langfuse` |
 | `10_workflow_platform/` | `01_可视化平台与Langflow` |
-| `_py_source/` | **归档**：162 个课程 `.py`，与原章节目录结构一一对应 |
+| `_py_source/` | **归档**：160 个课程 `.py`，与原章节目录结构一一对应（另有 2 个是脚本运行时自建的产物） |
 | `_tools/` | 改造与维护工具（见下） |
 | `_nb_template.md` | Notebook 编写规范 —— **改 notebook 之前先看它** |
 
@@ -92,7 +92,7 @@ cd F:\ProGram\Python_Base
 
 ## 源脚本归档（`_py_source/`）
 
-162 个课程 `.py` 按原章节目录结构归档在此。搬运用的是 `git mv`，所以**每个文件的历史都还在**。
+160 个课程 `.py` 按原章节目录结构归档在此。搬运用的是 `git mv`，所以**每个文件的历史都还在**。
 它们仍然可运行——凡是「notebook 里被改写过、想对照原文」的地方，都回这里查。
 
 命名沿用旧约定：`NN_主题.py` 是课案精简版、`NN_主题_jxsd.py` 是完整版、
@@ -322,11 +322,12 @@ DeepSeek 是**思考模型**（两个模型都是），两条结构化输出的�
 ## 排障：跑不起来时先看这 5 条
 
 1. **必须用仓库自带的 venv**，别用系统 Python：
-   - ✅ `uv run Agent/02_langchain/01_模型_jxsd.py`（或 `& .\.venv\Scripts\python.exe Agent\...`）
+   - ✅ `& .\.venv\Scripts\python.exe Agent\_tools\run_notebooks.py 02_langchain\02_智能体与工具.ipynb`
+     （无头跑一本 notebook；也可以直接用 JupyterLab 打开，内核选 `Python (Python_Base .venv)`）
+   - ✅ 想跑归档的原脚本：`& .\.venv\Scripts\python.exe Agent\_py_source\02_langchain\01_模型_jxsd.py`
    - ❌ PATH 里的 `python` 是 Windows Store 占位符（**静默失败、什么都不输出**）；
    - ❌ `F:\ProGramApp\Anaconda\python.exe` 里装的是另一套老版本依赖，`import langchain`
-     会因 pydantic 版本冲突直接报错 —— **「大量导包报错」几乎都是解释器用错**，
-     仓库代码本身的导入是干净的（282 个文件 AST 级扫描：语法错误 0、未兜底导入错误 0）。
+     会因 pydantic 版本冲突直接报错 —— **「大量导包报错」几乎都是解释器用错**。
 2. **命令必须在项目根目录 `F:\ProGram\Python_Base` 下执行**：代码统一 `from config import settings`，
    换目录会 `ModuleNotFoundError: config`。
 3. **本机开着 Clash 等系统代理时**，127.0.0.1 的回环请求会被代理接管，表现为
