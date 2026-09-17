@@ -633,6 +633,17 @@ if __name__ == "__main__":
                 if _platform_unavailable(label)]
     _fetchable_ids = {pid for _, pid, label in FETCH_SOURCES
                       if not _platform_unavailable(label)}
+    # ⚠️ 前置断言「至少留一个可抓平台」：`_fetchable_ids` 为空时，3a/3d 那两条
+    #    「抓到的条数 == 可抓平台数」「实际请求的平台集合 == 可抓平台集合」会退化成
+    #    `0 == 0` / `set() == set()` —— 恒真，而 3a 正是本文件最该盯住 reducer 的那条
+    #    断言。也就是说平台全被标失效时，自检不会再验 reducer（只剩下面
+    #    `filtered == "[STUB-1]"` 勉强兜住）。红在这里，是要明确告诉人
+    #    「自检桩本身坏了」，而不是让人去查 reducer 或者路由。
+    assert _fetchable_ids, (
+        "自检桩必须至少留一个可抓平台，否则 reducer 断言（3a/3d）会退化成恒真："
+        f"FETCH_SOURCES={[l for _, _, l in FETCH_SOURCES]} / "
+        f"UNAVAILABLE_PLATFORMS={UNAVAILABLE_PLATFORMS}"
+    )
     for _name, _pid, _label in _guarded:
         # 守卫命中时节点**连工具函数都不该调**：桩被调到就会记进 `fetched`。
         fetched.clear()
@@ -673,23 +684,31 @@ if __name__ == "__main__":
     print(f"  ✓ 「全部」并行抓到 {len(all_result['raw_topics'])} 条并合并成功")
 
     # 3b) 单平台：只该抓一个源
+    # ⚠️ 平台名**动态推导**（取第一个可抓平台），不硬编码「抖音」：抖音哪天登记进
+    #    `UNAVAILABLE_PLATFORMS`，硬编码会以「抓到 0 路」的形式报红 —— 方向是安全的
+    #    （fail-closed），但定位信息指错：看着像路由串了，其实是自检桩挑了个不发请求的平台。
     # `fetched` 是精确相等而不是包含：多抓一路既是白等网络，也说明路由表串了。
+    _one_pid, _one_label = next(
+        (p, l) for _, p, l in FETCH_SOURCES if not _platform_unavailable(l))
     fetched.clear()
     prompts.clear()
     fetch_platform_hot = make_stub_fetch()  # noqa: F841
     try:
-        one_result = run_hot_topic("抖音", "科技测评")
+        one_result = run_hot_topic(_one_label, "科技测评")
     finally:
         fetch_platform_hot = _real_fetch
 
-    assert fetched == ["douyin"], fetched
+    assert fetched == [_one_pid], fetched
     assert len(one_result["raw_topics"]) == 1, one_result["raw_topics"]
-    assert one_result["raw_topics"][0]["source"] == "抖音"
-    print("  ✓ 单平台只跑一路分支")
+    assert one_result["raw_topics"][0]["source"] == _one_label
+    print(f"  ✓ 单平台（{_one_label}）只跑一路分支")
 
     # 3c) 未知平台回退抖音（与课案行为一致）
-    # 走的是 `route_fetch` 里 `PLATFORM_SENDS.get(platform)` 拿不到值那个分支；
-    # 断言 `fetched == ["douyin"]` 是在验「回退真的发生了」，不只是「没崩」。
+    # 回退目标是 `route_fetch` 里**写死**的 `["fetch_douyin"]`，没法像 3a/3d 那样
+    # 从 `FETCH_SOURCES` 推导 —— 所以这里先钉一条前置断言：抖音一旦失效，回退分支
+    # 就什么也抓不到，红在上面这句比红在「抓到 0 路」那句好定位。
+    assert "douyin" in _fetchable_ids, \
+        "抖音已失效，但 `route_fetch` 的回退目标写死了它（自检桩需同步）"
     fetched.clear()
     fetch_platform_hot = make_stub_fetch()  # noqa: F841
     try:
@@ -772,6 +791,37 @@ if __name__ == "__main__":
     # 提示必须与「一条都没抓到」区分开：否则用户会去查网络，而真正的问题在筛选阶段。
     assert broken["suggestions"] != _NO_SUGGEST_HINT, broken["suggestions"]
     print("  ✓ 筛选出错时短路：0 次 LLM，提示与「无数据」区分开")
+
+    # 3f2) 上游失败前缀的**另外两条**（`[LLM调用失败` / `[LLM未配置`）也要短路。
+    #      这两串是 `node_filter` 那次 `llm_call` 失败时写进 `filtered` 的：筛选都没成，
+    #      拿着报错去生成选题只会烧一次额度、编出一段没有依据的建议。
+    #      ⚠️ 3f 只触发了元组里的最后一条（`[热点筛选失败`）—— 复核方实测：把前两条从
+    #      `_UPSTREAM_FAIL_PREFIXES` 删掉，整个自检照样 exit 0 全绿。这里把缺的两条补上。
+    #      直接调用 `node_suggest` 而不是走真图：图里 `suggest` 绑的是**函数对象**，
+    #      改全局名 `node_filter` 对已编译的图不生效；而这条判据只读 `filtered`
+    #      这一个字段，直接喂等价。
+    assert _UPSTREAM_FAIL_PREFIXES[:2] == ("[LLM调用失败", "[LLM未配置"), _UPSTREAM_FAIL_PREFIXES
+    for _fail_label, _fail_text in (
+        ("调用失败", "[LLM调用失败: boom]"),
+        ("未配置", "[LLM未配置] 根目录 .env 里没有 API_KEY。"),
+    ):
+        prompts.clear()
+        # `llm_call` 必须换成**计数桩**（同 3f 的理由）：真身不记调用，
+        # 拿它验「一次都没调」等于没验。
+        llm_call = _stub_llm  # noqa: F841
+        try:
+            _fail_sug = node_suggest({"filtered": _fail_text})
+        finally:
+            llm_call = _real_llm
+        # 核心断言：筛选阶段报错时 suggest 一次 LLM 都不许调（计数桩会记下任何一次调用）。
+        assert prompts == [], f"上游「{_fail_label}」时不该调 LLM，实际调了 {len(prompts)} 次"
+        _hint = _fail_sug["suggestions"]
+        # 提示要带上**出错原文**：用户靠它区分「没配 key」和「调用报错」，处置方式不同。
+        assert _fail_text.strip() in _hint, (f"提示里没带上出错原文（{_fail_label}）", _hint)
+        # 且必须与「没抓到数据」区分开 —— 那是常态，这是一条真的故障。
+        assert _hint != _NO_SUGGEST_HINT, _hint
+        assert "筛选阶段出错" in _hint, _hint
+    print("  ✓ 筛选的 LLM 调用失败 / 未配置：0 次 LLM，提示带原文且与「无数据」区分")
 
     # 3g) 选中一个**已失效的平台**（小红书）：不发请求、不调 LLM，且提示要说明原因。
     #     这条是 B1b 的端到端判据：改前「全部」会为它白等约 12 秒（2 次重试 + sleep），

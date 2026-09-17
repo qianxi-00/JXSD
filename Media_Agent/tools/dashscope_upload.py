@@ -116,11 +116,20 @@ def upload_file(file_path: str, model: str) -> str:
     # `return "oss://" + form_data["key"], upload_info` —— 所以早先那个
     # `elif isinstance(result, str)` 在这版 SDK 上**永远走不到**（读起来像死代码）。
     # 现在只校验「长度恰为 2 的序列」：形状不对（SDK 升级改成返回 dict / 单串 / None）
-    # 就判失败，并把实际类型与原值打进日志 —— 在这里报出来，好过把它当 URL
-    # 一路带到模型调用那一步才报「文件不可用」。
+    # 就判失败 —— 在这里报出来，好过把它当 URL 一路带到模型调用那一步才报「文件不可用」。
     if not (isinstance(result, (tuple, list)) and len(result) == 2):
-        print(f"[临时存储] upload 返回形态异常（期望 2 元组 (oss_url, 凭证)，实际 "
-              f"{type(result).__name__}）: {result!r} —— 可能是 dashscope 改了返回形态")
+        # ⚠️ 这里**只打形状（类型名 + 元素个数），绝不打值本身**：本机 SDK 那个元组的
+        # 第 2 项就是**上传凭证**（`dashscope/utils/oss_utils.py` 里含
+        # `oss_access_key_id` / `signature` / `policy`），原先 `{result!r}` 写进日志
+        # 等于把临时凭证摊到控制台与 CI 日志里。定位「是不是 SDK 改了返回形态」只需
+        # 知道「期望 2 元组、实际是什么形状」，不需要值。
+        _shape = (
+            f"{type(result).__name__}，长度 {len(result)}"
+            if isinstance(result, (tuple, list))
+            else type(result).__name__
+        )
+        print("[临时存储] upload 返回形态异常（期望 2 元组 (oss_url, 凭证)，实际 "
+              f"{_shape}）：疑似 SDK 变更")
         return ""
     oss_url = str(result[0] or "")
 
@@ -154,3 +163,49 @@ if __name__ == "__main__":
     assert upload_file(__file__, "") == "", "空 model 应返回空串"
     assert upload_file("不存在的文件.txt", "x") == "", "不存在的文件应返回空串"
     print("参数校验分支全部正确返回空串，未抛异常 —— OK")
+
+    # 形态异常分支**只许打形状，不许打值**：本机 SDK 那个元组的第 2 项就是上传凭证
+    # （`oss_access_key_id` / `signature` / `policy`），一旦 `repr` 进日志，凭证就跟着
+    # 控制台输出、CI 日志一起外泄。这里打桩一个「含假凭证的 3 元组」，把 stdout 抓下来
+    # 断言那串假凭证**不出现** —— 去掉脱敏（改回 `{result!r}`）这条必红。
+    import contextlib
+    import io
+    import types as _types
+
+    _MARKER = "MARKER-ACCESS-KEY"
+    _fake_oss_utils = _types.ModuleType("dashscope.utils.oss_utils")
+
+    class _FakeOssUtils:
+        @staticmethod
+        def upload(model=None, file_path=None, api_key=None):
+            # 形状照本机 SDK 的 3 元组故意给错，第 2 项塞假凭证
+            return ("oss://dashscope-instant/fake", {_MARKER: _MARKER},
+                    {"signature": _MARKER})
+
+    _fake_oss_utils.OssUtils = _FakeOssUtils
+    # `upload_file()` 是在函数体里 `from dashscope.utils.oss_utils import OssUtils`，
+    # 所以往 `sys.modules` 塞个假模块就能顶掉它（导入器先查 sys.modules，不再找父包），
+    # 全程离线、不发请求、不计费。
+    _real_oss_utils = sys.modules.get("dashscope.utils.oss_utils")
+    _real_is_configured = is_configured
+    _buf = io.StringIO()
+    try:
+        sys.modules["dashscope.utils.oss_utils"] = _fake_oss_utils
+        is_configured = lambda: True  # noqa: E731 —— 自检里顶掉模块全局名
+        with contextlib.redirect_stdout(_buf):
+            _got = upload_file(__file__, "pixverse/pixverse-lipsync")
+    finally:
+        is_configured = _real_is_configured
+        if _real_oss_utils is None:
+            sys.modules.pop("dashscope.utils.oss_utils", None)
+        else:
+            sys.modules["dashscope.utils.oss_utils"] = _real_oss_utils
+
+    _log = _buf.getvalue()
+    assert _got == "", f"形态异常必须判失败并返回空串，实际 {_got!r}"
+    assert "形态异常" in _log, _log
+    # 形状信息必须留下（否则这个分支等于没报，排查 SDK 变更时看不到线索）
+    assert "tuple" in _log and "长度 3" in _log, _log
+    # 关键断言：凭证字符串一个字符都不许出现在日志里
+    assert _MARKER not in _log, f"日志泄漏了上传凭证: {_log}"
+    print("  形态异常只打形状           OK  类型/长度留下，凭证未进日志")

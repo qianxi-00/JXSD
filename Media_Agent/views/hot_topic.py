@@ -61,9 +61,11 @@ import streamlit as st  # noqa: E402
 # 包起来只会把「平台被静默当成能抓」的问题藏到运行时
 from tools.trend_radar_client import UNAVAILABLE_PLATFORMS  # noqa: E402
 
-# 与工作流 PLATFORM_SENDS 对齐；"全部" 走 5 路并行抓取。
+# 与工作流 PLATFORM_SENDS 对齐；"全部" 走 5 路并行抓取（不可用平台由抓取节点内部跳过）。
 # ⚠️ 这里必须是**纯平台名**：不可用平台只靠 `_platform_label()` 改显示文案，
-#    选项值（也就是传给工作流的值）不能带任何标记，否则 `NAME_TO_IDS` 查不到
+#    选项值（也就是传给工作流的值）不能带任何标记 —— 工作流是拿它去查
+#    `PLATFORM_SENDS` / `FETCH_SOURCES` 的，带标记就成了「未识别的平台」，
+#    会被静默回退成抖音热榜（本文件并不 import `NAME_TO_IDS`，那条路与这里无关）。
 PLATFORM_OPTIONS = ["全部", "抖音", "微博", "知乎", "小红书", "B站"]
 
 

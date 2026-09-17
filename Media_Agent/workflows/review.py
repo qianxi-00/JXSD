@@ -49,6 +49,9 @@
     · 失败路径：给 ``run_review_from_json`` 喂 ``""`` / ``"   "`` / ``"不是 JSON"``
       / ``"[]"`` / ``"{}"`` 五种垃圾输入，每次都要求「6 字段齐全 + ``error_msg`` 非空
       + 诊断字段为空串」（不能被当成正常结果）；
+    · ``_llm_fail_reason`` 四类输入（空串 / 纯空白 / ``_LLM_FAIL_PREFIXES`` 里每一条前缀 /
+      正常正文）**离线**直接调用 —— 它是「没配 key 也算通过」那条修复的唯一守卫，
+      而它只在 ``--llm`` 分支被用到，离线不补这一段就等于没有回归；
     · 真调模型的那条链路放在 ``--llm`` 分支里，由人显式触发；
       该分支用 ``_LLM_FAIL_PREFIXES`` **逐个**校验三个产出，命中就以非 0 退出码收场 ——
       只判非空会把「没配 key / 额度耗尽」当成通过（失败提示文本同样是真值）。
@@ -600,7 +603,37 @@ if __name__ == "__main__":
     assert result["error_msg"] and result["video_data"] == "[]"
     print("  run_review 空链接         OK")
 
-    # 4) 真实 LLM 链路（默认跳过，保证离线全绿）
+    # 4) `_llm_fail_reason` —— 「没配 key 也算通过」那条修复的**唯一守卫**。
+    #    ⚠️ 它原先只在 `--llm` 分支里被调到，离线自检完全碰不着：复核方实测，把它改成
+    #    恒返回空串（等于把那个假绿原样放回去），整个自检照样 exit 0 全绿。
+    #    所以这里补一段**不联网、不花钱**的直接调用，覆盖四类输入。
+    assert _LLM_FAIL_PREFIXES[:2] == ("[LLM调用失败", "[LLM未配置"), _LLM_FAIL_PREFIXES
+    _bad_samples = ["", "   ", "\n\t  "]
+    # 再把 `_LLM_FAIL_PREFIXES` 里**每一条**前缀都造一个样本：将来这个元组多一条前缀，
+    # 这条用例会自动把它一起验掉（写死两种样本就会漏）。
+    _bad_samples += [f"{prefix}: 自检样本" for prefix in _LLM_FAIL_PREFIXES]
+    for _sample in _bad_samples:
+        _why = _llm_fail_reason(_sample)
+        # 判定必须**带上原文**：`--llm` 分支与页面都是靠「原因 + 原文」这一对定位问题的，
+        # 所以这里把出口契约一起钉住（打印的就是这一对）。
+        assert _why, f"这类产出该判为不可用，却被放行：原因={_why!r} 原文={_sample!r}"
+        print(f"    {_sample!r} → 不可用：{_why}")
+    # 两种坏形态的原因不能撞成同一句：日志里要能一眼分清「模型没吐东西」与「没配 key」。
+    assert _llm_fail_reason("") != _llm_fail_reason(_LLM_FAIL_PREFIXES[0] + ": x"), \
+        "空产出与 LLM 失败串的原因文案撞了，日志里分不出真因"
+    _good_samples = [
+        "这是一段正常的模型正文。",
+        "\n  前后有空白但内容可用  \n",
+        # 判据是 `startswith`（与 `hot_topic.py` 的 `_UPSTREAM_FAIL_PREFIXES` 同一口径）：
+        # 正文里**引用**到失败串不该被误判 —— 换成 `in` 就会把这段正常正文判死。
+        "正文里引用了一句 [LLM调用失败 的日志，但它不是失败提示。",
+    ]
+    for _sample in _good_samples:
+        assert _llm_fail_reason(_sample) == "", \
+            f"正常正文被误判为不可用：原因={_llm_fail_reason(_sample)!r} 原文={_sample!r}"
+    print("  _llm_fail_reason 四类输入  OK（空/空白/失败前缀判不可用，正文判可用）")
+
+    # 5) 真实 LLM 链路（默认跳过，保证离线全绿）
     if "--llm" in sys.argv:
         # 样例数据来自 `tools/douyin_client.SAMPLE_MANUAL_JSON`（两份假作品，带中文键），
         # 用它才能保证这条用例不依赖网络、只依赖额度。

@@ -305,9 +305,11 @@ def submit_lipsync(
 # 查询进度
 # --------------------------------------------------------------------------
 # 连续查询失败多少次就放弃等待（`wait_task()` 的早退阈值）。
-# 取 3 的依据：轮询间隔默认 15 秒（官方建议的下限），3 × 15 = 45 秒 ——
-# 公网抖动**连续三次**都失败的概率极低；真连续三次，说明服务端或网络已经不可用，
-# 而按老的写法（只等 900 秒超时）用户就是一分钟一分钟地干等，还看不到失败原因。
+# 取 3 的依据：轮询间隔默认 15 秒（官方建议的下限），而**第 1 次查询是立刻发的、
+# 不占等待时间** —— 第 3 次查询落在第 2 次 `sleep` 之后，所以真正等掉的是
+# 2 × 15 = 30 秒（不是 3 × 15 = 45 秒）。公网抖动**连续三次**都失败的概率极低；
+# 真连续三次，说明服务端或网络已经不可用，而按老的写法（只等 900 秒超时）
+# 用户就是一分钟一分钟地干等，还看不到失败原因。
 _MAX_CONSECUTIVE_QUERY_ERRORS = 3
 
 
@@ -381,6 +383,22 @@ def query_task(task_id: str) -> dict:
         result["message"] = "生成完成"
         print(f"[数字人] 任务完成: {video_url}")
     elif status in _TERMINAL_FAIL:
+        # 终态失败也必须置 `finished=True`（`success` 保持 False）—— 就是上面三态
+        # 契约里 `finished=True, success=False` 那一支。早先这里只写了 `message`，
+        # 于是三个后果一起出现：
+        # ① `wait_task()` 的早退只看 `last["finished"]`，任务彻底失败也照样一路轮询到
+        #    900 秒超时 —— 正是「干等」那一类（`error` 键只覆盖「查询本身抛异常」）；
+        # ② `workflows/video.py:424` 先判 `not q["finished"]` 就 return，于是它 :428 的
+        #    「真失败」分支**不可达**（`query_task` 里只有 SUCCEEDED 会置 finished，
+        #    而那一支同时 `success=True`）；
+        # ③ `views/video.py` 的刷新分支只在 `success` 为真时写 `video_path`，失败任务
+        #    于是停在 `elif task_code:` 那一支，被渲染成蓝色的 `st.info`「处理中」
+        #    样式 + 一个永不消失的「🔄 刷新进度」按钮，用户看不出任务已经废了。
+        #    ⚠️ 这一条**本行修不掉**：`views/video.py` 里 `finished` 出现 0 次，
+        #    它只读 `success` / `message` / `video_path` —— 所以补上 `finished` 之后，
+        #    失败任务在页面上**仍然**是蓝条 + 刷新按钮（`message` 里已带失败原文，
+        #    只是样式不对）。要彻底修得改 `views/**`，不在 tools 层范围内。
+        result["finished"] = True
         result["message"] = (
             f"任务失败/不可查（{status}）: {output.get('code', '')} "
             f"{output.get('message', '')}".strip()
@@ -663,6 +681,71 @@ if __name__ == "__main__":
     assert empty["aborted"] is True and empty["timed_out"] is False, empty
     assert empty["finished"] is False and empty["success"] is False, empty
     print("  wait_task 空 task_id 即退   OK  0 次查询")
+
+    # 终态语义：六种状态各跑一次 `query_task()`，钉住「只有 PENDING / RUNNING 才
+    # `finished=False`」。修复前 FAILED / CANCELED / UNKNOWN 走的是只写 `message` 的
+    # 分支，`finished` 一直是 False —— 后果（干等 900 秒 / 工作流的真失败分支不可达 /
+    # 页面把失败画成「处理中」）见 `query_task` 里那段注释。
+    # 打桩两层：`is_configured`（不置 True 就走不到 SDK 调用那一步）与
+    # `dashscope.VideoSynthesis` —— `query_task` 是在函数体里
+    # `from dashscope import VideoSynthesis`，所以往 `sys.modules` 塞个假模块就能顶掉它，
+    # 全程离线、不计费。
+    import types as _types
+
+    class _FakeVideoSynthesis:
+        status = "SUCCEEDED"
+        fetch_calls = 0
+
+        @classmethod
+        def fetch(cls, task=None, **kwargs):
+            cls.fetch_calls += 1
+            rsp = _types.SimpleNamespace()
+            rsp.output = {"task_status": cls.status}
+            return rsp
+
+    _fake_dashscope = _types.ModuleType("dashscope")
+    _fake_dashscope.VideoSynthesis = _FakeVideoSynthesis
+    _real_dashscope = sys.modules.get("dashscope")
+    _real_is_configured = is_configured
+    try:
+        sys.modules["dashscope"] = _fake_dashscope
+        is_configured = lambda: True  # noqa: E731 —— 自检里顶掉模块全局名
+
+        for _status, _want_finished, _want_success in (
+            ("SUCCEEDED", True, True),
+            ("FAILED", True, False),
+            ("CANCELED", True, False),
+            ("UNKNOWN", True, False),
+            ("PENDING", False, False),
+            ("RUNNING", False, False),
+        ):
+            _FakeVideoSynthesis.status = _status
+            _q = query_task("stub-task")
+            assert (_q["finished"], _q["success"]) == (_want_finished, _want_success), (
+                _status, _q
+            )
+
+        # 早退：终态失败**一次查询就该收摊**，不能再一路轮询到超时。
+        # `timeout=1`（而不是 9999）：万一 `finished` 又被漏掉，这里只空转 1 秒就返回，
+        # `fetch_calls == 1` 照样能红，不会把自检挂住 9999 秒。
+        _FakeVideoSynthesis.status = "FAILED"
+        _FakeVideoSynthesis.fetch_calls = 0
+        _dead = wait_task("stub-task", timeout=1, interval=0)
+    finally:
+        is_configured = _real_is_configured
+        if _real_dashscope is None:
+            sys.modules.pop("dashscope", None)
+        else:
+            sys.modules["dashscope"] = _real_dashscope
+
+    assert _FakeVideoSynthesis.fetch_calls == 1, (
+        f"终态失败应一次收摊，实际查了 {_FakeVideoSynthesis.fetch_calls} 次"
+    )
+    assert _dead["finished"] is True and _dead["success"] is False, _dead
+    assert _dead["timed_out"] is False and _dead["aborted"] is False, _dead
+    # 失败原因（含状态码）必须原样透出去，否则页面只说「失败了」不说为什么
+    assert "FAILED" in _dead["message"], _dead
+    print("  query_task 终态语义         OK  6 种状态，终态失败 1 次收摊")
 
     assert download_result("") == ""
     print("  download_result 失败路径   OK")

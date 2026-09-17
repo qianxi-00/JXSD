@@ -26,7 +26,9 @@
     · ``tools/media_tools.py`` 的 ``extract_audio_text()``（视频 → 文案，内容复刻链路），
       经 ``_transcribe_text()`` 收口：把 ``error`` 里的中文原因打出来再返回文本；
     · ``workflows/mashup.py`` 让 deepagent 写脚本调 ``transcribe_to_srt()`` 生成字幕；
-    · ``verify_all.py`` 用它跑真实识别验收。
+    · ``verify_all.py`` 只在 ``--live`` 层的 ASR 项里拿一个**必然不存在的路径**
+      走一遍参数校验分支（接线检查，见 ``verify_all.py:587``）—— 真实识别验收
+      得自己调 ``transcribe()`` 传一段真音频。
 
 ⚠️ **``error`` 必须上浮，别只看 ``text``**
 
@@ -849,6 +851,10 @@ if __name__ == "__main__":
 
     print("\n全部自检通过")
     # ⚠️ 这里不要提 `--live`：**本文件没有这个入口**（全文件 ``sys.argv`` 出现 0 次），
-    # 照着敲只会静默无反应。真实识别在 `verify_all.py --live` 那一层（ASR 接线检查），
-    # 真要转写自己的一段音频则直接调 ``transcribe()``（要密钥 + 音频，会计费）。
-    print("（本文件只做离线自检；真实识别请跑 verify_all.py --live 或直接调用 transcribe()）")
+    # 照着敲只会静默无反应。
+    # 真实识别请**直接调 ``transcribe()`` 并传一段真音频**（要密钥、会计费）——
+    # `verify_all.py --live` 那一层**不做真实识别**：它的 ASR 项传的是
+    # `transcribe("__live_check_missing__.wav")`（必然不存在的路径，``verify_all.py:587``），
+    # 只验「参数校验分支」，`verify_all.py:536` 自己的注释也写明那是**接线检查**。
+    print("（本文件只做离线自检；真实识别请直接调用 transcribe() 并传一段真音频 —— "
+          "verify_all.py --live 那条只验参数校验分支，不做真实识别）")

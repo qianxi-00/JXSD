@@ -15,7 +15,7 @@
     |---|---|---|
     | API 地址 | 类里硬编码 ``DEFAULT_API_URL = "https://newsnow.busiyi.world/api/s"`` | ``settings.media.trendradar_api_url``（可指向自部署 newsnow） |
     | 平台表 | ``PLATFORM_IDS`` 24 项，含 ``neteasenews`` / ``github-trending`` | 同名表，但把这两个键订正为 ``netease-news`` / ``github-trending-today``，并补了失效键台账 |
-    | 中文名→ID 表 | 写在 ``fetch_for_workflow()`` 里的局部变量 ``name_to_ids`` | 提到模块级常量 ``NAME_TO_IDS``，页面与工作流也能直接用 |
+    | 中文名→ID 表 | 写在 ``fetch_for_workflow()`` 里的局部变量 ``name_to_ids`` | 提到模块级常量 ``NAME_TO_IDS``（**当前生产路径不经过它**，页面与工作流各有一份自己的平台清单，见 ``NAME_TO_IDS`` 上方注释） |
     | 日志前缀 | ``[TrendRadar]`` | ``[热点]``（与其它 tools 模块的 ``[模块名]`` 风格统一） |
     | 失败处理 | ``fetch_platform()`` 重试后返回空列表 | 同课案，未改；但**下面「踩过的坑」写明页面路径实际不经过带间隔的批抓** |
     | 默认客户端 | ``_default_client = None`` + ``_get_client()`` 懒加载单例 | 同课案，未改 |
@@ -36,9 +36,14 @@
       TrendRadar 的 ``config.yaml`` 只共享了 15 个 id、与本表 24 项只交集 10 个。
     · **上游 id 会随时间失效**：2026-09-17 实测有 7 项已经死了（重试 2 次后静默返回
       ``[]``，白等 7.6s / 12.0s）。处置分两层：``PLATFORM_IDS`` 是 **id 登记表**，
-      死键照旧保留（删了就看不出「这个平台曾经接过」）；而 ``NAME_TO_IDS``
-      （页面可选项的来源）里**已经把死键摘掉**，原因登记在 ``UNAVAILABLE_PLATFORMS`` ——
-      摘掉是因为选中它会必然白等约 12 秒再显示 0 条，那不是网络抖动。
+      死键照旧保留（删了就看不出「这个平台曾经接过」）；而 ``NAME_TO_IDS`` 里
+      **已经把死键摘掉**，原因登记在 ``UNAVAILABLE_PLATFORMS`` —— 摘掉是因为选中它
+      会必然白等约 12 秒再显示 0 条，那不是网络抖动。
+      ⚠️ 但 ``NAME_TO_IDS`` **既不是页面下拉的来源，也不是工作流取数的来源**（早先
+      这里写成「页面可选项的来源」，是假的）：页面用 ``views/hot_topic.py`` 自己手写的
+      ``PLATFORM_OPTIONS``，工作流用 ``workflows/hot_topic.py`` 自己那份
+      ``FETCH_SOURCES``。生产路径上读本表的只有 ``workflows/hot_topic.py:206``
+      一处，判据是「这个平台名的 id 列表是不是空的」。
     · **核上游 id 必须带浏览器 UA**：裸 ``GET .../api/s?id=<id>&latest`` 会回 403，
       那是 Cloudflare 拦默认 UA，**不是平台下线**；带上 ``DEFAULT_HEADERS`` 就正常。
     · **带请求间隔的批抓方法在页面上根本没被调用**：页面走的是
@@ -51,6 +56,8 @@
       成功打「获取成功（最新/缓存，N 条）」，失败打「最终失败: <异常>」。
 """
 
+import contextlib
+import io
 import random
 import sys
 import time
@@ -135,11 +142,20 @@ DEFAULT_HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 }
 
-# 中文平台名 → 平台 ID（Streamlit 页面直接传中文名）
+# 中文平台名 → 平台 ID（`fetch_for_workflow()` 拿中文名查这张表）
 # 课案把它写成 `fetch_for_workflow()` 里的局部变量 `name_to_ids`，这里提到模块级，
-# 便于页面 / 工作流复用同一份映射（避免两处各写一份后漂移）。
+# 与课案同构。
+# ⚠️ **当前无生产调用方**（`fetch_for_workflow()` / `fetch_hot_topics()` 全仓 0 个
+#    生产调用方，唯一出现处是本文件自检）：页面下拉用的是 `views/hot_topic.py` 自己
+#    手写的 `PLATFORM_OPTIONS`，工作流取数用的是 `workflows/hot_topic.py` 自己那份
+#    `FETCH_SOURCES` —— 两层清单的一致性由 `verify_all.py` 第 3 层的跨层契约钉住
+#    （页面 `PLATFORM_OPTIONS` 去掉「全部」必须与工作流 `PLATFORM_SENDS` 键集相等）。
+#    生产路径上真正读本表的只有 `workflows/hot_topic.py:206` 一处，用来判
+#    「这个平台名的 id 列表是不是空的」（空 = 当前抓不到）。
+#    本表**已摘掉死键**（见上方台账），但生产路径不经过它，所以「摘掉」影响的是
+#    经 `fetch_for_workflow()` 这条当前无人走的路。
 # ⚠️ 键集必须与 `UNAVAILABLE_PLATFORMS` 对得上：每个可选项要么有 id（能抓），
-#    要么有不可用原因（抓不了，但用户能看到为什么）。
+#    要么有不可用原因（抓不了，但用户能看到为什么）。自检里**双向**都钉住。
 # ⚠️ 「小红书」的 id 列表**故意留空**（上游 `xiaohongshu` 已失效，见上方台账）——
 #    空列表意味着 `fetch_for_workflow()` 一个请求都不发就返回空，不再白等约 12 秒；
 #    原因由 `UNAVAILABLE_PLATFORMS` 提供（页面据此告诉用户「为什么是 0 条」）。
@@ -246,10 +262,6 @@ class TrendRadarClient:
                 topics = []
                 # rank 从 1 开始且**在过滤之后**连续编号（展示口径）：否则空标题被
                 # `continue` 跳过后名次会缺口（1,2,4…），页面上看着像丢了数据。
-                # `_estimate_heat()` 的 total 仍传**过滤前**的 `len(items)`：
-                # heat 是 `fetch_for_workflow()` 跨平台排序的排序键，把 total 换成过滤后
-                # 的条数会改掉所有平台尾部的热度值（进而改排序），属于本轮条目外的语义变更；
-                # 而 rank ≤ len(items) 恒成立，所以 heat 仍在 (0, 1000000] 内且随 rank 单调递减。
                 rank = 0
                 for item in items:
                     title = str(item.get("title") or "").strip()
@@ -263,8 +275,18 @@ class TrendRadarClient:
                         "platform": platform_name,
                         "platform_id": platform_id,
                         "rank": rank,
-                        "heat": self._estimate_heat(rank, len(items)),
                     })
+
+                # heat 的 `total` 必须与 rank **同源**，所以这里传的是**过滤后**的
+                # `len(topics)`，不是上游给回来的 `len(items)` —— rank 已经按过滤后连续
+                # 编号，total 若仍按过滤前算，存活条目的 heat 会被整体抬高。
+                # 这不只是展示口径：heat 是**跨平台合并排序键**（`fetch_for_workflow()`
+                # 与 `workflows/hot_topic.py:348` 都按它降序排），所以某个平台一旦出现
+                # 空标题条目，它的存活条目就会在合并排序里往前跳。
+                # 代价如实写明：有空标题条目的平台，其存活条目热度会**略升**；
+                # 这是让 rank 与 total 同源的必要代价（不是「口径自洽」）。
+                for t in topics:
+                    t["heat"] = self._estimate_heat(t["rank"], len(topics))
 
                 status_info = "最新" if status == "success" else "缓存"
                 print(f"[热点] {platform_name} 获取成功（{status_info}，{len(topics)} 条）")
@@ -328,6 +350,11 @@ class TrendRadarClient:
         self, platform: str = "全部", platform_ids: List[str] = None
     ) -> List[Dict]:
         """抓取并转成工作流要的格式，按估算热度降序。
+
+        ⚠️ **当前全仓 0 个生产调用方**：唯一出现处是本文件自检（以及 ``fetch_hot_topics()``
+        —— 那个便捷函数同样没有生产调用方）。工作流实际走的是 ``fetch_platform_hot()``
+        → ``fetch_platform()``，不经过本方法（所以「按热度降序」这件事由
+        ``workflows/hot_topic.py:348`` 自己补）。保留它是课案结构的一部分。
 
         Args:
             platform: 中文平台名（``NAME_TO_IDS`` 的键）；认不出时退化成
@@ -398,11 +425,16 @@ class TrendRadarClient:
 
     @staticmethod
     def get_available_platforms() -> Dict[str, str]:
-        """返回全部可用平台的 ``{ID: 中文名}``。
+        """返回全部平台的 ``{ID: 中文名}``。
+
+        ⚠️ **当前全仓 0 个生产调用方**（``views/**`` / ``workflows/**`` 都不用它，
+        唯一出现处是本文件自检里那句断言）。早先这里写「页面里就靠它填平台下拉」，
+        是假的 —— 页面用的是 ``views/hot_topic.py`` 自己手写的 ``PLATFORM_OPTIONS``。
+        所以**别照这段 docstring 办事**：``PLATFORM_IDS`` 里含 7 个已死 id
+        （见其上方台账），拿它填下拉等于把死平台放回页面，选中就白等约 12 秒再显示 0 条。
 
         Returns:
-            Dict[str, str]: ``PLATFORM_IDS`` 的**浅拷贝** —— 调用方改了不会污染模块级常量
-            （页面里就靠它填平台下拉）。注意里面含已失效的 id，见 ``PLATFORM_IDS`` 台账。
+            Dict[str, str]: ``PLATFORM_IDS`` 的**浅拷贝** —— 调用方改了不会污染模块级常量。
         """
         return dict(PLATFORM_IDS)
 
@@ -428,6 +460,9 @@ def _get_client() -> TrendRadarClient:
 
 def fetch_hot_topics(platform: str = "全部") -> List[Dict]:
     """便捷函数：抓热点并返回工作流格式。
+
+    ⚠️ **当前全仓 0 个生产调用方**（唯一出现处是本文件自检）：工作流走的是
+    ``fetch_platform_hot()`` → ``fetch_platform()``。保留它是课案结构的一部分。
 
     ⚠️ 别和类方法 ``TrendRadarClient.fetch_hot_topics_by_platform()`` 混 ——
     两者早先同名，已把类方法改名区分：那个返回 ``{平台ID: [热点]}`` 的**字典**
@@ -483,14 +518,24 @@ if __name__ == "__main__":
     print(f"  平台映射表                OK  {len(PLATFORM_IDS)} 个平台")
 
     # 3) 失效平台的处置（B1）：小红书已从 NAME_TO_IDS 摘掉、原因在新常量里。
-    #    这条断言同时钉住「不发请求」——id 列表是空的，`fetch_for_workflow()`
-    #    在进循环之前就返回了，所以哪怕本机断网也必须拿到 `[]`（不是靠网络失败凑巧返回空）。
+    #    ⚠️ 下面那条 `fetch_hot_topics("小红书") == []` **不证明「不发请求」**：
+    #    `NAME_TO_IDS["小红书"]` 本来就是空列表，不进循环自然返回空列表 —— 恒真。
+    #    「一个请求都不发」由 3c 段用「访问即失败」的 `requests` 替身真的钉住。
     assert NAME_TO_IDS["小红书"] == [], NAME_TO_IDS["小红书"]
     assert "xiaohongshu" not in NAME_TO_IDS["全部"], NAME_TO_IDS["全部"]
-    # 键集对齐：可选项要么有 id、要么有不可用原因，不能两边都漏（页面下拉会用到）
+    # 键集对齐，**双向**都要钉（页面下拉与工作流判据都依赖它）：
+    #   ① 每个不可用原因都必须挂在某个可选项上，否则页面永远显示不出这句话；
+    #   ② 反过来，「有平台名、但一个 id 都没有」的项也必须登记了原因 —— 这正是上一轮
+    #      要消灭的「静默 0 条」形态：往 `NAME_TO_IDS` 插一行 `"快手": []` 而不登记原因，
+    #      用户选中它只会拿到 0 条，且没有任何解释。
     assert set(UNAVAILABLE_PLATFORMS) <= set(NAME_TO_IDS), UNAVAILABLE_PLATFORMS
+    _no_ids = {n for n, ids in NAME_TO_IDS.items() if not ids}
+    assert _no_ids <= set(UNAVAILABLE_PLATFORMS), (
+        "这些平台没有可抓的 id，却没在 UNAVAILABLE_PLATFORMS 里登记原因: "
+        f"{sorted(_no_ids - set(UNAVAILABLE_PLATFORMS))}"
+    )
     assert fetch_hot_topics("小红书") == [], "失效平台应返回空列表"
-    print(f"  失效平台不发请求          OK  {list(UNAVAILABLE_PLATFORMS)}")
+    print(f"  失效平台已登记+摘键        OK  {list(UNAVAILABLE_PLATFORMS)}")
 
     # 3b) rank 连续性（D11）：上游 items 里夹一个空标题时，名次必须按**过滤后**的
     #     输出顺序重排（1,2,3 而不是 1,2,4），且 heat 仍随 rank 单调递减。
@@ -517,7 +562,44 @@ if __name__ == "__main__":
     ranks = [t["rank"] for t in stubbed]
     assert ranks == [1, 2, 3], f"名次应在过滤后连续，实际 {ranks}"
     assert all(a["heat"] > b["heat"] for a, b in zip(stubbed, stubbed[1:])), stubbed
-    print(f"  rank 过滤后连续           OK  {ranks}")
+    # heat 的 total 必须与 rank **同源**（都用过滤后的 3 条，而不是上游给回来的 4 条）：
+    # 传 `len(items)` 时第 2 名的 heat 会是 750000 而不是 666666 —— 而 heat 是跨平台
+    # 合并排序键，某个平台一有空标题条目，它的存活条目就会在合并排序里往前跳。
+    assert stubbed[1]["heat"] == TrendRadarClient._estimate_heat(2, 3), stubbed
+    print(f"  rank 过滤后连续           OK  {ranks}，heat 按过滤后 3 条算")
+
+    # 3c) 失效平台 / 空 id 这两条路必须**一个请求都不发**。
+    #     3 段那条 `fetch_hot_topics("小红书") == []` 是恒真的（见那段注释），
+    #     所以这里换一个「访问即失败」的 `requests` 替身来真的钉住：
+    #     这条路上只要有人碰 `requests`（哪怕只是读 `.get`），替身就把访问记进
+    #     `_touched` 并抛异常 —— 断言 `_touched == []` 即为「零请求」。
+    #     为什么记下来再断言、而不是只靠抛异常：`fetch_platform()` 里有
+    #     `except Exception`（网络失败要重试），AssertionError 同样会被它吞掉并重试，
+    #     光靠抛异常这条断言会「静默通过」。
+    class _ExplodingRequests:
+        def __getattr__(self, name):
+            _touched.append(name)
+            raise AssertionError(f"这条路径不该访问 requests.{name}")
+
+    _real_requests = requests
+    _touched: List[str] = []
+    _log = io.StringIO()
+    try:
+        requests = _ExplodingRequests()
+        with contextlib.redirect_stdout(_log):
+            _stale = fetch_hot_topics("小红书")     # 命中的是 fetch_for_workflow 的空列表守卫
+            _blank = fetch_platform_hot("")         # 命中的是 fetch_platform 的空 id 守卫
+    finally:
+        requests = _real_requests
+
+    assert _stale == [], _stale
+    assert _blank == [], _blank
+    assert _touched == [], f"这两条路不该访问 requests，实际访问了 {_touched}"
+    # 顺带钉住「守卫要留下原因」：`fetch_for_workflow()` 那个空列表守卫存在的意义就是
+    # 把 `UNAVAILABLE_PLATFORMS` 的原因打进日志（页面只显示 0 条，日志是唯一线索）。
+    # 删掉守卫、只靠 for 循环「自然不执行」时，上面三条仍会通过，这条会红。
+    assert "已失效" in _log.getvalue(), _log.getvalue()
+    print("  失效/空 id 零请求          OK  「访问即失败」替身未被碰，且日志留下原因")
 
     # 4) 真实网络抓取（可用 --net 触发；默认跳过，保证离线也能全绿）
     #    ⚠️ 不要用这个自检去核「某个平台 id 还有效吗」—— 微信/微博这类活着的平台

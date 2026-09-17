@@ -184,11 +184,13 @@ def _fingerprint(source_audio: str) -> str:
     """源音频指纹：绝对路径 + 大小 + 修改时间。文件变了就重新克隆。
 
     Args:
-        source_audio: 源音频/视频路径。**可以不存在** —— 不存在时返回空串，不抛异常。
+        source_audio: 源音频/视频路径。**可以不存在**，也可以是非法路径
+            （例如含 ``\\0``）—— 都返回空串，不抛异常。
 
     Returns:
         str：形如 ``F:\\...\\模特.mp4|10485760|1758000000`` 的指纹串，用作缓存键；
-        **返回空串 = 没法指纹**（路径不是文件 / 已失效），调用方按「不能复用缓存」处理。
+        **返回空串 = 没法指纹**（路径不是文件 / 路径非法 / stat 失败），
+        调用方按「不能复用缓存」处理。
 
     为什么不用「内容 md5」：模特视频动辄几十上百 MB，算内容哈希要整读一遍；
     而这套指纹只需要 ``stat()`` 一次 —— 满足「素材换了就重克隆」已经足够。
@@ -196,11 +198,19 @@ def _fingerprint(source_audio: str) -> str:
     为什么存在性判断放在**本函数里**：早先这里不判、靠两个调用方各自先 ``is_file()``
     兜着，第三个调用方（或调用方判过之后文件被删/改名）就会踩 ``FileNotFoundError``。
     返回空串是最省事的收口：不动调用契约，也不新增异常类型去牵动调用方。
+
+    为什么连 ``ValueError`` 一起接：``Path.resolve()`` 对含 ``\\0`` 的路径直接抛
+    ``ValueError: stat: embedded null character in path``（``Path.is_file()`` 自己会
+    吞掉 ``ValueError``，``resolve()`` 不吞）—— 实测 `_fingerprint("a\\0b.wav")` 就
+    倒在这一步。契约是「拿不到指纹就给空串」，就不能只接 ``OSError``。
     """
-    p = Path(source_audio).resolve()
-    if not p.is_file():
+    try:
+        p = Path(source_audio).resolve()
+        if not p.is_file():
+            return ""
+        st = p.stat()
+    except (OSError, ValueError):
         return ""
-    st = p.stat()
     # mtime 取整数秒：指纹只用来判「素材变没变」，没必要精确到亚秒 ——
     # 同一份素材被复制/重新落盘时的亚秒误差不该触发重复建音色（配额很贵）。
     return f"{p}|{st.st_size}|{int(st.st_mtime)}"
@@ -575,8 +585,10 @@ def list_cloned_voices() -> list:
 
     注意：
         这里**只读本地缓存**，不向百炼查这个 voice_id 还在不在云端 ——
-        云端被删过的记录要显式清掉（见 ``forget_voice()``），
+        云端被删过的记录要显式清掉（``forget_voice()``），
         否则缓存会变成毒药：命中一条失效 ID，然后在合成阶段才失败。
+        ⚠️ 但 `forget_voice()` **页面上没有任何入口、全仓 0 个调用方** ——
+        只能在 Python 里自己调它（见那边的说明：源文件必须还在，否则清不掉）。
     """
     cache = _load_cache()
     items = []
@@ -599,20 +611,33 @@ def forget_voice(source_media: str) -> bool:
     或跑完测试做清理）。不然缓存里留着一条指向失效 voice_id 的记录，
     下次同样的素材会命中它，然后在合成阶段失败 —— 而且报错点离真正的原因很远。
 
+    ⚠️ 两个已知边界（**刻意保留，不是待修的 bug**，写在这里免得下次又被当成缺口）：
+        · **源文件已被删除时清不掉**：缓存键 = 绝对路径 + 大小 + mtime，文件没了就
+          算不出键。这里保留 `is_file()` 前置检查，不为了「删了也能清」改成按路径
+          前缀扫缓存 —— 文件既然没了，`clone_voice()` 也不可能再命中那条记录，
+          留着不影响使用。
+        · **页面上没有入口、全仓 0 个调用方**：要清只能在 Python 里自己调它，
+          「云端音色被删过、合成阶段才失败」目前在 UI 上没有解法。
+
     Args:
         source_media: 建音色时用的那个源文件路径。必须与交给 ``clone_voice()`` 的是
             **同一个路径** —— 缓存键按「绝对路径 + 大小 + mtime」算，改过内容
-            （大小或 mtime 变了）的素材本来就是另一条记录。
+            （大小或 mtime 变了）的素材本来就是另一条记录；且**必须仍然存在**（见上）。
 
     Returns:
-        是否删掉了一条记录。文件不存在或缓存里没有对应键都返回 False（不抛异常）。
+        是否删掉了一条记录。路径为空、文件不存在、或缓存里没有对应键都返回 False
+        （不抛异常）。
     """
     if not source_media or not Path(source_media).is_file():
         return False
     cache = _load_cache()
     key = _fingerprint(source_media)
-    # 空指纹（文件不可用）不可能在缓存里 —— 显式判掉，别拿空串去查表
-    if not key or key not in cache:
+    # 刻意**不写 `if not key`**：上一行刚判过存在，`_fingerprint()` 现在又是全称的
+    # （任何 stat / 路径异常都回空串），两步之间只剩一个 TOCTOU 窗口；而缓存里
+    # **不可能**存在 ``""`` 键 —— 写入侧 `clone_voice()` 用 `if use_cache and key`
+    # 挡掉了空指纹（见那边注释）。所以 `if not key` 那层只是看着像防御的空壳
+    # （删掉它自检照样全绿），真撞上竞态时 `key not in cache` 本来就成立、照样返回 False。
+    if key not in cache:
         return False
     # 先 pop 再整体回写：缓存文件是整份覆盖的（见 _save_cache），
     # 所以「改一份 dict 再写回」就是删除语义。
@@ -641,7 +666,35 @@ if __name__ == "__main__":
         # 路径不是文件 → 返回空串（**不是**抛 FileNotFoundError）：这是为「第三个
         # 调用方」加的兜底，钉住它免得以后又被改回「让异常自然抛给调用方」。
         assert _fingerprint(str(Path(td) / "不存在.wav")) == "", "不存在的路径应返回空串"
-        print("  _fingerprint              OK")
+        # 含 `\0` 的非法路径：`Path.resolve()` 会抛 `ValueError`（实测
+        # `ValueError: stat: embedded null character in path`），本函数必须收成空串 ——
+        # 契约是「拿不到指纹就给空串」，抛出去会让调用方接不住。
+        assert _fingerprint("a\0b.wav") == "", r"含 \0 的非法路径应返回空串而不是抛 ValueError"
+        print("  _fingerprint              OK  含 \\0 的非法路径也不抛")
+
+    # 1b) `forget_voice()` 真的能删掉一条记录。它全仓 0 个调用方（页面没有入口），
+    #     所以这个行为只能靠自检钉住；`_cache_path` 打桩到临时目录，
+    #     **绝不碰本机真实缓存**（否则自检会删掉用户真金白银建出来的音色记录）。
+    with tempfile.TemporaryDirectory() as td:
+        fake = Path(td) / "ref.wav"
+        fake.write_bytes(b"x" * 2048)
+        _real_cache_path = _cache_path
+        try:
+            _cache_path = lambda: Path(td) / "voices.json"  # noqa: E731 —— 自检里顶掉
+            _k = _fingerprint(str(fake))
+            _save_cache({_k: {"voice_id": "v-stub", "source": str(fake)}})
+            assert _load_cache().get(_k), "打桩缓存应能读回来"
+            assert forget_voice(str(fake)) is True, "应删掉一条记录"
+            assert _k not in _load_cache(), "记录应已从缓存里消失"
+            assert forget_voice(str(fake)) is False, "已删过 → 第二次返回 False"
+            fake.unlink()
+            # 源文件删掉后**清不掉**（缓存键含大小/mtime，算不出键）—— 这是 docstring 里
+            # 写明的**刻意边界**，不是期望行为：哪天真要让它支持「删了也能清」，
+            # 记得把 `<forget_voice>` 的说明一起改掉。
+            assert forget_voice(str(fake)) is False, "源文件已删 → 按已知边界返回 False"
+        finally:
+            _cache_path = _real_cache_path
+        print("  forget_voice 清缓存        OK  删记录 / 幂等 / 源文件已删 三条边界")
 
     # 2) 失败路径必须返回结构化 dict，不抛异常
     r = clone_voice("")

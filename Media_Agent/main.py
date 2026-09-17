@@ -123,7 +123,11 @@ with st.sidebar.expander("📋 项目信息"):
         "百炼密钥：" + ("✅ 已配置" if settings.dashscope_api_key else "⚠️ 未配置")
     )
     # 这一项在分组的 settings.media 里，取值路径与上面那条不同；只提示、不阻断。
-    if not settings.media.image_api_key:
+    # 判据必须与 `tools/media_tools._image_configured()` 一致：`image_api_key` 与
+    # `image_model` **两项都非空**才算配齐。只看 KEY 的话，「配了 KEY、没配 MODEL」
+    # 时这一行干脆不显示，而真正那次调用照样降级成占位图 —— 恰恰是最该提示的
+    # 半配置状态被漏掉（首页那条判据已经改过来了，两处口径必须一致）。
+    if not (settings.media.image_api_key and settings.media.image_model):
         st.caption("图片生成：⚠️ 未配置（将用占位图）")
 
 # ==================== 路由 ====================

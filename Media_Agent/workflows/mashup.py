@@ -1261,6 +1261,12 @@ def node_find_output(state: MashupState) -> dict:
 
     查找顺序：agent 报告过的路径 → 三个约定落点 → 按修改时间扫目录。
 
+    ⚠️ 后两步是**猜**，猜出来的候选必须比本轮开始还新（``state["edit_start"]``，
+    ``node_edit_video`` 在每条返回路径上都写了它）：源视频有效、agent 又没自报路径时，
+    沙箱里可能正躺着**上一轮**的 ``mashup_final.mp4`` —— 只看「源视频此刻在不在」
+    是拦不住它的（那判的是「这轮 agent 有没有机会跑」，不是「有没有产出」）。
+    agent 自己报出来的路径是我们问到的明确答复、不是猜的，照旧只做 ``!= inp`` 判断。
+
     Args:
         state: ``output_video`` 为 ``node_edit_video`` 解析出的候选路径
             （可能是空串）。
@@ -1289,8 +1295,42 @@ def node_find_output(state: MashupState) -> dict:
     out = normalize_path(state.get("output_video", ""))
     # agent 自己报的路径优先采信；`!= inp` 是防它把**源视频**当成品报回来
     # （路径与输入完全相同，必然不是产物）。
+    # 这里**不做新鲜度过滤**：这是 agent 的明确答复，不是我们猜的 —— 它报什么就信什么
+    # （内容对不对由页面上的人看，不由 mtime 判）。
     if out and os.path.isfile(out) and safe_abspath(out) != inp:
         return {"output_video": safe_abspath(out)}
+
+    # 下面两步都是「猜」，猜出来的候选必须比**本轮开始时刻**新，否则它只可能来自上一轮。
+    # 判据取自 `edit_start`：`node_edit_video` 在**每条**返回路径上都写了它（含两条失败
+    # 路径），所以只要图跑过 editor，这个键就在。
+    # 旧判据只看「源视频此刻在不在」（见上面的守卫）：源视频有效、agent 又没自报路径时
+    # 它照样放行 —— 而那正是兜底查找存在的**唯一**理由，于是上一轮的成片就顶替了本轮产物。
+    # 1 秒容差：照顾文件系统时间戳粒度，以及文件落盘与取时间之间的微小差。
+    _edit_start = state.get("edit_start") or 0.0
+    if not _edit_start:
+        # 直接函数调用（不在图里跑）时没有「本轮」可言，跳过新鲜度过滤 ——
+        # 否则会把「不传 edit_start 的自检用例」全部打翻。
+        print("[剪辑] 未拿到 edit_start，跳过产物新鲜度过滤")
+
+    def _is_stale(cand: str) -> bool:
+        """候选是不是**非本轮产物**（早于 ``edit_start``，或读不到修改时间）。
+
+        ``edit_start`` 缺失/为 0 时一律返回 ``False`` —— 那种场合没有「本轮」，
+        不该过滤（见上）。读不到 mtime 也算不新鲜：宁可这轮报「没出片」，
+        也不拿一个来路不明的文件顶替 —— 交错了用户在页面上看不出来。
+        """
+        if not _edit_start:
+            return False
+        try:
+            _mt = os.path.getmtime(cand)
+        except OSError:
+            print(f"[剪辑] 跳过候选（读不到修改时间，无法确认是本轮产物）: {cand}")
+            return True
+        if _mt < _edit_start - 1.0:
+            print(f"[剪辑] 跳过候选（修改时间比本轮开始早 {_edit_start - _mt:.0f}s，"
+                  f"是旧产物）: {cand}")
+            return True
+        return False
 
     cache_dir = settings.media.get_mashup_work_dir()
     # 三个已知落点：直接落在沙箱根、经 BGM 步骤后的改名版本，以及模型把
@@ -1303,6 +1343,8 @@ def node_find_output(state: MashupState) -> dict:
     for cand in candidates:
         cand = normalize_path(cand)
         if os.path.isfile(cand) and safe_abspath(cand) != inp:
+            if _is_stale(cand):
+                continue      # 上一轮的成片，不能当本轮的产物交回去
             return {"output_video": safe_abspath(cand)}
 
     # 最后再按修改时间扫一遍目录。
@@ -1315,6 +1357,7 @@ def node_find_output(state: MashupState) -> dict:
     _base_depth = cache_dir.rstrip("\\/").count(os.sep)
     newest = ""
     newest_mtime = 0.0
+    _stale_skipped = 0
     for root, dirs, files in os.walk(cache_dir):
         if root.rstrip("\\/").count(os.sep) - _base_depth >= _MAX_DEPTH:
             # ⚠️ 必须**原地**清空 dirs（写成 `dirs = []` 无效）：
@@ -1335,6 +1378,14 @@ def node_find_output(state: MashupState) -> dict:
                 mt = os.path.getmtime(fp)
             except OSError:
                 continue
+            # 扫描出来的同样只是**候选**，一样要求是本轮产物（旧 mp4 不能因为
+            # 「修改时间最大」就被选中 —— 上一轮的成片、随源视频复制进来的素材
+            # 都可能比本轮的中间产物更新）。
+            # 这里不调 `_is_stale`：它每个候选打一行日志，而这一段是**整目录扫描**，
+            # 沙箱里躺着几十个旧 mp4 时日志会刷屏。改成计数，最后一句话汇总。
+            if _edit_start and mt < _edit_start - 1.0:
+                _stale_skipped += 1
+                continue
             # 取修改时间最新的那个：最终成品总是最后落盘的。
             if mt > newest_mtime:
                 newest, newest_mtime = fp, mt
@@ -1343,6 +1394,9 @@ def node_find_output(state: MashupState) -> dict:
         # 兜底命中说明 agent 没能报告路径，日志里留个痕方便定位。
         print(f"[剪辑] 兜底找到最新产出: {newest}")
         return {"output_video": safe_abspath(newest)}
+    if _stale_skipped:
+        # 「为什么没出片」的排查线索：扫描确实跑过，只是扫到的全是旧产物。
+        print(f"[剪辑] 兜底扫描跳过 {_stale_skipped} 个旧 mp4（修改时间早于本轮开始）")
     return {}
 
 
@@ -1476,21 +1530,40 @@ if __name__ == "__main__":
     assert "edit_style" not in MashupState.__annotations__, MashupState.__annotations__
     print("  MashupState 无 edit_style  OK")
 
-    # 3) 兜底查找：目录里没有 mp4 时应返回空而不是报错。
-    #    ⚠️ 必须指向一个**临时空目录**：这条用例直接跑在共享沙箱里会翻车 ——
-    #    真跑过一次剪辑后沙箱里就躺着 mashup_final.mp4，兜底查找会（正确地）
-    #    把它找出来，断言就挂了。测试不应该依赖共享目录的状态。
+    # 3) 兜底查找：两个方向都要走通 —— 目录里没有成品时返回空；成品落在
+    #    **约定落点之外**时，`os.walk` 那一段能把它扫出来。
+    #    ⚠️ 源视频必须是**有效文件**：源视频缺失时上面的守卫会在更早处 `return {}`，
+    #       这一段就成了恒真（改前正是如此：临时目录与配置改写全是死设置，
+    #       把整段兜底代码换成 `return {}` 它照样打印 OK）。
+    #    ⚠️ 还必须指向一个**临时目录**（每次新建，不带上一轮的残留）：这条用例直接跑在
+    #       共享沙箱里会翻车 —— 真跑过一次剪辑后沙箱里就躺着 mashup_final.mp4，
+    #       兜底查找会（正确地）把它找出来，断言就挂了。测试不应该依赖共享目录的状态。
     #    （`tempfile` 在 2b 那条用例里已经 import 过了。）
     _saved_work_dir = settings.media.mashup_work_dir
     try:
         with tempfile.TemporaryDirectory(prefix="mashup_selfcheck_") as _empty:
+            _src_ok = os.path.join(_empty, "src.mp4")
+            with open(_src_ok, "wb") as _f:
+                _f.write(b"\x00" * 2048)   # 有效源视频，且小于 100KB 下限、不会被当成品
             settings.media.mashup_work_dir = _empty
-            r2 = node_find_output({"input_video": "不存在.mp4", "output_video": ""})
-            assert r2.get("output_video", "") == "", r2
+            _t_scan = time.time()
+            assert node_find_output(
+                {"input_video": _src_ok, "output_video": "", "edit_start": _t_scan}
+            ) == {}, "目录里没有任何成品时不该返回路径"
+            # 非约定落点：只放在子目录里，三个候选名单都够不着，只有扫描那段找得到。
+            _nested = os.path.join(_empty, "renders", "shot.mp4")
+            os.makedirs(os.path.dirname(_nested), exist_ok=True)
+            with open(_nested, "wb") as _f:
+                _f.write(b"\x00" * (200 * 1024))   # 过 100KB 下限
+            _scanned = node_find_output(
+                {"input_video": _src_ok, "output_video": "", "edit_start": _t_scan}
+            )
+            assert safe_abspath(_scanned.get("output_video", "")) == safe_abspath(_nested), \
+                f"约定落点之外的成品应当被扫描找到，实际 {_scanned}"
     finally:
         # 无论断言过没过都要还原配置，否则会影响同一进程里的后续用例。
         settings.media.mashup_work_dir = _saved_work_dir
-    print("  兜底查找空目录             OK")
+    print("  兜底查找空目录/非约定落点  OK")
 
     # 3b) 源视频缺失时**不许**把沙箱里上一轮留下的成片当成本轮产物交回去。
     #     这条是修完 bug 补的：图是直边 `edit → find`，edit 提前退回了 find 照样跑，
@@ -1513,13 +1586,32 @@ if __name__ == "__main__":
             assert node_find_output(
                 {"input_video": os.path.join(_stale_dir, "nope.mp4")}
             ) == {}, "源视频路径失效时不该交回旧成片"
-            # ③ 源视频有效 → 约定落点的兜底**必须照旧生效**
-            #    （那是防 agent 忘报路径的有意设计，不能连它一起关掉）
-            _got = node_find_output({"input_video": _src, "output_video": ""})
-            assert safe_abspath(_got.get("output_video", "")) == safe_abspath(_stale_final), _got
+
+            # ③ 源视频**有效**、但成片是上一轮留下的（mtime 早于本轮开始）→ 仍然不许交回。
+            #    判据是**新鲜度**（`edit_start`），不是「源视频此刻在不在」：
+            #    后者在「源视频有效 + agent 没自报路径」时同样放行，而那种情况正是
+            #    兜底查找存在的唯一理由 —— 上一版的守卫只堵了半扇门。
+            _es = time.time()
+            _old_mt = _es - 3600
+            os.utime(_stale_final, (_old_mt, _old_mt))
+            _got_old = node_find_output(
+                {"input_video": _src, "output_video": "", "edit_start": _es})
+            assert _got_old == {}, f"旧成片（mtime 早于 edit_start）不该被返回: {_got_old}"
+
+            # ④ 反过来：**本轮新写的**成片必须照旧能被兜底找回来
+            #    （那是防 agent 忘报路径的有意设计，不能连它一起关掉）。
+            #    两条一起才说明新鲜度判据不是「一律拒绝」。
+            _fresh_final = os.path.join(_stale_dir, "videos", "mashup_final.mp4")
+            os.makedirs(os.path.dirname(_fresh_final), exist_ok=True)
+            with open(_fresh_final, "wb") as _f:
+                _f.write(b"\x00" * 2048)
+            _got_new = node_find_output(
+                {"input_video": _src, "output_video": "", "edit_start": _es})
+            assert safe_abspath(_got_new.get("output_video", "")) == safe_abspath(_fresh_final), \
+                f"本轮新写的成片必须被兜底找回，实际 {_got_new}"
     finally:
         settings.media.mashup_work_dir = _saved_work_dir
-    print("  源视频缺失不交旧成片       OK（有效源视频时兜底照旧）")
+    print("  产物新鲜度两个方向          OK（旧成片不交回 / 本轮成片照旧找回）")
 
     # 4) SKILL.md 存在且格式正确（DeepAgents 靠 frontmatter 识别技能）
     #    frontmatter 写坏不会报错，只会让技能静默不生效 —— 所以必须断言。

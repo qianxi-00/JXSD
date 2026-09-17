@@ -439,18 +439,31 @@ def show_video() -> None:
             key="new_avatar_upload",
         )
         if new_file:
-            avatar_dir = Path(settings.media.get_avatar_input_dir())
-            avatar_dir.mkdir(parents=True, exist_ok=True)
-            # 落盘名带 md5(原始文件名)[:8]：模特目录是共享的，两台机器都传 demo.mp4
-            # 会互相覆盖；也不能用内置 hash() —— 字符串 hash 带进程级随机盐，
-            # 重启后同一个名字会算出另一个路径，目录里只堆积不复用
-            save_path = avatar_dir / f"avatar_{hashlib.md5(new_file.name.encode('utf-8')).hexdigest()[:8]}{Path(new_file.name).suffix}"
-            save_path.write_bytes(new_file.getvalue())
-            # 上传即选中：省掉「上传完还得回上面点一次选择」
-            _save_selected_avatar(str(save_path))
-            st.success(f"✅ 已上传: {save_path.name}")
-            # 立刻 rerun：让新文件出现在上方的模特网格里（网格是重新扫目录得到的）
-            st.rerun()
+            # `file_uploader` 的值**跨 rerun 保留**，所以「有没有文件」不能当「要不要处理」：
+            # 处理完那次 `st.rerun()` 回来它还在，于是又落盘又 rerun，页面卡在无限自转里
+            # （同页 BGM 上传那处 AppTest 实测过：一次 `set_value` 后 25 秒超时）。
+            # 指纹取「名字|字节数」，只处理**没见过的那一份**，后面的 rerun 自然收敛。
+            # `.size` 是 `UploadedFile`（`BytesIO` 子类）在 `__init__` 里设的实例属性，
+            # 不必把整个文件再 `getvalue()` 出来数一遍
+            sig = f"{new_file.name}|{new_file.size}"
+            if sig != st.session_state.get("_avatar_upload_sig"):
+                st.session_state["_avatar_upload_sig"] = sig
+                avatar_dir = Path(settings.media.get_avatar_input_dir())
+                avatar_dir.mkdir(parents=True, exist_ok=True)
+                # 落盘名带 md5(原始文件名)[:8]：模特目录是共享的，两台机器都传 demo.mp4
+                # 会互相覆盖；也不能用内置 hash() —— 字符串 hash 带进程级随机盐，
+                # 重启后同一个名字会算出另一个路径，目录里只堆积不复用
+                save_path = avatar_dir / f"avatar_{hashlib.md5(new_file.name.encode('utf-8')).hexdigest()[:8]}{Path(new_file.name).suffix}"
+                save_path.write_bytes(new_file.getvalue())
+                # 上传即选中：省掉「上传完还得回上面点一次选择」
+                _save_selected_avatar(str(save_path))
+                st.success(f"✅ 已上传: {save_path.name}")
+                # 立刻 rerun：让新文件出现在上方的模特网格里（网格是重新扫目录得到的）
+                st.rerun()
+        else:
+            # 清空上传框就把指纹一起忘掉：否则「清空后再传同一个文件」会被当成
+            # 已经处理过而跳过 —— 文件名与字节数都没变，指纹挡不住这种重传
+            st.session_state.pop("_avatar_upload_sig", None)
 
         # 记忆里的路径确实还在，才拿它当模特；否则留空让 run_video() 回一句中文说明 ——
         # 工作流比这里更清楚各条链路分别需要什么
@@ -565,23 +578,36 @@ def show_video() -> None:
                     file_name=os.path.basename(video_path), mime="video/mp4",
                 )
         elif task_code:
-            st.info(msg or "任务已提交，约 2~5 分钟完成")
-            st.caption(f"任务编号: `{task_code}`")
-            # 手动刷新而不是自动轮询：PixVerse 出片要 2~5 分钟，
-            # 自动轮询会把页面一直卡在阻塞的 HTTP 请求上
-            if st.button("🔄 刷新进度（生成完毕后点击查看）"):
-                from workflows.video import refresh_avatar_task
+            # ⚠️ `task_code` 存在**不等于**任务还活着：`query_task()` 对
+            # FAILED / CANCELED / UNKNOWN 会把 `message` 写成「任务失败/不可查（…）」，
+            # 而页面把 `hg_task_code` 一直留着（那是为了「下载失败时还能重试」）。
+            # 不区分的话，一个**已经彻底失败**的任务会永远显示成蓝色的「处理中」+
+            # 一个点了也没用的刷新按钮 —— 用户以为在跑，其实早就挂了。
+            # 判据用 message 的失败前缀：这三串正是 `tools/avatar_client.py` 的
+            # `query_task()` 在终态失败时回填的（「查询异常:」来自它自己的 except 分支）。
+            _failed = msg.startswith(("任务失败/不可查", "查询异常"))
+            if _failed:
+                st.error(msg)
+                st.caption(f"任务编号: `{task_code}`")
+                st.caption("这个任务已经结束（失败或查不到）。可以清除后重新生成。")
+            else:
+                st.info(msg or "任务已提交，约 2~5 分钟完成")
+                st.caption(f"任务编号: `{task_code}`")
+                # 手动刷新而不是自动轮询：PixVerse 出片要 2~5 分钟，
+                # 自动轮询会把页面一直卡在阻塞的 HTTP 请求上
+                if st.button("🔄 刷新进度（生成完毕后点击查看）"):
+                    from workflows.video import refresh_avatar_task
 
-                with st.spinner("查询中..."):
-                    q = refresh_avatar_task(task_code)
-                # 只有成功才写 video_path；失败保留空串，
-                # 页面继续停在这个分支并显示新的 msg
-                if q["success"]:
-                    st.session_state["hg_video_path"] = q["video_path"]
-                    st.session_state["hg_msg"] = q["message"]
-                else:
-                    st.session_state["hg_msg"] = q["message"]
-                st.rerun()
+                    with st.spinner("查询中..."):
+                        q = refresh_avatar_task(task_code)
+                    # 只有成功才写 video_path；失败保留空串，
+                    # 页面下一轮会走上面的 `_failed` 分支出红条
+                    if q["success"]:
+                        st.session_state["hg_video_path"] = q["video_path"]
+                        st.session_state["hg_msg"] = q["message"]
+                    else:
+                        st.session_state["hg_msg"] = q["message"]
+                    st.rerun()
         elif msg:
             st.warning(msg)
 

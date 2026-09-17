@@ -28,7 +28,7 @@
     第 3 层 · 环境契约检查
         配置项是否都能读到、DeepAgents 的 API 形状是否与代码假设一致
         （这一层是"升级依赖前先跑一下"的护栏）。
-        内部按 ``_CONTRACT_SNIPPET`` 的编号分 7 组，前 6 组是判据、第 7 组只是打印：
+        内部按 ``_CONTRACT_SNIPPET`` 的编号分 8 组，前 7 组是判据、第 8 组只是打印：
             1. 配置项存在且类型正确 —— 分组字段 / 扁平字段 / 目录方法 / 模型名回退链；
             2. DeepAgents 的 API 形状 —— ``create_deep_agent`` / ``LocalShellBackend`` /
                ``CompositeBackend`` 的参数与方法名；
@@ -37,7 +37,9 @@
             5. 缺密钥时必须优雅降级 —— 三个工具函数要返回结构，而不是抛异常；
             6. **文档键名契约** —— ``.env.example`` 里出现过的 ``MEDIA_*`` 键，
                必须真能被 ``MediaAgentSettings`` 读到（详见下文）；
-            7. 语言提示 —— 打印模型名 / 端点 / 密钥状态，仅给人看，不参与判据。
+            7. **跨层契约** —— 页面的平台选项、工作流的路由表、抓取节点表三者的
+               键集必须互相对得上（对不上会静默抓错平台，详见下文）；
+            8. 语言提示 —— 打印模型名 / 端点 / 密钥状态，仅给人看，不参与判据。
 
 **为什么用子进程而不是 import？**
     与 ``Back_End/verify_all.py`` 同一理由：每个模块都是"独立程序"，
@@ -104,7 +106,7 @@
     |---|---|---|---|
     | 自检清单 | 正文只给「各模块自己带 ``__main__`` 自检」这套思路，没有可运行的一键脚本 | ``MODULE_SELF_CHECKS`` 表驱动 + 三层汇总 | 把「哪些模块要跑」变成一张可读的表，加模块只改一行 |
     | 场景覆盖 | 无 ``--live`` 概念 | 默认离线全绿 + ``--live`` 另跑真实调用 | 验收要在零密钥 / CI 环境里也能跑通，不能强制联网 |
-    | 环境契约 | 无 | 第 3 层 6 组契约（含 ``.env.example`` 键名护栏） | 「升级依赖后静默失效」与「文档键名读不到」这两类问题**不报错、只是行为不对**，只能靠护栏提前钉住 |
+    | 环境契约 | 无 | 第 3 层 7 组契约（含 ``.env.example`` 键名护栏与跨层平台契约） | 「升级依赖后静默失效」与「文档键名读不到」这两类问题**不报错、只是行为不对**，只能靠护栏提前钉住 |
     | 路径约定 | 依赖当前工作目录 | ``verify_all.py`` 自己按 ``__file__`` 推算 ``HERE`` / ``ROOT``，子进程的 ``cwd`` 钉在 ``HERE`` | 从任意目录调用**本脚本**结果都一样；「子进程能不能直接在任意目录跑起来」另靠 ``.pth`` 与模块自己的引导（见上文），**不是**本机制证明的 |
     | 文档键名契约 | 无 | 见第 3 层第 6 组 | 实测踩到过两次：字段名与文档键名对不上时，用户照文档改 ``.env`` **静默无效**，而默认值恰好又等于期望值，表面完全看不出问题 |
     | 绝对路径 | 无 | 无 | —— |
@@ -322,11 +324,51 @@ if bad:
     raise SystemExit(1)
 
 print("%d 个 views 模块全部导入成功" % len(mods))
+
+# ---- 视图层的行为断言 ----
+# 为什么放在这一层而不是模块自检里：`views/*.py` **不登记进第 1 层**（页面模块不是
+# 「能被 `python xxx.py` 当自检跑」的东西），所以它们里面写的断言**从来没被任何闸门
+# 执行过** —— 写了等于没写。这里用「导入之后直接调它的纯函数」的方式把它们接上闸门，
+# 不新增检查项、不改第 1 层的模块计数。
+#
+# 目前只有一条：`_pick_page_target` —— 上一轮修 CDP 读 Cookie 时补的字段形状回归。
+# 那是个真 bug 的守卫（连 browser 级目标会回 `-32601 'Network.getCookies' wasn't found`），
+# 所以必须真的跑起来。
+from views.review import _pick_page_target    # noqa: E402
+
+_view_problems = []
+
+# 三种真 CDP 的字段形状（用本机 Edge 153 实测抓下来的）
+_ok_page = [{"type": "page", "url": "https://www.douyin.com/", "webSocketDebuggerUrl": "ws://p/1"}]
+_only_browser = [ {"type": "browser", "url": "", "webSocketDebuggerUrl": "ws://b/1"} ]
+_two_pages = [
+    {"type": "page", "url": "about:blank", "webSocketDebuggerUrl": "ws://p/2"},
+    {"type": "page", "url": "https://www.douyin.com/", "webSocketDebuggerUrl": "ws://p/3"},
+]
+
+if _pick_page_target(_ok_page) != "ws://p/1":
+    _view_problems.append("_pick_page_target: 唯一页级目标时没挑中它")
+if _pick_page_target(_two_pages) != "ws://p/3":
+    _view_problems.append("_pick_page_target: 有多个页级目标时没优先抖音那个")
+# 这条是**旧 bug 的闸门**：只给 browser 级目标时必须返回空串（交给 createTarget 兜底），
+# 而不是把 browser 级地址拿去调 Network.getCookies。
+if _pick_page_target(_only_browser) != "":
+    _view_problems.append("_pick_page_target: 只有 browser 级目标时应当返回空串（旧 bug 就是连了它）")
+if _pick_page_target([]) != "" or _pick_page_target(None) != "":
+    _view_problems.append("_pick_page_target: 空输入应当返回空串")
+
+if _view_problems:
+    print("视图层断言失败:")
+    for p in _view_problems:
+        print("  " + p)
+    raise SystemExit(1)
+
+print("视图层断言通过（_pick_page_target 3 种 CDP 形状）")
 '''.replace("%HERE%", str(HERE)).replace("%MODS%", repr(VIEW_MODULES))
 
 
 # ------------------------------------------------------------ 第 3 层：环境契约
-# 第 3 层的脚本内容，内部按编号分 7 组（每组前面有 `# ---- n. ----` 分隔）：
+# 第 3 层的脚本内容，内部按编号分 8 组（每组前面有 `# ---- n. ----` 分隔）：
 #   1. 配置项存在且类型正确（分组字段 / 扁平字段 / 目录方法 / 模型名回退链）
 #   2. DeepAgents 的 API 形状（create_deep_agent / LocalShellBackend / CompositeBackend）
 #   3. 百炼 dashscope SDK 的形状（ASR / 声音复刻 / 视频合成三处签名）
@@ -487,31 +529,93 @@ else:
         print(f"  （提示）{len(undocumented)} 个字段未在 .env.example 出现: "
               + ", ".join(undocumented))
 
-# ---- 7. 跨层契约：页面给的平台选项必须都能被工作流路由到 ----
-# 这两张表在**两个层**里各写了一份：
-#   · 页面 `views/hot_topic.py` 的 `PLATFORM_OPTIONS` —— 决定用户能选什么；
-#   · 工作流 `workflows/hot_topic.py` 的 `PLATFORM_SENDS` —— 决定选中的名字路由到哪几支。
-# `route_fetch()` 对**不认识**的平台名是「回退到抖音」（课案行为，注释里写明
-# 「宁可给一份不相关的热榜，也不要给用户一片空白」）—— 于是只在页面上加一个
-# 平台名、忘了加进路由表，用户选「今日头条」会拿到抖音热榜，而报告抬头照写
-# 「今日头条」。**静默给错数据**比报错难查得多，所以在这里钉死：
-# 页面选项（去掉「全部」）必须与路由表的键集**完全相等**。
+# ---- 7. 跨层契约：平台清单在三个地方各写了一份，键集必须对得上 ----
+#   ① 页面 `views/hot_topic.py` 的 `PLATFORM_OPTIONS` —— 决定用户能选什么；
+#   ② 工作流 `workflows/hot_topic.py` 的 `PLATFORM_SENDS` —— 决定选中的名字路由到哪几支；
+#   ③ 同文件 `FETCH_SOURCES` —— 决定**真正注册了哪些抓取节点**（节点名/平台 id/中文名）。
+# 三处漂移的后果都是**静默给错数据**，不是报错：
+#   · ① 有、② 没有 → `route_fetch()` 对不认识的名字「回退到抖音」（课案行为，
+#     注释写明「宁可给一份不相关的热榜，也不要给用户一片空白」）⇒
+#     用户选了「今日头条」却拿到抖音热榜，而报告抬头照写「今日头条」；
+#   · ② 有、③ 没有 → `Send` 指向一个**未注册的节点**。实测 LangGraph **不抛异常**，
+#     只在日志里留一句 `Ignoring unknown node name … in pending sends` ⇒
+#     一个抓取节点都没跑，页面照旧显示「这次一条热点都没抓到（可能是热榜接口限流或被墙）」——
+#     恰恰是这条护栏要防的那种「把配置错说成网络问题」；
+#   · ③ 有的平台没写进 `UNAVAILABLE_PLATFORMS`（且 id 列表为空）→ 用户会看到
+#     一个必然 0 条的选项，且不知道为什么（上一轮专门修过这个形态）。
 try:
+    from tools.trend_radar_client import NAME_TO_IDS, UNAVAILABLE_PLATFORMS
     from views.hot_topic import PLATFORM_OPTIONS
-    from workflows.hot_topic import PLATFORM_SENDS
+    from workflows.hot_topic import FETCH_SOURCES, PLATFORM_SENDS
 
     page_choices = set(PLATFORM_OPTIONS) - {"全部"}
     routable = set(PLATFORM_SENDS)
+    registered_nodes = {name for name, _, _ in FETCH_SOURCES}
+    routed_nodes = {n for nodes in PLATFORM_SENDS.values() for n in nodes}
+
     if page_choices != routable:
         problems.append(
-            "页面平台选项与工作流路由表不一致："
+            "① 页面平台选项 与 ② 工作流路由表 不一致："
             f"只在页面有 {sorted(page_choices - routable)}；"
             f"只在路由表有 {sorted(routable - page_choices)}。"
             "只在页面有的那些会被静默回退成抖音热榜 —— "
             "加平台要同时改 workflows/hot_topic.py 的 FETCH_SOURCES 与 PLATFORM_SENDS。"
         )
+
+    missing_nodes = sorted(routed_nodes - registered_nodes)
+    if missing_nodes:
+        problems.append(
+            f"② 工作流路由表指向了 ③ 没注册的抓取节点 {missing_nodes}："
+            "LangGraph 对这种 Send **不报错**，只会静默跳过该分支 —— "
+            "结果是「一条热点都抓不到」被当成网络问题报给用户。"
+            "加平台要在 FETCH_SOURCES 里补一行（节点名必须与 PLATFORM_SENDS 里的一致）。"
+        )
+
+    # 反向（③ 里有、② 里没有）只做提示：`FETCH_SOURCES` 是「注册过的全部节点」，
+    # 允许存在「注册了但暂时不给页面选」的平台，那不算错。
+    idle_nodes = sorted(registered_nodes - routed_nodes)
+    if idle_nodes:
+        print(f"  （提示）FETCH_SOURCES 里 {len(idle_nodes)} 个节点没有对应路由项: "
+              + ", ".join(idle_nodes))
+
+    # 不可用的平台必须（a）是页面能选到的名字，（b）在 NAME_TO_IDS 里有登记且 id 为空。
+    unknown_reason = sorted(set(UNAVAILABLE_PLATFORMS) - page_choices)
+    if unknown_reason:
+        problems.append(
+            f"UNAVAILABLE_PLATFORMS 里有页面选不到的平台 {unknown_reason} ——"
+            "用户永远看不到这条原因，等于白写。"
+        )
+    nameless = sorted({n for n, ids in NAME_TO_IDS.items() if not ids} - set(UNAVAILABLE_PLATFORMS))
+    if nameless:
+        problems.append(
+            f"NAME_TO_IDS 里 {nameless} 的 id 列表是空的，却没登记不可用原因 ——"
+            "用户会看到一个必然 0 条的选项却不知道为什么（上一轮专门修过这个形态）。"
+        )
+    # 失败前缀也是跨层两份：工作流 `return` 出去的串 ↔ 页面认得的串。
+    # 页面靠 `_FAIL_PREFIXES` 判「这坨是报错还是 AI 的正常结论」，判不出来就会把
+    # 一段「模型未配置」渲染成黑字正文 —— 看起来像模型真的这么答。同理，工作流
+    # 那边**新加**一种失败串（比如给某个节点补 except）时，页面不改就会漏认。
+    from views.hot_topic import _FAIL_PREFIXES as _VIEW_FAIL_PREFIXES
+    from workflows.hot_topic import (
+        _FILTER_FAIL_PREFIX as _WF_FILTER_PREFIX,
+        _UPSTREAM_FAIL_PREFIXES as _WF_UPSTREAM_PREFIXES,
+    )
+
+    # 工作流可能吐出来的全部前缀：三个常量 + 图级兜底那一串（写在 run_hot_topic 的
+    # except 里、没有提成常量，所以这里硬编码 —— 它与页面注释是同一个来源）。
+    _wf_emittable = set(_WF_UPSTREAM_PREFIXES) | {_WF_FILTER_PREFIX, "[热点工作流失败"}
+    _unrecognized = [
+        p for p in sorted(_wf_emittable)
+        if not any(p.startswith(v) or v.startswith(p) for v in _VIEW_FAIL_PREFIXES)
+    ]
+    if _unrecognized:
+        problems.append(
+            f"工作流会回填这些失败前缀，但页面认不出来：{_unrecognized} ——"
+            "它们会被当成 AI 的正常结论渲染成黑字正文。"
+            "改前缀要同时改 views/hot_topic.py 的 _FAIL_PREFIXES。"
+        )
 except Exception as exc:
-    problems.append(f"平台选项/路由表契约检查异常: {type(exc).__name__}: {exc}")
+    problems.append(f"跨层平台契约检查异常: {type(exc).__name__}: {exc}")
 
 # ---- 8. 语言提示：不要误报 ----
 print(f"文本模型: {settings.media_llm_model()}")
@@ -674,7 +778,7 @@ def main() -> int:
     print("-" * 70)
     total += 1
     contract = run_script_via_code(_CONTRACT_SNIPPET, "环境契约")
-    # 第 3 层子进程的输出整段转发出来（编号 1~7 的分组结论与「提示」都在里面），
+    # 第 3 层子进程的输出整段转发出来（编号 1~8 的分组结论与「提示」都在里面），
     # 只把它缩进一层区别于本脚本自己的输出。
     for line in (contract["out"] or "").splitlines():
         print(f"    {line}")

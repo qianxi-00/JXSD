@@ -44,6 +44,9 @@
       控件不再传 ``value=``；② 上传那轮寄存 ``_bgm_pending``，下一轮构建控件**之前**
       回填 —— 控件实例化之后再改它的 session_state 会抛 ``StreamlitAPIException``。
       不这么做的话，上传完框里仍是旧路径，下一轮还会把旧路径写回 ``bgm.json``。
+      ③ 上传那轮还要靠「名字|字节数」指纹把处理动作**收敛成一次**：``file_uploader``
+      的值跨 rerun 保留，不设指纹时它每轮都为真、``st.rerun()`` 每轮都再来一次，
+      ② 那条回填永远等不到「下一轮」—— 页面直接停在无限 rerun 里。
 
 运行方式（由 main.py 侧边栏路由调用）::
 
@@ -264,14 +267,27 @@ def show_mashup() -> None:
             "📁 上传", type=["wav", "mp3", "m4a", "ogg"], help="上传新 BGM 会替换当前设置",
         )
         if bgm_file:
-            target = CACHE_DIR / bgm_file.name
-            target.write_bytes(bgm_file.getvalue())
-            _save_bgm_path(str(target))
-            # 寄存待回填值，让下一轮构建输入框时把框里的旧路径换成这个新路径
-            # （只 rerun 是不够的：带 key 的控件在 rerun 之间由 session_state 说了算）
-            st.session_state["_bgm_pending"] = str(target)
-            st.success("已更新")
-            st.rerun()
+            # `file_uploader` 的值**跨 rerun 保留**，所以「有没有文件」不能当「要不要处理」：
+            # 处理完那次 `st.rerun()` 回来它还在，于是又写盘又 rerun，页面卡在无限自转里
+            # （AppTest 实测：一次 `set_value` 后 25 秒超时）。指纹取「名字|字节数」，
+            # 只处理**没见过的那一份**，这样后续 rerun 自然收敛。
+            # `.size` 是 `UploadedFile`（`BytesIO` 子类）在 `__init__` 里设的实例属性，
+            # 不必把整个文件再 `getvalue()` 出来数一遍
+            sig = f"{bgm_file.name}|{bgm_file.size}"
+            if sig != st.session_state.get("_bgm_upload_sig"):
+                st.session_state["_bgm_upload_sig"] = sig
+                target = CACHE_DIR / bgm_file.name
+                target.write_bytes(bgm_file.getvalue())
+                _save_bgm_path(str(target))
+                # 寄存待回填值，让下一轮构建输入框时把框里的旧路径换成这个新路径
+                # （只 rerun 是不够的：带 key 的控件在 rerun 之间由 session_state 说了算）
+                st.session_state["_bgm_pending"] = str(target)
+                st.success("已更新")
+                st.rerun()
+        else:
+            # 清空上传框就把指纹一起忘掉：否则「清空后再传同一个文件」会被当成
+            # 已经处理过而跳过 —— 文件名与字节数都没变，指纹挡不住这种重传
+            st.session_state.pop("_bgm_upload_sig", None)
 
     # 没有 on_change 回调时，「输入框的值变了」只能在每次 rerun 时对比着判断；
     # current_bgm 是**本轮开头**从 bgm.json 读到的旧值，这里只拿它当「要不要落盘」的比对基准

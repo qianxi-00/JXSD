@@ -273,7 +273,12 @@ def _create_blank_page_target(debug_port: int) -> str:
     except Exception:  # noqa: BLE001 —— 兜底路径失败就返回空串，由调用方统一给中文错误
         return ""
 
-    # 最多等 2 秒（4 × 0.5）：目标是本机进程内建的，正常一次就能列到
+    # 轮询 4 次、每次之间 sleep 0.5 —— 但**每轮那次** `_cdp_json(..., timeout=5)`
+    # 自己也可能耗满 5 秒（Edge 刚起来时 `/json/list` 连上却不出数据就是这样），
+    # 所以这条兜底路径的真实上界是 ≈ 4 × (5 + 0.5) = 22 秒，不是「2 秒」。
+    # 这里改的是注释而不是把 timeout 收紧：那一层是 fallback 的预算，
+    # 冷启动的 Edge 本来就可能卡住，压小它只会把一个慢成功变成早失败。
+    # 目标是本机进程内建的，正常一次就能列到，实际几乎走不到重试。
     for _ in range(4):
         ws_url = _pick_page_target(_cdp_json(debug_port, "/json/list"))
         if ws_url:
@@ -551,13 +556,16 @@ def _render_cookie_panel() -> None:
         st.caption("两种方式：① 点按钮自动从 Edge 读取　② 手动复制粘贴。"
                    "本次会话内生效，重启后回到根目录 .env 的配置。")
         # ⚠️ 必须在按钮**旁边**先说清楚这个副作用：`_launch_edge()` 在
-        # 9222~9225 都没有监听时会 `taskkill /f /im msedge.exe` 再自己起一个 ——
-        # 也就是**会关掉用户当前打开的所有 Edge 窗口**（课案原有做法，为了拿到
-        # 那个带登录态的 user-data-dir；用户自己开着的 Edge 是补不了
-        # --remote-debugging-port 的）。标签页通常能被 Edge 恢复，但不该让人
-        # 点完才发现，所以这里明写。
+        # 9222~9225 都没有监听时会 `taskkill /f /im msedge.exe` **再
+        # `taskkill /f /im msedgewebview2.exe`**，然后自己起一个 ——
+        # 也就是会关掉用户当前打开的所有 Edge 窗口，**并且连带杀掉别的应用里
+        # 内嵌的 WebView2**（两种进程名是同一个列表，见 `_launch_edge()`）；
+        # 课案原有做法，为了拿到那个带登录态的 user-data-dir，用户自己开着的
+        # Edge 是补不了 --remote-debugging-port 的。标签页通常能被 Edge 恢复，
+        # 但别的应用被牵连关掉的窗口不一定，不该让人点完才发现，所以这里明写。
         st.caption("⚠️ 点这个按钮时，若检测不到已开启的调试端口，程序会**重启 Edge**"
-                   "（你当前打开的所有 Edge 窗口会被关掉，标签页一般可由 Edge 自行恢复）。"
+                   "（你当前打开的所有 Edge 窗口会被关掉，标签页一般可由 Edge 自行恢复）；"
+                   "**其它应用里内嵌的 WebView2 窗口也会被一起关掉**，它们不会被自动恢复。"
                    "不想被打扰时请改用下面的手动粘贴。")
 
         # 1:3 的宽度比：左边按钮窄，右边那行提示文字长
