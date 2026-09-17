@@ -558,6 +558,112 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     return 0 if (not orphans and ok == total and not missing_nb) else 1
 
 
+# ---------------- 预期输出核对 ----------------
+# 匹配 markdown 里的 `### 预期输出` + ```text 围栏
+EXPECT_RE = re.compile(r"###\s*预期输出[^\n]*\n+```text\n(.*?)```", re.DOTALL)
+
+
+def norm_lines(text: str) -> list[str]:
+    """把输出切成「非空且已去首尾空白」的行列表 —— 比对时忽略缩进与空行差异。"""
+    return [ln.strip() for ln in text.split("\n") if ln.strip()]
+
+
+def is_subsequence(needle: list[str], hay: list[str]) -> tuple[bool, list[str]]:
+    """needle 的每一行是否**按顺序**出现在 hay 里。返回 (是否全中, 缺失的行)。"""
+    pos, missing = 0, []
+    for want in needle:
+        found = False
+        while pos < len(hay):
+            if hay[pos] == want:
+                pos += 1
+                found = True
+                break
+            pos += 1
+        if not found:
+            pos = 0          # 没找到就不推进游标，避免后续行被连带判失败
+            missing.append(want)
+    return (not missing), missing
+
+
+def cell_output_text(cell) -> str:
+    parts = []
+    for out in cell.get("outputs", []):
+        kind = out.get("output_type")
+        if kind == "stream":
+            parts.append(out.get("text", ""))
+        elif kind in ("execute_result", "display_data"):
+            parts.append(out.get("data", {}).get("text/plain", ""))
+        elif kind == "error":
+            parts.append(f"{out.get('ename')}: {out.get('evalue')}")
+    return "".join(parts)
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """执行 notebook，核对每个「预期输出」块是否真的能在实跑输出里找到。
+
+    为什么需要它：模板要求每格输出后面写「预期输出」，但**写的人可能凭记忆编**。
+    人工核对 32 个 notebook 不现实，所以这里自动化：把每段「预期输出」当成
+    行序列，检查它是不是**紧邻的上一个 code cell** 实际输出的子序列。
+    （用子序列而不是全等，是因为输出里常混着时间戳、路径、对象地址等易变内容。）
+    """
+    from nbclient import NotebookClient
+
+    targets = all_notebooks() if args.all else [Path(p) for p in args.paths]
+    if not targets:
+        print("没有找到 notebook")
+        return 1
+
+    total_blocks = total_ok = 0
+    bad_files = 0
+    for path in targets:
+        rel = disp(path)
+        nb = read_notebook(path)
+        client = NotebookClient(
+            nb, timeout=args.timeout, kernel_name=KERNEL_NAME, allow_errors=True,
+            startup_timeout=120,
+            resources={"metadata": {"path": str(path.parent)}},
+        )
+        try:
+            client.execute()
+        except Exception as exc:      # noqa: BLE001
+            print(f"  ✗ {rel}: 执行失败 {type(exc).__name__}: {str(exc)[:120]}")
+            bad_files += 1
+            continue
+
+        last_out: list[str] = []
+        problems = []
+        for cell in nb.cells:
+            if cell.cell_type == CODE_NB:
+                text = cell_output_text(cell)
+                if text.strip():
+                    last_out = norm_lines(text)
+                continue
+            for block in EXPECT_RE.findall(cell.source):
+                want = norm_lines(block)
+                if not want:
+                    continue
+                total_blocks += 1
+                ok, missing = is_subsequence(want, last_out)
+                if ok:
+                    total_ok += 1
+                else:
+                    problems.append((want, missing))
+
+        if problems:
+            bad_files += 1
+            print(f"  ✗ {rel}: {len(problems)} 段「预期输出」与实跑不符")
+            for want, missing in problems[:2]:
+                print(f"      期望首行：{want[0][:90]}")
+                for m in missing[:3]:
+                    print(f"      实际输出里找不到：{m[:90]}")
+        else:
+            print(f"  ✓ {rel}")
+
+    print(f"\n核对 {len(targets)} 个 notebook：「预期输出」共 {total_blocks} 段，"
+          f"与实跑一致 {total_ok} 段，不一致 {total_blocks - total_ok} 段；有问题的文件 {bad_files} 个")
+    return 1 if bad_files else 0
+
+
 # ================================================================
 # CLI
 # ================================================================
@@ -592,6 +698,12 @@ def main() -> int:
     p5.add_argument("--filter", default="",
                     help="只看路径包含该子串的源文件（如 03_deepagents），会列出全部匹配项而不是最差 25 个")
     p5.set_defaults(func=cmd_coverage)
+
+    p6 = sub.add_parser("verify", help="执行并按「预期输出」块核对真实输出")
+    p6.add_argument("paths", nargs="*")
+    p6.add_argument("--all", action="store_true")
+    p6.add_argument("--timeout", type=int, default=900, help="单格超时秒数（默认 900）")
+    p6.set_defaults(func=cmd_verify)
 
     args = ap.parse_args()
     return args.func(args)
