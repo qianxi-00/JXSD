@@ -443,7 +443,11 @@ async def answer_events(
     if key == ROUTE_BASIC:
         # 基础线路复用既有事件流（start/route/rewrite/retrieve/rerank/token/done）
         pipeline = _basic_pipeline()
-        async for event in pipeline.run_events(question, stream=stream):
+        # ⚠ `use_cache=cache_enabled()` **必须传**：非流式那条路（`_run_basic`）一直传着，
+        # 这里早期漏了 ⇒ `QA_CACHE_ENABLED=false` 对流式请求**不生效**（缓存照命中、
+        # `query_type` 照出 faq）。这是"全链路真机测试"抓出来的：关缓存后同一个标准问法
+        # 连问两次，第二次仍然 0.001s 命中 exact 缓存，而非流式的四条验收用例全无命中。
+        async for event in pipeline.run_events(question, stream=stream, use_cache=cache_enabled()):
             event["mode"] = key
             yield event
         return

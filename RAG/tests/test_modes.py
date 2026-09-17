@@ -191,6 +191,37 @@ class TestBasicRunnerIsSingleTurn:
         assert captured["question"] == "万宁的火车票"
 
 
+class TestBasicStreamingHonorsCacheSwitch:
+    """流式基础线路也要受 `QA_CACHE_ENABLED` 管。
+
+    这是"全链路真机测试"抓出来的真 bug：`answer_events` 的 basic 分支早期调
+    `pipeline.run_events(question, stream=stream)` **漏传 `use_cache`** ⇒ 关掉总开关后
+    **流式请求照样命中缓存**（非流式那条路一直传着，所以只跑单测、或只验收非流式接口，
+    都发现不了）。真机现象：`QA_CACHE_ENABLED=false` 下同一个标准问法连问两次，
+    第二次 0.001s、`query_type=faq`、`cache_hit=exact`。
+    """
+
+    @pytest.mark.asyncio
+    async def test_basic_streaming_forwards_switch_value(self, monkeypatch):
+        captured = {}
+
+        class FakePipeline:
+            # 签名与真类一致：`use_cache` 缺了就会在**测试里**炸，而不是等真机才发现漏接
+            async def run_events(self, question, stream=True, use_cache=True):
+                captured["question"] = question
+                captured["stream"] = stream
+                captured["use_cache"] = use_cache
+                yield {"type": "done", "answer": "答", "sources": [], "cache_hit": None}
+
+        monkeypatch.setattr(modes, "_basic_pipeline", lambda: FakePipeline())
+        for enabled in (True, False):
+            monkeypatch.setattr(modes.settings.qa_cache, "enabled", enabled)
+            events = [ev async for ev in modes.answer_events("万宁的火车票", routes.ROUTE_BASIC, [], stream=True)]
+            assert captured["use_cache"] is enabled, f"开关={enabled} 时流式路径必须原样透传"
+            assert captured["stream"] is True
+            assert events[-1]["mode"] == routes.ROUTE_BASIC
+
+
 class TestCacheScope:
     def test_basic_scope_is_empty_string(self):
         """基础线路作用域必须是空串：老键（含 seed_details 播的 60 条）才继续有效。"""
