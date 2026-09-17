@@ -44,6 +44,32 @@ def is_configured() -> bool:
     return bool(settings.dashscope_api_key)
 
 
+def _bind_dashscope_key():
+    """把密钥绑到 dashscope SDK 的**全局** ``api_key`` 上。
+
+    ⚠️ 实测踩过的坑（2026-09，dashscope 1.27.4）：
+
+        ``SpeechSynthesizer(...)`` 的构造签名里**没有 api_key 参数**，
+        它从全局 ``dashscope.api_key`` 或环境变量 ``DASHSCOPE_API_KEY`` 取凭据。
+        而本项目的密钥来自根 ``.env``，由 pydantic-settings 加载进 ``Settings``，
+        **并没有写进进程环境变量** —— 所以不显式设置全局值就会直接
+        ``InputRequired: apikey is required!`` / ``AuthenticationError``。
+
+        ``VoiceEnrollmentService`` 倒是接受 ``api_key=`` 参数，但它和
+        ``SpeechSynthesizer`` 共用底层客户端，统一走这里更稳。
+
+    这是库的设计限制，不是可以绕开的写法；只在真正要调用前设置，避免在 import
+    阶段就产生副作用。
+    """
+    import dashscope
+
+    if settings.dashscope_api_key:
+        dashscope.api_key = settings.dashscope_api_key
+        if settings.dashscope_workspace_id:
+            dashscope.workspace = settings.dashscope_workspace_id
+    return dashscope.api_key
+
+
 # --------------------------------------------------------------------------
 # 音色缓存：音色有配额，同一个源音频绝不能重复创建
 # --------------------------------------------------------------------------
@@ -188,7 +214,11 @@ def clone_voice(source_media: str, prefix: str = "mediaclone", use_cache: bool =
     try:
         from dashscope.audio.tts_v2 import VoiceEnrollmentService
 
-        service = VoiceEnrollmentService()
+        _bind_dashscope_key()
+        service = VoiceEnrollmentService(
+            api_key=settings.dashscope_api_key,
+            workspace=settings.dashscope_workspace_id or None,
+        )
         voice_id = service.create_voice(
             target_model=settings.media.tts_model,
             prefix=prefix,
@@ -260,13 +290,17 @@ def tts_with_cloned_voice(text: str, voice_id: str, output_path: str = None,
     try:
         from dashscope.audio.tts_v2 import AudioFormat, SpeechSynthesizer
 
+        _bind_dashscope_key()   # SpeechSynthesizer 不接 api_key，必须靠全局值
         fmt = (
             AudioFormat.MP3_24000HZ_MONO_256KBPS
             if audio_format == "mp3"
             else AudioFormat.WAV_24000HZ_MONO_16BIT
         )
         synthesizer = SpeechSynthesizer(
-            model=settings.media.tts_model, voice=voice_id, format=fmt
+            model=settings.media.tts_model,
+            voice=voice_id,
+            format=fmt,
+            workspace=settings.dashscope_workspace_id or None,
         )
         # call() 不设 callback 时，阻塞到收完音频并返回完整 bytes
         audio: bytes = synthesizer.call(text)
