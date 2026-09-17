@@ -18,6 +18,8 @@ dependencies = [
     "openai==3.2.0",
     "pyjwt>=2.13.0",
     "httpx>=0.28.1",
+    "langchain-text-splitters>=1.1.2",
+    "langgraph-cli[inmem]>=0.4.31",
     # ---------- RAG 项目（Milvus + Redis + BM25 + Chainlit + FastAPI） ----------
     "pymilvus>=3.0.1",
     "redis==7.4.0",
@@ -31,6 +33,15 @@ dependencies = [
     "pydantic==2.13.4",
     "pydantic-settings==2.15.0",
     "tqdm>=4.66",
+    # 代码实际用到、但此前裁剪版漏掉的（按 import 实测补，见提交说明）
+    "langchain-community>=0.4.2",
+    "langchain-openai>=1.6.0",
+    "neomodel>=7.0.0",
+    "python-louvain>=0.16",
+    "ragas>=0.4.3",
+    "sqlalchemy==2.0.52",
+    "sqlmodel==0.0.39",
+    "pytest>=9.1.1",
     # ---------- Crawler（Scrapling 抓取 + 解析） ----------
     "scrapling[fetchers]==0.4.14",
     "beautifulsoup4==4.15.0",
