@@ -149,6 +149,29 @@ class AppSettings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = 8099
+    # 允许跨域的前端源，逗号分隔（如 "http://localhost:5173,https://rag.example.com"）。
+    # **默认空 = 不挂 CORSMiddleware**：本服务只给同源的 Chainlit 页面与本地脚本用，
+    # 无脑放开跨域等于把接口暴露给任意网页（浏览器端带 cookie 的请求会被别的站点发起）。
+    cors_origins: str = ""
+    # 启动预热：把 FAQ 预设问法向量与 BM25 索引在启动时加载好。
+    # 默认 True —— 不预热时"进程起来后第一个未命中请求"要现算预设向量（几十毫秒到秒级），
+    # 课案也把"启动预热"列为生产做法。置 false 可让启动更快（测试/CI 用）。
+    warmup: bool = True
+
+
+class QaCacheSettings(BaseSettings):
+    """问答缓存总开关（课案里的 `QA_CACHE_ENABLED`）。
+
+    单独一个类只为一件事：**键名与课案一致**（`QA_CACHE_ENABLED`）。
+    挂在 `RagRedisSettings`（前缀 `REDIS_`）下会变成 `REDIS_CACHE_ENABLED`，
+    与课案对不上；而缓存开关又确实不属于"Redis 连接参数"。
+    关闭后四条线路都**不读也不写**缓存（评估时想量真实链路能力用得上，
+    比逐个传 `use_cache=False` 省事，也不会漏掉某条线路）。
+    """
+
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_prefix="QA_CACHE_", extra="ignore")
+
+    enabled: bool = True
 
 
 class LLMSettings(BaseSettings):
@@ -307,6 +330,8 @@ class Settings:
         self.eval_llm = EvalLLMSettings()
         # token 成本单价（默认全 0 ⇒ 只报 token 不报成本）
         self.usage = UsageSettings()
+        # 问答缓存总开关（课案键名 QA_CACHE_ENABLED）
+        self.qa_cache = QaCacheSettings()
         self.embedding = EmbeddingSettings()
         self.rerank = RerankSettings()
         self.retrieval = RetrievalSettings()
